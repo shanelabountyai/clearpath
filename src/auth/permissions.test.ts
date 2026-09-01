@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   ACTIONS, RESOURCES, ROLES,
-  can,
+  can, ownCaseloadOnly,
   type Action, type Actor, type Resource, type Role, type Target,
 } from './permissions.js';
 
@@ -277,4 +277,18 @@ it('no ad-hoc role checks outside the auth module', () => {
     }
   }
   expect(offenders).toEqual([]);
+});
+
+describe('caseload scoping', () => {
+  it('narrows clinical roles to their own clients', () => {
+    for (const role of ['therapist', 'associate', 'supervisor'] as Role[]) {
+      expect(ownCaseloadOnly({ id: ME, role })).toBe(true);
+    }
+  });
+
+  it('does not narrow the roles that work across the practice', () => {
+    for (const role of ['front_desk', 'admin', 'auditor'] as Role[]) {
+      expect(ownCaseloadOnly({ id: ME, role })).toBe(false);
+    }
+  });
 });

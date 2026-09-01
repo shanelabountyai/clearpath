@@ -145,6 +145,19 @@ export const MATRIX: Record<Role, RoleMatrix> = {
   },
 };
 
+/**
+ * Roles whose caseload is their own clients.
+ *
+ * This is data scoping rather than a permission — the matrix already says a
+ * clinician may only *read* a client they treat — but it is still a decision
+ * made from a role, so it lives here beside the matrix rather than as an
+ * `actor.role === 'therapist'` in a query builder. That is the whole point of
+ * the one-module rule: role logic is reviewable in one file or it is nowhere.
+ */
+export function ownCaseloadOnly(actor: Actor): boolean {
+  return actor.role === 'therapist' || actor.role === 'associate' || actor.role === 'supervisor';
+}
+
 export interface Decision {
   allowed: boolean;
   /** Which matrix rule decided it — goes in the audit row. */
