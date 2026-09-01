@@ -61,3 +61,179 @@ suite cannot agree with a wrong edit. Each cell is probed three ways: an actor
 holding every relationship *and* break-glass, an actor who supervises the author
 but wrote nothing, and an actor with no relationship at all. That last probe is
 what proves which permissions are unconditional.
+
+---
+
+## 2. Recurring dual-resource scheduling with a conditional resource
+
+**The problem.** A counseling practice runs on standing appointments: the same
+client, the same clinician, the same hour, every week, for months. Each instance
+needs a clinician *and* a therapy room, reserved together or not at all — except
+when it does not, because a telehealth session needs no room and must not be
+blocked by a full room map. So: recurrence, two resources, one of them
+conditional, and no double-booking of either.
+
+**The design.**
+
+*Booking is decided by Postgres, not by application code.* Two `EXCLUDE USING
+gist` constraints — one on `(clinicianId, tstzrange(startAt, endAt))`, one on
+`(roomId, …)`, both filtered to non-cancelled rows — make the insert itself the
+check. Room selection is then optimistic: pick a candidate, insert, and on a
+room collision (`23P01`) try the next room; on a *clinician* collision stop,
+because there is no second clinician to fall through to. A read-then-write
+availability check cannot be made safe against a concurrent booking of the last
+room, and every attempt to make it safe just moves the window. The race suite
+puts ten simultaneous bookings against four rooms and asserts exactly four
+commit.
+
+*The conditional resource is a database invariant.* A `CHECK` constraint says
+in-person requires a room and telehealth forbids one. It is not an application
+habit that a future endpoint can forget.
+
+*Recurrence stores local wall time, never a UTC instant plus seven days.* A
+standing Tuesday 3pm is 3pm in March and 3pm in November. Patterns hold a
+weekday and minutes-from-midnight; each occurrence converts separately through a
+two-pass zoned conversion. `src/time.test.ts` asserts the hour either side of
+both DST transitions, and the scheduling suite asserts it again through the
+database.
+
+**The bug worth writing down.** Idempotency first keyed on the date the
+appointment sits on. Every test passed. Then: reschedule an instance from
+Tuesday to Thursday, run the horizon again, and the planner sees an unfilled
+Tuesday and books over the slot the client just moved out of. The unique index
+on the occurrence key caught it — which is the index doing its job and the
+planner failing at its own.
+
+The fix was to separate two things the first design had conflated: **the slot in
+the series an instance fills** (fixed at creation, recovered from the occurrence
+key) and **where the appointment currently is** (whatever a reschedule made it).
+Idempotency keys on the first; withdrawal-on-pattern-change looks at the second.
+
+**What it does not do.** No arbitrary RRULE — weekly and biweekly are what a
+practice actually books, and a full recurrence grammar would be a week spent on
+a case nobody has. No automatic rescheduling around a clinician's absence: that
+produces a work-list for a person, because moving somebody's standing hour is a
+conversation, not a write.
+
+---
+
+## 3. Scored forms with versioned rules and risk thresholds
+
+**The problem.** Intake, consent and screeners are data, so a practice manager
+can revise them without a deploy. But a screener that has been answered is a
+clinical record: revising the instrument must not re-score or re-render what
+somebody already completed. And a screener can contain a question whose answer
+needs a clinician *today*, whatever the total says.
+
+**The design.** A submission binds to a template *version*, and publishing a
+revision creates a new row rather than mutating the old one. There is
+deliberately no edit-in-place: that is the single operation that would silently
+rewrite history. Scoring rules version with the template, so a v1 response is
+always scored by v1 rules.
+
+Two independent paths to review:
+
+- **Thresholds** on the total, with the practice's concern line marked `alert`.
+- **Critical items**, which flag regardless of total. Somebody can answer every
+  other question at zero, score 1, land in the "minimal" band, and still need a
+  call. A design where severity is a single number cannot express that, which is
+  why the two paths are separate rather than one weighted score.
+
+A flagged submission raises **one alert to one person** — the treating clinician
+— in the same transaction as the submission itself. A scored screener that
+half-saved is a client who answered a question about self-harm into a void.
+
+**Reason codes, never content.** The scorer emits `critical:item_9`, not the
+answer and not the score. Those strings travel to the alert, the review queue
+and the audit log, so anything readable in them is effectively published to
+every surface that shows a flag. The wording a clinician reads is assembled at
+the very edge, in the alerts page, and is never stored or logged.
+
+**Conditional fields resolve by repeated passes**, so a field revealed by
+another conditional field disappears when its parent does. A single-pass filter
+leaves orphans visible, which is how a form ends up demanding an answer to a
+question it is no longer showing. Only visible fields are scored, so a branch
+the client opened and then closed cannot inflate a risk score — and the server
+rejects an answer to a hidden question outright, because the form is a trust
+boundary.
+
+**Retired questions keep their answers.** Rendering a v1 submission against v2
+surfaces them as labelled orphans rather than dropping them. A record that
+quietly loses answers is worse than one that shows a question the practice has
+since retired.
+
+---
+
+## 4. Two-tier notes with supervisory co-signature
+
+**The problem.** Two classes of note with rules that deliberately do not nest.
+The supervisor who must countersign an associate's progress note must never read
+that associate's process notes. The practice manager who can break glass into a
+session note cannot break glass into a process note.
+
+**The design.** Separate resources, separate rules, one signature workflow. A
+progress note goes `draft → signed → cosigned`, where the last step exists only
+when the author works under supervision. Whether it does is
+`requiresCoSignature(role)` in the auth module — not a role comparison in the
+notes service, and not a permission. Modelling it as a permission was the
+intuitive wrong answer: an associate writes and signs exactly what a therapist
+does, which is why the two share an identical matrix row.
+
+**Immutability at two layers.** The service turns the edit affordance into an
+amendment once a note is signed; a database trigger refuses a content change
+even if the service is bypassed, and refuses a return to draft. Amendments are
+append-only by the same trigger function as the audit log, because they are the
+correction mechanism and a rewritable correction is not one.
+
+**Process notes filter on `authorId` in SQL as well as passing the permission
+check.** That is not belt-and-braces for its own sake: the check protects the
+endpoint, and the filter protects every caller written later by somebody who has
+not read this file. Tests assert the absence directly — that a process note
+never appears in the progress-note list, the co-sign queue, or any other
+clinician's list.
+
+**The decision this forced.** Building the client record surfaced an
+incoherence. The co-sign queue shows a supervisor the client's name, because you
+cannot countersign a note without knowing whose it is — but the matrix as first
+written denied that same supervisor the client's record. They could countersign
+blind.
+
+Two readings were available. The literal one: the PRD enumerates supervisor
+access for `progress_note` and nowhere else, so deny. The one taken: supervision
+is clinical responsibility rather than a signature, so a supervisor's reach over
+a supervisee's caseload matches the supervisee's — with exactly one exception,
+`process_note`, which stays `author`.
+
+The second is better, and not only because it makes the workflow usable. It
+makes the asymmetry *sharper*. A supervisor who could see nothing would meet an
+ordinary "not your client" wall. A supervisor who can read the record, the fee,
+the attendance, the screeners and the progress notes — and who has just
+countersigned one — meets a locked panel directly beneath it, for the one thing
+that is never theirs. That is the design's whole argument in a single screen.
+
+---
+
+## Decisions log
+
+| Decision | Why |
+|---|---|
+| `process_note` and `progress_note` as separate resources, not one with a flag | A flag invites scattered `if (note.private)`; separate resources put the difference in the policy table where it is testable |
+| `can()` returns a `Decision`, not a boolean | The audit log needs the rule that fired and whether break-glass was open; a boolean forces every call site to re-derive it |
+| A `client` role in the matrix, empty on purpose | A tokenized submission gets an honest actor in the audit trail instead of being attributed to staff |
+| Supervisor reach extends to a supervisee's caseload, except process notes | Countersigning blind is not supervision; the single exception is sharper against a full record than against an empty one |
+| Denials logged outside the caller's transaction | A rolled-back request must still leave the attempt on the record |
+| List reads logged once, not once per row | Forty audit rows for one page view buries the individual record opens that matter |
+| `may()` is silent | Deciding which buttons to draw is not an access event, and logging it would drown the real ones |
+| A separate `messagingName` on practice settings | "Stillwater Counseling" on a lock screen tells a roommate what the appointment is for; the deny-list catches exactly that, so the practice needs a short name |
+| Dark mode follows the OS, with no in-app toggle | One less piece of state to get out of sync, and the OS already knows it is 9pm |
+| TRUNCATE still permitted on the audit table | Blocking UPDATE and DELETE stops every rewrite an application bug or a hand-run query could perform; wiping the whole table is an obviously administrative act, and tests need it. Real tamper-evidence needs the log shipped off the box — claimed nowhere |
+
+## What this project deliberately is not
+
+It is a learning project on synthetic data. It applies HIPAA-inspired principles
+because they are good engineering discipline, and it is not HIPAA-compliant
+software. There is no authentication — the dev switcher is the seam where it
+would go, and *authorization* is the part built for real. There is no billing,
+no video, no group sessions, and no longitudinal screener analytics, the last of
+which is a deliberate omission rather than a missing feature: a trend line on
+somebody's depression score is a design problem before it is an engineering one.

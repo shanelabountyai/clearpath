@@ -279,6 +279,13 @@ async function main() {
   let submitted = 0, flagged = 0;
   const zeros = () => Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`item_${i + 1}`, 0]));
 
+  // Ten clients have an intake sitting unsubmitted — new referrals who have the
+  // link and have not filled it in yet, which is the ordinary state of a
+  // practice and the state the client-facing form pages are demonstrated in.
+  for (const client of clients.slice(46, 56)) {
+    await issueForm(desk, { clientId: client.id, templateKey: 'intake' });
+  }
+
   for (const client of clients.slice(0, 46)) {
     for (const key of ['consent-to-treat', 'wellbeing-check-in'] as const) {
       const request = await issueForm(desk, { clientId: client.id, templateKey: key });
