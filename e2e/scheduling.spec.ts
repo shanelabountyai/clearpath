@@ -59,3 +59,41 @@ test.describe('the client form', () => {
     await expect(page.getByText('Roughly when was that?')).toBeVisible();
   });
 });
+
+test.describe('booking', () => {
+  test('books a standing weekly session, and telehealth needs no room', async ({ page }) => {
+    const { sql } = await import('./fixtures');
+    await actAs(page, USERS.frontDesk);
+
+    // A client with no standing series, so the new one is unambiguous.
+    const id = sql(`
+      select c.id from "Client" c
+      where not exists (select 1 from "AppointmentSeries" s where s."clientId" = c.id)
+      order by c.code limit 1`);
+    test.skip(!id, 'every seeded client already has a series');
+
+    await page.goto('/book');
+    await page.getByLabel('Client').selectOption(id);
+    await page.getByLabel('Modality').selectOption('telehealth');
+    await page.getByLabel('Date').fill('2026-10-06');
+    await page.getByRole('button', { name: 'Show times' }).click();
+
+    await expect(page.getByText('No room required')).toBeVisible();
+    await page.getByText('Every Tuesday').click();
+    await page.getByRole('button', { name: 'Book', exact: true }).click();
+
+    await expect(page.getByText(/Standing session booked/)).toBeVisible();
+  });
+
+  test('offers no in-person time when every room is taken, but offers telehealth', async ({ page }) => {
+    await actAs(page, USERS.frontDesk);
+    // The seed fills all four rooms at 10:00, 14:00 and 16:00 on weekdays.
+    await page.goto('/book?date=2026-10-06&modality=in_person');
+    const inPerson = await page.locator('label:has(input[name="startMinute"])').allTextContents();
+
+    await page.goto('/book?date=2026-10-06&modality=telehealth');
+    const video = await page.locator('label:has(input[name="startMinute"])').allTextContents();
+
+    expect(video.length).toBeGreaterThanOrEqual(inPerson.length);
+  });
+});

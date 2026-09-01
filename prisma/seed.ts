@@ -150,6 +150,11 @@ async function main() {
         });
         clients.push({ id: client.id, code, clinicianId: clinician.id });
 
+        // The last few are new referrals: booked in for an intake but not yet
+        // on a standing slot. A practice always has some, and a demo where
+        // every client already has a series has nowhere to show booking one.
+        if (clientNo > 64) continue;
+
         const series = await prisma.appointmentSeries.create({
           data: {
             clientId: client.id,
@@ -282,7 +287,10 @@ async function main() {
   // Ten clients have an intake sitting unsubmitted — new referrals who have the
   // link and have not filled it in yet, which is the ordinary state of a
   // practice and the state the client-facing form pages are demonstrated in.
-  for (const client of clients.slice(46, 56)) {
+  for (const client of clients.slice(64)) {
+    await issueForm(desk, { clientId: client.id, templateKey: 'intake' });
+  }
+  for (const client of clients.slice(46, 52)) {
     await issueForm(desk, { clientId: client.id, templateKey: 'intake' });
   }
 

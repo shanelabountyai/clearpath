@@ -23,7 +23,7 @@ export default defineConfig({
   webServer: {
     // Build and serve in one command, so a stale .next cannot quietly test
     // yesterday's code.
-    command: dev ? 'npm run dev:test' : 'npm run e2e:server',
+    command: dev ? 'npm run dev:e2e' : 'npm run e2e:server',
     port: PORT,
     reuseExistingServer: !process.env.CI,
     // A cold production build exceeds the 120s default on its own.

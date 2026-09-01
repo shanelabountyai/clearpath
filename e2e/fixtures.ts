@@ -14,8 +14,14 @@ export const USERS = {
   auditor: 'Owen Delacroix',
 } as const;
 
+/**
+ * The specs read the seeded practice straight out of the database rather than
+ * hard-coding ids. `clearpath_e2e` is deliberately not the unit-test database:
+ * that one is truncated between tests, and a sweep that shares it is decided by
+ * whichever suite ran last.
+ */
 const query = (sql: string) =>
-  execFileSync('psql', [process.env.PGDATABASE ?? 'clearpath_test', '-tAc', sql], { encoding: 'utf8' }).trim();
+  execFileSync('psql', [process.env.PGDATABASE ?? 'clearpath_e2e', '-tAc', sql], { encoding: 'utf8' }).trim();
 
 export const userId = (name: string) => query(`select id from "User" where name = '${name}'`);
 export const clientId = (code: string) => query(`select id from "Client" where code = '${code}'`);

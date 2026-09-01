@@ -58,12 +58,66 @@ Next.js (App Router) · Prisma · PostgreSQL · Vitest · Playwright · TypeScri
 ## Running it
 
 ```bash
+createdb clearpath_dev clearpath_test clearpath_e2e clearpath_shadow
 npm install
-npm run db:setup     # create + migrate + seed local databases
+npm run db:setup     # migrate all three, generate the client, seed dev + e2e
 npm run dev          # http://localhost:3700
-npm test             # unit + integration
-npm run test:e2e     # Playwright against a production build
+npm test             # 1,093 unit + integration tests
+npm run test:e2e     # 11 Playwright specs against a production build
 ```
 
-Local Postgres only — see `CLAUDE.md`. The seed creates obviously-fake clients
-(`Test Client 001` …) and a scripted practice quarter.
+Local Postgres only, three databases and each for one job:
+
+| Database | Used by | Contents |
+|---|---|---|
+| `clearpath_dev` | `npm run dev` | a seeded practice quarter |
+| `clearpath_test` | `npm test` | truncated between every test |
+| `clearpath_e2e` | `npm run test:e2e` | re-seeded at the start of each sweep |
+
+`clearpath_test` and `clearpath_e2e` are separate on purpose. The unit suite
+truncates every table between tests and the e2e sweep needs a seeded practice;
+sharing one database means whichever suite ran last decides what the other sees.
+
+There is no login. The dev switcher in the sidebar runs the app as any seeded
+person — see **Known limitations**. Authorization is real either way.
+
+### The 60-second demo
+
+1. Act as **Rosa Iyer** (supervisor) → **Co-sign queue** → co-sign one of Priya
+   Vance's progress notes.
+2. Open that client's record. Everything is there — attendance, screeners, the
+   note just signed — and where Priya's process notes would be there is a locked
+   panel stating the rule.
+3. Act as **Elena Sarkis** (practice manager) → open the same client → break
+   glass with a reason → the record opens, flagged. The process notes stay shut.
+4. Act as **Owen Delacroix** (auditor) → **Audit log** → both events are there,
+   the co-signature and the refusal.
+
+`e2e/confidentiality.spec.ts` is that walkthrough as a test.
+
+The seed creates obviously-fake clients (`Test Client 001` …) across a scripted
+practice quarter: 70 clients on standing weekly or biweekly slots, a clinician's
+week of annual leave with the standing sessions it displaces, ~86 form
+submissions including flagged screeners, three break-glass events and a logged
+process-note refusal.
+
+## Design
+
+`DESIGN-BRIEF.md` is the brief the interface was built from — personas, the
+confidentiality constraints that drive the visual language, the screen
+inventory, and the tokens. `app/theme.css` holds every colour, type and spacing
+value in the product under semantic names; swapping in a different design system
+means replacing that file's values and nothing else.
+
+## Where the interesting parts live
+
+| | |
+|---|---|
+| The permission matrix | [`src/auth/permissions.ts`](src/auth/permissions.ts) |
+| The single guarded door, and the audit write | [`src/auth/guard.ts`](src/auth/guard.ts) |
+| Constraints the ORM cannot express | [`prisma/migrations/*_init/migration.sql`](prisma/migrations) |
+| Recurrence, and the occurrence-key fix | [`src/scheduling/recurrence.ts`](src/scheduling/recurrence.ts) |
+| Scoring, thresholds and critical items | [`src/forms/scoring.ts`](src/forms/scoring.ts) |
+| Two-tier notes and co-signature | [`src/notes/service.ts`](src/notes/service.ts) |
+| The discretion deny-list | [`src/messaging/outbox.ts`](src/messaging/outbox.ts) |
+| Why any of it is shaped this way | [`WRITEUP.md`](WRITEUP.md) |
