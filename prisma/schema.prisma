@@ -1,0 +1,536 @@
+// Clearpath — Stillwater Counseling operations.
+// Synthetic data only. See the Scope Honesty banner in README.md.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────── people ───────────────────────────────
+
+enum Role {
+  front_desk
+  therapist
+  associate
+  supervisor
+  admin
+  auditor
+}
+
+model User {
+  id        String  @id @default(cuid())
+  name      String
+  email     String  @unique
+  role      Role
+  active    Boolean @default(true)
+
+  /// Supervision is data, not code: repointing this reroutes both read access
+  /// to progress notes and the co-signature queue, with no deploy.
+  supervisorId String?
+  supervisor   User?   @relation("supervision", fields: [supervisorId], references: [id])
+  supervisees  User[]  @relation("supervision")
+
+  clients        Client[]
+  appointments   Appointment[]
+  series         AppointmentSeries[]
+  availability   Availability[]
+  overrides      AvailabilityOverride[]
+  progressNotes  ProgressNote[]        @relation("noteAuthor")
+  coSigned       ProgressNote[]        @relation("noteCoSigner")
+  processNotes   ProcessNote[]
+  amendments     NoteAmendment[]
+  alerts         Alert[]
+
+  createdAt DateTime @default(now())
+}
+
+enum ReminderPreference {
+  email
+  sms
+  none
+}
+
+enum ClientStatus {
+  active
+  inactive
+}
+
+model Client {
+  id   String @id @default(cuid())
+  /// Obviously-fake display code for seeded data, e.g. "TC-001".
+  code String @unique
+
+  firstName String
+  lastName  String
+  dateOfBirth DateTime @db.Date
+  email     String?
+  phone     String?
+
+  emergencyContactName     String?
+  emergencyContactPhone    String?
+  emergencyContactRelation String?
+
+  treatingClinicianId String
+  treatingClinician   User   @relation(fields: [treatingClinicianId], references: [id])
+
+  /// Sliding-scale override in integer cents. Null falls back to the practice
+  /// standard fee.
+  feeCents Int?
+
+  reminderPreference ReminderPreference @default(email)
+  status             ClientStatus       @default(active)
+
+  appointments   Appointment[]
+  series         AppointmentSeries[]
+  progressNotes  ProgressNote[]
+  processNotes   ProcessNote[]
+  formRequests   FormRequest[]
+  submissions    FormSubmission[]
+  alerts         Alert[]
+  outbox         OutboxMessage[]
+  waitlist       WaitlistEntry[]
+
+  createdAt DateTime @default(now())
+
+  @@index([treatingClinicianId])
+}
+
+model PracticeSettings {
+  id                    Int @id @default(1)
+  name                  String @default("Stillwater Counseling")
+  standardFeeCents      Int    @default(18000)
+  lateCancelWindowHours Int    @default(24)
+  lateCancelFeeCents    Int    @default(9000)
+  /// How far ahead recurring series materialise instances.
+  recurrenceHorizonDays Int    @default(90)
+  /// P1-1: a client is "continuity at risk" after this long with nothing booked.
+  continuityGapDays     Int    @default(21)
+}
+
+model Room {
+  id     String  @id @default(cuid())
+  name   String  @unique
+  active Boolean @default(true)
+
+  appointments Appointment[]
+  series       AppointmentSeries[]
+}
+
+// ───────────────────────────── availability ─────────────────────────────
+
+model Availability {
+  id        String @id @default(cuid())
+  userId    String
+  user      User   @relation(fields: [userId], references: [id])
+  /// 0 = Sunday.
+  weekday   Int
+  /// Minutes from local midnight, practice timezone.
+  startMinute Int
+  endMinute   Int
+
+  @@unique([userId, weekday, startMinute])
+}
+
+enum OverrideKind {
+  unavailable
+  available
+}
+
+model AvailabilityOverride {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+  /// Inclusive date range, so a week of vacation is one row.
+  fromDate DateTime @db.Date
+  toDate   DateTime @db.Date
+  kind     OverrideKind @default(unavailable)
+  startMinute Int?
+  endMinute   Int?
+  /// Operational, never clinical. Shown to front desk.
+  reason   String?
+
+  @@index([userId, fromDate])
+}
+
+// ────────────────────────────── scheduling ──────────────────────────────
+
+enum AppointmentType {
+  intake // 75 min
+  standard // 50 min
+  extended // 80 min
+}
+
+enum Modality {
+  in_person
+  telehealth
+}
+
+enum Frequency {
+  weekly
+  biweekly
+}
+
+model AppointmentSeries {
+  id          String @id @default(cuid())
+  clientId    String
+  client      Client @relation(fields: [clientId], references: [id])
+  clinicianId String
+  clinician   User   @relation(fields: [clinicianId], references: [id])
+  roomId      String?
+  room        Room?  @relation(fields: [roomId], references: [id])
+
+  type     AppointmentType @default(standard)
+  modality Modality        @default(in_person)
+
+  frequency   Frequency @default(weekly)
+  weekday     Int
+  startMinute Int
+
+  startDate DateTime  @db.Date
+  endDate   DateTime? @db.Date
+  active    Boolean   @default(true)
+
+  appointments Appointment[]
+  createdAt    DateTime @default(now())
+
+  @@index([clientId])
+  @@index([clinicianId])
+}
+
+enum AppointmentStatus {
+  scheduled
+  confirmed
+  arrived
+  in_session
+  completed
+  no_show
+  cancelled
+  late_cancelled
+}
+
+model Appointment {
+  id       String  @id @default(cuid())
+  seriesId String?
+  series   AppointmentSeries? @relation(fields: [seriesId], references: [id])
+  /// A rescheduled instance detaches from its pattern and stops being
+  /// regenerated. Same regression that bit Groundwork.
+  detached Boolean @default(false)
+
+  clientId    String
+  client      Client @relation(fields: [clientId], references: [id])
+  clinicianId String
+  clinician   User   @relation(fields: [clinicianId], references: [id])
+  /// Null for telehealth. The room requirement is conditional on modality —
+  /// enforced by a CHECK constraint in the migration, not just here.
+  roomId String?
+  room   Room?   @relation(fields: [roomId], references: [id])
+
+  startAt DateTime @db.Timestamptz(3)
+  endAt   DateTime @db.Timestamptz(3)
+
+  type     AppointmentType   @default(standard)
+  modality Modality          @default(in_person)
+  status   AppointmentStatus @default(scheduled)
+
+  /// Telehealth join URL. Not a video integration; a text field.
+  joinLink String?
+
+  cancelledAt   DateTime?
+  cancelledById String?
+  /// Operational reason only ("client rescheduled"). Never clinical.
+  cancelReason  String?
+  /// Set when a cancellation lands inside the late-cancel window, or on
+  /// no-show. Chargeable flag only — no payment processing here.
+  chargeFeeCents Int?
+
+  /// Idempotency key for recurrence materialisation: series + occurrence date.
+  occurrenceKey String? @unique
+
+  progressNote ProgressNote?
+  processNotes ProcessNote[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clinicianId, startAt])
+  @@index([clientId, startAt])
+  @@index([roomId, startAt])
+  @@index([status, startAt])
+}
+
+// ──────────────────────────── clinical notes ────────────────────────────
+
+enum ProgressNoteStatus {
+  draft
+  signed
+  cosigned
+}
+
+/// The official clinical record. Author + supervisor-of-author + break-glass.
+model ProgressNote {
+  id            String      @id @default(cuid())
+  appointmentId String      @unique
+  appointment   Appointment @relation(fields: [appointmentId], references: [id])
+  clientId      String
+  client        Client      @relation(fields: [clientId], references: [id])
+
+  authorId String
+  author   User   @relation("noteAuthor", fields: [authorId], references: [id])
+
+  content String
+  status  ProgressNoteStatus @default(draft)
+
+  signedAt     DateTime?
+  coSignedById String?
+  coSignedBy   User?     @relation("noteCoSigner", fields: [coSignedById], references: [id])
+  coSignedAt   DateTime?
+
+  amendments NoteAmendment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId])
+  @@index([authorId, status])
+}
+
+/// The therapist's private working notes. Author-only at every layer — query,
+/// API, export, search, report. There is no supervisor path and no break-glass
+/// path to this table's content.
+model ProcessNote {
+  id            String       @id @default(cuid())
+  appointmentId String?
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
+  clientId      String
+  client        Client       @relation(fields: [clientId], references: [id])
+
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id])
+
+  content String
+  /// Signed-off equivalent: process notes have no signature workflow, but they
+  /// become immutable once the author closes them, and amend appends.
+  closedAt DateTime?
+
+  amendments NoteAmendment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([authorId, clientId])
+}
+
+enum NoteKind {
+  progress
+  process
+}
+
+/// Signed notes are immutable; corrections append an amendment.
+model NoteAmendment {
+  id   String   @id @default(cuid())
+  kind NoteKind
+
+  progressNoteId String?
+  progressNote   ProgressNote? @relation(fields: [progressNoteId], references: [id])
+  processNoteId  String?
+  processNote    ProcessNote?  @relation(fields: [processNoteId], references: [id])
+
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id])
+  content  String
+
+  createdAt DateTime @default(now())
+}
+
+// ──────────────────────────────── forms ────────────────────────────────
+
+enum FormKind {
+  intake
+  consent
+  screener
+}
+
+model FormTemplate {
+  id      String   @id @default(cuid())
+  key     String
+  name    String
+  kind    FormKind
+  version Int      @default(1)
+  published Boolean @default(false)
+
+  /// Field definitions, including conditional-display rules.
+  schema Json
+  /// Answer→value maps, total thresholds, and critical items. Versions with the
+  /// template, so a v1 submission always scores by v1 rules.
+  scoring Json?
+
+  requests    FormRequest[]
+  submissions FormSubmission[]
+
+  createdAt DateTime @default(now())
+
+  @@unique([key, version])
+}
+
+enum FormRequestStatus {
+  sent
+  started
+  submitted
+  expired
+}
+
+model FormRequest {
+  id         String @id @default(cuid())
+  clientId   String
+  client     Client @relation(fields: [clientId], references: [id])
+  /// Pinned to the exact template version the client is answering.
+  templateId String
+  template   FormTemplate @relation(fields: [templateId], references: [id])
+
+  /// Opaque, high-entropy, single-purpose. Carries no PHI.
+  token     String @unique
+  status    FormRequestStatus @default(sent)
+  expiresAt DateTime
+
+  sentAt      DateTime  @default(now())
+  startedAt   DateTime?
+  submittedAt DateTime?
+
+  submission FormSubmission?
+
+  @@index([clientId, status])
+}
+
+model FormSubmission {
+  id        String @id @default(cuid())
+  requestId String @unique
+  request   FormRequest @relation(fields: [requestId], references: [id])
+  clientId  String
+  client    Client @relation(fields: [clientId], references: [id])
+  /// The version answered. Rendering always uses this, never the latest.
+  templateId String
+  template   FormTemplate @relation(fields: [templateId], references: [id])
+
+  answers Json
+
+  totalScore   Int?
+  /// True when the total crossed a threshold or a critical item was flagged.
+  needsReview  Boolean  @default(false)
+  /// Rule identifiers only, e.g. ["threshold:moderate", "critical:item_9"].
+  /// Never answer content — this string reaches alert and review surfaces.
+  reviewReasons String[] @default([])
+
+  /// Consent signature stub.
+  signatureName String?
+  signedAt      DateTime?
+
+  alerts    Alert[]
+  createdAt DateTime @default(now())
+
+  @@index([clientId])
+}
+
+// ─────────────────────────── alerts and outbox ───────────────────────────
+
+enum AlertKind {
+  screener_threshold
+  screener_critical_item
+}
+
+/// Routes to the treating clinician only. Never a shared surface, never front
+/// desk. Carries reason codes, never answers or scores.
+model Alert {
+  id          String @id @default(cuid())
+  recipientId String
+  recipient   User   @relation(fields: [recipientId], references: [id])
+  clientId    String
+  client      Client @relation(fields: [clientId], references: [id])
+
+  submissionId String?
+  submission   FormSubmission? @relation(fields: [submissionId], references: [id])
+
+  kind    AlertKind
+  reasons String[] @default([])
+
+  createdAt      DateTime  @default(now())
+  acknowledgedAt DateTime?
+
+  @@index([recipientId, acknowledgedAt])
+}
+
+enum OutboxChannel {
+  email
+  sms
+}
+
+/// Nothing is actually sent. Bodies are lint-tested against a deny-list of
+/// clinical terms — a reminder says "Appointment reminder", never why.
+model OutboxMessage {
+  id       String @id @default(cuid())
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id])
+  /// Set for clinician-directed alerts.
+  userId   String?
+
+  channel     OutboxChannel
+  templateKey String
+  subject     String?
+  body        String
+
+  scheduledFor DateTime
+  sentAt       DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([scheduledFor, sentAt])
+}
+
+// ──────────────────────────────── waitlist ────────────────────────────────
+
+model WaitlistEntry {
+  id       String @id @default(cuid())
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id])
+  /// Preferred weekdays (0 = Sunday) and window, both optional.
+  weekdays    Int[]  @default([])
+  earliestMinute Int?
+  latestMinute   Int?
+  note     String?
+  active   Boolean @default(true)
+
+  createdAt DateTime @default(now())
+}
+
+// ───────────────────────────── audit trail ─────────────────────────────
+
+/// Append-only. A database rule blocks UPDATE and DELETE — see the migration.
+/// Ids only: no names, no note content, no answers, no scores.
+model AuditEvent {
+  id      String @id @default(cuid())
+  at      DateTime @default(now())
+
+  actorId   String
+  actorRole Role
+
+  action     String
+  resource   String
+  resourceId String?
+  /// Denormalised so "who touched client X" is one indexed query.
+  clientId   String?
+
+  allowed    Boolean
+  /// Which permission rule decided it.
+  rule       String
+  breakGlass Boolean @default(false)
+  /// Break-glass justification. Operational text typed by an admin.
+  reason     String?
+
+  @@index([clientId, at])
+  @@index([actorId, at])
+  @@index([breakGlass, at])
+  @@index([at])
+}

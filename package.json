@@ -3,12 +3,47 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "dev": "next dev -p 3700",
+    "build": "next build",
+    "start": "next start -p 3700",
+    "dev:test": "dotenv -e .env.test -- next dev -p 3700",
+    "start:test": "dotenv -e .env.test -- next start -p 3700",
+    "build:test": "dotenv -e .env.test -- next build",
+    "e2e:server": "npm run build:test && npm run start:test",
+    "test": "dotenv -e .env.test -- vitest run",
+    "test:watch": "dotenv -e .env.test -- vitest",
+    "test:e2e": "dotenv -e .env.test -- playwright test",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:test": "dotenv -e .env.test -- prisma migrate deploy",
+    "db:migrate:all": "npm run db:migrate && npm run db:migrate:test",
+    "db:status": "prisma migrate status && dotenv -e .env.test -- prisma migrate status",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:seed:test": "dotenv -e .env.test -- tsx prisma/seed.ts",
+    "db:reset": "prisma migrate reset --force",
+    "db:setup": "npm run db:migrate:all && npm run db:generate && npm run db:seed"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^22",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "dotenv-cli": "^11.0.0",
+    "prisma": "^7.10.0",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.13",
     "typescript": "^5.6",
     "vitest": "^2.1"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "^7.10.0",
+    "next": "^16.3.4",
+    "pg": "^8.23.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   }
 }

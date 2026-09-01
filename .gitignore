@@ -1,6 +1,11 @@
 node_modules/
 .next/
 dist/
+out/
 .env
-.env*.local
+.env.*
+!.env.example
 *.log
+test-results/
+playwright-report/
+src/generated/
