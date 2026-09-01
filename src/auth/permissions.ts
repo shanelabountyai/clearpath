@@ -174,6 +174,19 @@ export function ownCaseloadOnly(actor: Actor): boolean {
   return actor.role === 'therapist' || actor.role === 'associate' || actor.role === 'supervisor';
 }
 
+/**
+ * Whether this author's progress notes need a supervisor's signature.
+ *
+ * Pre-licensed associates practise under supervision, so their notes are not a
+ * complete record until countersigned. Modelling that as a *permission* was the
+ * intuitive wrong answer — an associate writes and signs exactly what a
+ * therapist does; the difference is a workflow gate on the record's completion,
+ * which is why associate and therapist share an identical matrix row.
+ */
+export function requiresCoSignature(authorRole: Role): boolean {
+  return authorRole === 'associate';
+}
+
 export interface Decision {
   allowed: boolean;
   /** Which matrix rule decided it — goes in the audit row. */
