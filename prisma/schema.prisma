@@ -19,6 +19,9 @@ enum Role {
   supervisor
   admin
   auditor
+  /// Never logs in. Exists so a form submitted through a tokenized link has an
+  /// honest actor in the audit trail instead of being attributed to staff.
+  client
 }
 
 model User {
@@ -102,6 +105,10 @@ model Client {
 model PracticeSettings {
   id                    Int @id @default(1)
   name                  String @default("Stillwater Counseling")
+  /// The name that appears in messages to clients. Deliberately not the legal
+  /// name: "Stillwater Counseling" in an SMS preview on a lock screen tells a
+  /// roommate what the appointment is for.
+  messagingName         String @default("Stillwater")
   standardFeeCents      Int    @default(18000)
   lateCancelWindowHours Int    @default(24)
   lateCancelFeeCents    Int    @default(9000)
@@ -395,6 +402,10 @@ model FormRequest {
   token     String @unique
   status    FormRequestStatus @default(sent)
   expiresAt DateTime
+
+  /// Answers saved as the client works. Tokenized links are resumable: a
+  /// screener asking hard questions is not something to finish in one sitting.
+  draftAnswers Json?
 
   sentAt      DateTime  @default(now())
   startedAt   DateTime?

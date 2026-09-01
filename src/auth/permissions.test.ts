@@ -37,6 +37,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     form_template: 'read',
     form_request: 'read create',
     form_submission: 'read',
+    alert: 'read update',
   }),
   associate: spec({
     client: 'read update',
@@ -48,6 +49,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     form_template: 'read',
     form_request: 'read create',
     form_submission: 'read',
+    alert: 'read update',
   }),
   supervisor: spec({
     client: 'read update',
@@ -59,6 +61,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     form_template: 'read',
     form_request: 'read create',
     form_submission: 'read',
+    alert: 'read update',
   }),
   admin: spec({
     client: 'read update', // break-glass only
@@ -71,6 +74,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     user: 'read create update',
   }),
   auditor: spec({ audit_log: 'read' }),
+  client: new Set<string>(),
 };
 
 /** Cells allowed with NO relationship and NO break-glass. */
@@ -100,6 +104,7 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
     user: 'read create update',
   }),
   auditor: ALLOWED.auditor,
+  client: ALLOWED.client,
 };
 
 const ME = 'u-me';
@@ -108,17 +113,17 @@ const OTHER = 'u-other';
 /** Actor holds every relationship to the target it possibly could. */
 const insider = (role: Role): [Actor, Target] => [
   { id: ME, role, breakGlass: { reason: 'client in crisis' } },
-  { authorId: ME, authorSupervisorId: ME, clinicianId: ME },
+  { authorId: ME, authorSupervisorId: ME, clinicianId: ME, recipientId: ME },
 ];
 /** Actor supervises the target's author but wrote nothing. */
 const oversight = (role: Role): [Actor, Target] => [
   { id: ME, role },
-  { authorId: OTHER, authorSupervisorId: ME, clinicianId: OTHER },
+  { authorId: OTHER, authorSupervisorId: ME, clinicianId: OTHER, recipientId: OTHER },
 ];
 /** Actor holds no relationship at all. */
 const stranger = (role: Role): [Actor, Target] => [
   { id: ME, role },
-  { authorId: OTHER, authorSupervisorId: OTHER, clinicianId: OTHER },
+  { authorId: OTHER, authorSupervisorId: OTHER, clinicianId: OTHER, recipientId: OTHER },
 ];
 
 describe('permission matrix — every cell', () => {
@@ -126,7 +131,7 @@ describe('permission matrix — every cell', () => {
     RESOURCES.flatMap((res) => ACTIONS.map((a) => [role, res, a] as [Role, Resource, Action])),
   );
 
-  it('covers 330 cells', () => expect(cells).toHaveLength(330));
+  it('covers 420 cells', () => expect(cells).toHaveLength(420));
 
   it.each(cells)('%s / %s / %s', (role, resource, action) => {
     const key = `${resource}:${action}`;
@@ -287,8 +292,18 @@ describe('caseload scoping', () => {
   });
 
   it('does not narrow the roles that work across the practice', () => {
-    for (const role of ['front_desk', 'admin', 'auditor'] as Role[]) {
+    for (const role of ['front_desk', 'admin', 'auditor', 'client'] as Role[]) {
       expect(ownCaseloadOnly({ id: ME, role })).toBe(false);
     }
   });
+});
+
+it('the client role can do nothing through the staff matrix', () => {
+  for (const resource of RESOURCES) {
+    for (const action of ACTIONS) {
+      const [a, t] = [{ id: ME, role: 'client' as Role, breakGlass: { reason: 'x' } },
+        { authorId: ME, authorSupervisorId: ME, clinicianId: ME, recipientId: ME }];
+      expect(can(a, action, resource, t).allowed, `${resource}:${action}`).toBe(false);
+    }
+  }
 });

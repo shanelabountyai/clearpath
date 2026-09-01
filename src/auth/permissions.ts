@@ -12,7 +12,8 @@ export type Role =
   | 'associate'
   | 'supervisor'
   | 'admin'
-  | 'auditor';
+  | 'auditor'
+  | 'client';
 
 export type Resource =
   | 'client' // demographics, emergency contact, consent status
@@ -24,18 +25,19 @@ export type Resource =
   | 'form_template'
   | 'form_request' // "sent / submitted ✓" status, no content
   | 'form_submission' // answers + scores; clinical data
+  | 'alert' // private risk notifications, addressed to one clinician
   | 'audit_log'
   | 'user'; // accounts, roles, supervision relationships
 
 export type Action = 'read' | 'create' | 'update' | 'sign' | 'cosign';
 
 export const ROLES: readonly Role[] = [
-  'front_desk', 'therapist', 'associate', 'supervisor', 'admin', 'auditor',
+  'front_desk', 'therapist', 'associate', 'supervisor', 'admin', 'auditor', 'client',
 ];
 export const RESOURCES: readonly Resource[] = [
   'client', 'fee', 'appointment', 'attendance_history', 'progress_note',
   'process_note', 'form_template', 'form_request', 'form_submission',
-  'audit_log', 'user',
+  'alert', 'audit_log', 'user',
 ];
 export const ACTIONS: readonly Action[] = ['read', 'create', 'update', 'sign', 'cosign'];
 
@@ -58,6 +60,8 @@ export interface Target {
   authorSupervisorId?: string;
   /** Treating clinician of the client this resource belongs to. */
   clinicianId?: string;
+  /** The single person a private notification is addressed to. */
+  recipientId?: string;
 }
 
 type RuleName = keyof typeof RULES;
@@ -79,6 +83,9 @@ const RULES = {
   supervisorOfAuthor: (a: Actor, t: Target) => supervises(a, t) && !isAuthor(a, t),
   treating: (a: Actor, t: Target) =>
     t.clinicianId !== undefined && a.id === t.clinicianId,
+  /** Addressed to exactly one person. Never a shared inbox, never front desk. */
+  recipient: (a: Actor, t: Target) =>
+    t.recipientId !== undefined && a.id === t.recipientId,
   /** Admin emergency access. Reaches demographics and progress notes only. */
   breakGlass: (a: Actor) => !!a.breakGlass?.reason.trim(),
 } satisfies Record<string, (a: Actor, t: Target) => boolean>;
@@ -102,6 +109,7 @@ const CLINICIAN: RoleMatrix = {
   form_template: { read: 'always' },
   form_request: { read: 'always', create: 'always' },
   form_submission: { read: 'treating' },
+  alert: { read: 'recipient', update: 'recipient' },
 };
 
 /**
@@ -143,6 +151,14 @@ export const MATRIX: Record<Role, RoleMatrix> = {
     // Read-only on the audit trail; no path to a client record.
     audit_log: { read: 'always' },
   },
+
+  /**
+   * Empty on purpose. Clients never authenticate into the staff application;
+   * they reach exactly one form through a tokenized link, and that door is
+   * guarded by the token rather than by this matrix. The role exists so a
+   * submission has an honest actor in the audit trail.
+   */
+  client: {},
 };
 
 /**
