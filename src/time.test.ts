@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addDays, daysBetween, localDateOf, utcToZoned, weekdayOf, zonedToUtc } from './time.js';
+import { addDays, daysBetween, localDateOf, utcToZoned, weekdayOf, zonedToUtc } from './time';
 
 describe('local wall time to instant', () => {
   it('converts a winter afternoon (EST, UTC-5)', () => {

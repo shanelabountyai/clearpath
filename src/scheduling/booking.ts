@@ -1,10 +1,10 @@
-import type { Actor } from '../auth/permissions.js';
-import { guarded } from '../auth/guard.js';
-import { prisma, type Tx } from '../db.js';
-import { Conflict, NotFound } from '../errors.js';
-import { addDays, localDateOf, zonedToUtc, type LocalDate } from '../time.js';
-import { freeSlots, pickRoom, workingWindows, type Span } from './availability.js';
-import { DURATION_MINUTES, occurrenceKey, planOccurrences, type AppointmentType } from './recurrence.js';
+import type { Actor } from '../auth/permissions';
+import { guarded } from '../auth/guard';
+import { prisma, type Tx } from '../db';
+import { Conflict, NotFound } from '../errors';
+import { addDays, localDateOf, zonedToUtc, type LocalDate } from '../time';
+import { freeSlots, pickRoom, workingWindows, type Span } from './availability';
+import { DURATION_MINUTES, occurrenceKey, planOccurrences, type AppointmentType } from './recurrence';
 
 type Modality = 'in_person' | 'telehealth';
 

@@ -1,8 +1,9 @@
-import { guarded } from '../auth/guard.js';
-import { requiresCoSignature, type Actor } from '../auth/permissions.js';
-import { systemClock, type Clock } from '../clock.js';
-import { prisma } from '../db.js';
-import { Conflict, NotFound } from '../errors.js';
+import { guarded } from '../auth/guard';
+import { requiresCoSignature, type Actor } from '../auth/permissions';
+import { systemClock, type Clock } from '../clock';
+import { prisma } from '../db';
+import { clientTarget } from '../clients/repository';
+import { Conflict, NotFound } from '../errors';
 
 /**
  * Two classes of clinical note, with deliberately different rules.
@@ -150,8 +151,9 @@ export async function getProgressNote(actor: Actor, noteId: string) {
       tx.progressNote.findUniqueOrThrow({
         where: { id: noteId },
         include: {
-          author: { select: { id: true, name: true, role: true } },
+          author: { select: { id: true, name: true, role: true, supervisorId: true } },
           coSignedBy: { select: { id: true, name: true } },
+          appointment: { select: { id: true, startAt: true } },
           amendments: { orderBy: { createdAt: 'asc' }, include: { author: { select: { name: true } } } },
         },
       }),
@@ -247,15 +249,10 @@ export async function createProcessNote(
   actor: Actor,
   input: { clientId: string; appointmentId?: string | null; content: string },
 ) {
-  const client = await prisma.client.findUnique({
-    where: { id: input.clientId }, select: { treatingClinicianId: true },
-  });
-  if (!client) throw new NotFound('Client');
-
   return guarded(
     {
       actor, action: 'create', resource: 'process_note', clientId: input.clientId,
-      target: { clinicianId: client.treatingClinicianId },
+      target: await clientTarget(input.clientId),
     },
     (tx) =>
       tx.processNote.create({

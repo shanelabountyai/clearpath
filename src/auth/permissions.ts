@@ -62,6 +62,8 @@ export interface Target {
   clinicianId?: string;
   /** The single person a private notification is addressed to. */
   recipientId?: string;
+  /** Supervisor of the treating clinician, at read time. */
+  treatingSupervisorId?: string;
 }
 
 type RuleName = keyof typeof RULES;
@@ -83,6 +85,19 @@ const RULES = {
   supervisorOfAuthor: (a: Actor, t: Target) => supervises(a, t) && !isAuthor(a, t),
   treating: (a: Actor, t: Target) =>
     t.clinicianId !== undefined && a.id === t.clinicianId,
+  /**
+   * The treating clinician, or the supervisor responsible for their practice.
+   *
+   * Supervision is clinical responsibility, not just a signature: a supervisor
+   * who can countersign a note but cannot open the record it belongs to has to
+   * countersign blind. So their reach over a supervisee's caseload matches the
+   * supervisee's — with exactly one exception, `process_note`, which stays
+   * `author` and is the sharper for it. The supervisor sees everything about
+   * this client except the one thing.
+   */
+  treatingOrSupervising: (a: Actor, t: Target) =>
+    (t.clinicianId !== undefined && a.id === t.clinicianId) ||
+    (a.role === 'supervisor' && t.treatingSupervisorId !== undefined && a.id === t.treatingSupervisorId),
   /** Addressed to exactly one person. Never a shared inbox, never front desk. */
   recipient: (a: Actor, t: Target) =>
     t.recipientId !== undefined && a.id === t.recipientId,
@@ -95,12 +110,14 @@ type RoleMatrix = Partial<Record<Resource, Cell>>;
 
 /** Shared by therapist, associate and supervisor. Anything absent is denied. */
 const CLINICIAN: RoleMatrix = {
-  client: { read: 'treating', update: 'treating' },
-  fee: { read: 'treating' },
+  client: { read: 'treatingOrSupervising', update: 'treatingOrSupervising' },
+  fee: { read: 'treatingOrSupervising' },
   appointment: { read: 'always', create: 'always', update: 'always' },
-  attendance_history: { read: 'treating' },
+  attendance_history: { read: 'treatingOrSupervising' },
   progress_note: {
     read: 'authorOrSupervisor',
+    // Writing is the treating clinician's alone. A supervisor countersigns the
+    // record; they do not author into somebody else's.
     create: 'treating',
     update: 'author',
     sign: 'author',
@@ -108,7 +125,7 @@ const CLINICIAN: RoleMatrix = {
   process_note: { read: 'author', create: 'treating', update: 'author' },
   form_template: { read: 'always' },
   form_request: { read: 'always', create: 'always' },
-  form_submission: { read: 'treating' },
+  form_submission: { read: 'treatingOrSupervising' },
   alert: { read: 'recipient', update: 'recipient' },
 };
 
@@ -172,6 +189,11 @@ export const MATRIX: Record<Role, RoleMatrix> = {
  */
 export function ownCaseloadOnly(actor: Actor): boolean {
   return actor.role === 'therapist' || actor.role === 'associate' || actor.role === 'supervisor';
+}
+
+/** A supervisor's caseload includes the clients their supervisees carry. */
+export function includesSuperviseeCaseloads(actor: Actor): boolean {
+  return actor.role === 'supervisor';
 }
 
 /**

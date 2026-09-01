@@ -1,4 +1,4 @@
-import { addDays, daysBetween, weekdayOf, type LocalDate } from '../time.js';
+import { addDays, daysBetween, weekdayOf, type LocalDate } from '../time';
 
 /**
  * Standing weekly sessions are the backbone of a counseling practice, so the

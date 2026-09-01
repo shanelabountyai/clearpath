@@ -1,0 +1,132 @@
+/*
+ * Clearpath design tokens.
+ *
+ * Dark mode follows the operating system. There is no in-app toggle: notes get
+ * written at 9pm and the OS already knows that, and a second switch is one more
+ * piece of state to get out of sync with the screenshots.
+ *
+ * One file, semantic names, no raw values anywhere else in the app. Swapping in
+ * a different design system means replacing the values below and nothing more.
+ *
+ * Three things are deliberate:
+ *
+ *  1. Sensitivity tiers are tokens, not ad-hoc colors. Operational, clinical and
+ *     private each carry a background, a border and a foreground, and every pair
+ *     clears WCAG AA in both themes.
+ *  2. Nothing carries meaning by color alone. Tier and status both get an icon
+ *     or a weight as well, because a colorblind clinician reads this all day.
+ *  3. Red is spoken for. It means chargeable or critical — never "clinical".
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Warm neutrals: a well-kept private practice, not a hospital corridor. */
+  --surface: #faf9f7;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f1efeb;
+  --surface-inset: #e9e6e0;
+
+  --border: #e0dcd5;
+  --border-strong: #c6c0b6;
+
+  --text: #22201d;
+  --text-muted: #5f5a53;
+  --text-subtle: #8a847b;
+
+  --accent: #2f5d50;
+  --accent-hover: #24493f;
+  --accent-contrast: #ffffff;
+  --accent-soft: #e4ede9;
+
+  --success: #2f6b46;
+  --success-soft: #e3f0e7;
+  --warning: #8a5a12;
+  --warning-soft: #fbeed6;
+  --danger: #9a2f2f;
+  --danger-soft: #f7e2e0;
+  --info: #2c5578;
+  --info-soft: #e2ecf5;
+
+  /* Sensitivity tiers. */
+  --tier-operational: #4a6fa5;
+  --tier-operational-soft: #e6edf7;
+  --tier-clinical: #2f5d50;
+  --tier-clinical-soft: #e4ede9;
+  --tier-private: #6b4a86;
+  --tier-private-soft: #efe8f5;
+
+  /* Session status. Distinguishable in a dense calendar, and never by hue alone. */
+  --status-scheduled: #8a847b;
+  --status-confirmed: #2c5578;
+  --status-arrived: #8a5a12;
+  --status-in-session: #2f5d50;
+  --status-completed: #4c6b52;
+  --status-no-show: #9a2f2f;
+  --status-cancelled: #a49d93;
+  --status-late-cancelled: #9a2f2f;
+
+  --radius: 6px;
+  --radius-lg: 10px;
+  --shadow-sm: 0 1px 2px rgb(34 32 29 / 0.06);
+  --shadow: 0 2px 8px rgb(34 32 29 / 0.08);
+  --shadow-lg: 0 8px 28px rgb(34 32 29 / 0.12);
+
+  --font-ui: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* Notes are prose someone writes and reads for minutes. They get a real
+     reading face, not the interface font at a larger size. */
+  --font-reading: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, ui-serif, serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+
+    --surface: #17181a;
+    --surface-raised: #1e2023;
+    --surface-sunken: #121315;
+    --surface-inset: #0d0e0f;
+
+    --border: #32353a;
+    --border-strong: #4b4f56;
+
+    --text: #ece9e4;
+    --text-muted: #a8a49d;
+    --text-subtle: #7d7973;
+
+    --accent: #7fb5a3;
+    --accent-hover: #99c6b7;
+    --accent-contrast: #10241e;
+    --accent-soft: #1d2c28;
+
+    --success: #7dbb93;
+    --success-soft: #1a2a20;
+    --warning: #d9a95f;
+    --warning-soft: #2c2416;
+    --danger: #e08a84;
+    --danger-soft: #2e1c1b;
+    --info: #86b3d9;
+    --info-soft: #17232e;
+
+    --tier-operational: #8fb0dd;
+    --tier-operational-soft: #1a222e;
+    --tier-clinical: #7fb5a3;
+    --tier-clinical-soft: #1a2724;
+    --tier-private: #b795d4;
+    --tier-private-soft: #241d2e;
+
+    --status-scheduled: #8b8681;
+    --status-confirmed: #86b3d9;
+    --status-arrived: #d9a95f;
+    --status-in-session: #7fb5a3;
+    --status-completed: #94b79b;
+    --status-no-show: #e08a84;
+    --status-cancelled: #6a6660;
+    --status-late-cancelled: #e08a84;
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow: 0 2px 10px rgb(0 0 0 / 0.45);
+    --shadow-lg: 0 8px 30px rgb(0 0 0 / 0.55);
+  }
+}

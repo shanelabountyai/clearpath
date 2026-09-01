@@ -1,5 +1,5 @@
-import { prisma } from '../db.js';
-import type { Actor, Role } from '../auth/permissions.js';
+import { prisma } from '../db';
+import type { Actor, Role } from '../auth/permissions';
 
 /**
  * Empties every table. TRUNCATE is deliberately still permitted on the audit

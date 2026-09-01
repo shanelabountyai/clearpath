@@ -1,8 +1,8 @@
-import { guarded } from '../auth/guard.js';
-import { ownCaseloadOnly, type Actor } from '../auth/permissions.js';
-import { systemClock, type Clock, DAY } from '../clock.js';
-import { prisma } from '../db.js';
-import { addDays, localDateOf, weekdayOf, zonedToUtc, type LocalDate } from '../time.js';
+import { guarded } from '../auth/guard';
+import { ownCaseloadOnly, type Actor } from '../auth/permissions';
+import { systemClock, type Clock, DAY } from '../clock';
+import { prisma } from '../db';
+import { addDays, localDateOf, weekdayOf, zonedToUtc, type LocalDate } from '../time';
 
 /**
  * The work-lists. Each one exists because something that ought to be visible
@@ -64,7 +64,10 @@ export async function continuityQueue(
   const mineOnly = ownCaseloadOnly(actor);
 
   return guarded(
-    { actor, action: 'read', resource: 'client', target: { clinicianId: actor.id } },
+    {
+      actor, action: 'read', resource: 'client',
+      target: { clinicianId: actor.id, treatingSupervisorId: actor.id },
+    },
     async (tx) => {
       const clients = await tx.client.findMany({
         where: {

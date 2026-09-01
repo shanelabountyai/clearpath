@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { freeSlots, isAway, overlaps, pickRoom, workingWindows, type Override, type WeeklyWindow } from './availability.js';
+import { freeSlots, isAway, overlaps, pickRoom, workingWindows, type Override, type WeeklyWindow } from './availability';
 
 // Tuesdays and Thursdays, 9:00–17:00.
 const weekly: WeeklyWindow[] = [

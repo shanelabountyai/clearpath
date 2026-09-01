@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   anchorOf, occurrenceDates, occurrenceKey, planOccurrences,
   type ExistingInstance, type Pattern,
-} from './recurrence.js';
+} from './recurrence';
 
 const tuesdays: Pattern = { frequency: 'weekly', weekday: 2, startDate: '2026-09-01' };
 

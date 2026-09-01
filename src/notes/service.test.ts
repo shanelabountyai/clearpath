@@ -1,14 +1,14 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { prisma } from '../db.js';
-import { Conflict, Forbidden } from '../errors.js';
-import { fixedClock, DAY } from '../clock.js';
-import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness.js';
-import { bookAppointment } from '../scheduling/booking.js';
+import { prisma } from '../db';
+import { Conflict, Forbidden } from '../errors';
+import { fixedClock, DAY } from '../clock';
+import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
+import { bookAppointment } from '../scheduling/booking';
 import {
   amendProcessNote, amendProgressNote, closeProcessNote, coSignProgressNote, coSignQueue,
   createProcessNote, createProgressNote, getProcessNote, getProgressNote, listProcessNotes,
   listProgressNotes, signProgressNote, updateProcessNote, updateProgressNote,
-} from './service.js';
+} from './service';
 
 let desk: Awaited<ReturnType<typeof makeUser>>;
 let supervisor: Awaited<ReturnType<typeof makeUser>>;

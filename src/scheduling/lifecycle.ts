@@ -1,8 +1,9 @@
-import { guarded } from '../auth/guard.js';
-import type { Actor } from '../auth/permissions.js';
-import { systemClock, type Clock } from '../clock.js';
-import { prisma } from '../db.js';
-import { Conflict, NotFound } from '../errors.js';
+import { guarded } from '../auth/guard';
+import type { Actor } from '../auth/permissions';
+import { systemClock, type Clock } from '../clock';
+import { prisma } from '../db';
+import { clientTarget } from '../clients/repository';
+import { Conflict, NotFound } from '../errors';
 
 export type Status =
   | 'scheduled' | 'confirmed' | 'arrived' | 'in_session'
@@ -122,18 +123,10 @@ export async function cancelAppointment(
  * pattern rather than a scheduling fact.
  */
 export async function attendanceSummary(actor: Actor, clientId: string) {
-  const client = await prisma.client.findUnique({
-    where: { id: clientId },
-    select: { treatingClinicianId: true },
-  });
-  if (!client) throw new NotFound('Client');
+  const target = await clientTarget(clientId);
 
   return guarded(
-    {
-      actor, action: 'read', resource: 'attendance_history',
-      target: { clinicianId: client.treatingClinicianId },
-      clientId,
-    },
+    { actor, action: 'read', resource: 'attendance_history', target, clientId },
     async (tx) => {
       const rows = await tx.appointment.groupBy({
         by: ['status'],

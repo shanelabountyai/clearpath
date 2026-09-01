@@ -1,6 +1,6 @@
-import { guarded } from '../auth/guard.js';
-import type { Actor } from '../auth/permissions.js';
-import { addDays, localDateOf, zonedToUtc, type LocalDate } from '../time.js';
+import { guarded } from '../auth/guard';
+import type { Actor } from '../auth/permissions';
+import { addDays, localDateOf, zonedToUtc, type LocalDate } from '../time';
 
 /**
  * Practice-level numbers, for the person who runs the practice. Counts and

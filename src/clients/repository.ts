@@ -1,7 +1,27 @@
-import { guarded, may } from '../auth/guard.js';
-import { ownCaseloadOnly, type Actor } from '../auth/permissions.js';
-import { prisma } from '../db.js';
-import { NotFound } from '../errors.js';
+import { guarded, may } from '../auth/guard';
+import { includesSuperviseeCaseloads, ownCaseloadOnly, type Actor } from '../auth/permissions';
+import { prisma } from '../db';
+import { NotFound } from '../errors';
+
+/**
+ * The relationship facts a check needs about a client: who treats them, and who
+ * supervises that person. Resolved once, from data, and handed to the matrix —
+ * which is what lets reassigning a supervisor change access with no deploy.
+ */
+export async function clientTarget(clientId: string) {
+  const row = await prisma.client.findUnique({
+    where: { id: clientId },
+    select: {
+      treatingClinicianId: true,
+      treatingClinician: { select: { supervisorId: true } },
+    },
+  });
+  if (!row) throw new NotFound('Client');
+  return {
+    clinicianId: row.treatingClinicianId,
+    treatingSupervisorId: row.treatingClinician.supervisorId ?? undefined,
+  };
+}
 
 /**
  * The client record, as front desk and as a clinician.
@@ -41,21 +61,17 @@ export async function consentStatus(clientId: string) {
 }
 
 export async function getClient(actor: Actor, clientId: string) {
-  const row = await prisma.client.findUnique({
-    where: { id: clientId },
-    select: { treatingClinicianId: true },
-  });
-  if (!row) throw new NotFound('Client');
+  const target = await clientTarget(clientId);
 
   return guarded(
-    {
-      actor, action: 'read', resource: 'client', resourceId: clientId, clientId,
-      target: { clinicianId: row.treatingClinicianId },
-    },
+    { actor, action: 'read', resource: 'client', resourceId: clientId, clientId, target },
     async (tx) => {
       const client = await tx.client.findUniqueOrThrow({
         where: { id: clientId },
-        select: { ...DEMOGRAPHICS, treatingClinician: { select: { id: true, name: true, role: true } } },
+        select: {
+          ...DEMOGRAPHICS,
+          treatingClinician: { select: { id: true, name: true, role: true, supervisorId: true } },
+        },
       });
       return { ...client, consents: await consentStatus(clientId) };
     },
@@ -72,12 +88,20 @@ export async function getClient(actor: Actor, clientId: string) {
  */
 export async function listClients(actor: Actor, opts: { search?: string } = {}) {
   const mineOnly = ownCaseloadOnly(actor);
+  // A supervisor's list is their own caseload plus their supervisees'.
+  const supervisees = includesSuperviseeCaseloads(actor)
+    ? (await prisma.user.findMany({ where: { supervisorId: actor.id }, select: { id: true } })).map((u) => u.id)
+    : [];
+
   return guarded(
-    { actor, action: 'read', resource: 'client', target: { clinicianId: actor.id } },
+    {
+      actor, action: 'read', resource: 'client',
+      target: { clinicianId: actor.id, treatingSupervisorId: actor.id },
+    },
     (tx) =>
       tx.client.findMany({
         where: {
-          ...(mineOnly ? { treatingClinicianId: actor.id } : {}),
+          ...(mineOnly ? { treatingClinicianId: { in: [actor.id, ...supervisees] } } : {}),
           ...(opts.search
             ? {
                 OR: [
@@ -104,14 +128,10 @@ export type ClientEdit = Partial<{
 }>;
 
 export async function updateClient(actor: Actor, clientId: string, data: ClientEdit) {
-  const row = await prisma.client.findUnique({ where: { id: clientId }, select: { treatingClinicianId: true } });
-  if (!row) throw new NotFound('Client');
+  const target = await clientTarget(clientId);
 
   return guarded(
-    {
-      actor, action: 'update', resource: 'client', resourceId: clientId, clientId,
-      target: { clinicianId: row.treatingClinicianId },
-    },
+    { actor, action: 'update', resource: 'client', resourceId: clientId, clientId, target },
     (tx) => tx.client.update({ where: { id: clientId }, data, select: DEMOGRAPHICS }),
   );
 }
@@ -149,13 +169,20 @@ export async function effectiveFeeCents(clientId: string): Promise<number> {
 }
 
 /** What the current actor may do with this record, for rendering affordances. */
-export function clientAffordances(actor: Actor, treatingClinicianId: string) {
-  const target = { clinicianId: treatingClinicianId };
+export function clientAffordances(
+  actor: Actor,
+  treatingClinicianId: string,
+  treatingSupervisorId?: string,
+) {
+  const target = { clinicianId: treatingClinicianId, treatingSupervisorId };
   return {
     edit: may({ actor, action: 'update', resource: 'client', target }),
     setFee: may({ actor, action: 'update', resource: 'fee', target }),
     readProgressNotes: may({ actor, action: 'read', resource: 'progress_note', target: { ...target, authorId: actor.id } }),
     readScreeners: may({ actor, action: 'read', resource: 'form_submission', target }),
     readAttendance: may({ actor, action: 'read', resource: 'attendance_history', target }),
+    /** Does this person ever author process notes? Front desk and admin do not. */
+    authorsProcessNotes: may({ actor, action: 'read', resource: 'process_note', target: { authorId: actor.id } }),
+    isTreatingClinician: actor.id === treatingClinicianId,
   };
 }

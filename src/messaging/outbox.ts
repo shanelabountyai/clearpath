@@ -1,5 +1,5 @@
-import { prisma, type Tx } from '../db.js';
-import { minutesToHHMM, utcToZoned, WEEKDAYS } from '../time.js';
+import { prisma, type Tx } from '../db';
+import { minutesToHHMM, utcToZoned, WEEKDAYS } from '../time';
 
 /**
  * Everything the practice sends a client, and the rule that governs it.

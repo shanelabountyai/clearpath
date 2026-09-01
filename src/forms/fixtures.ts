@@ -1,5 +1,5 @@
-import type { TemplateSchema } from './schema.js';
-import type { ScoringRules } from './scoring.js';
+import type { TemplateSchema } from './schema';
+import type { ScoringRules } from './scoring';
 
 /**
  * Instruments the practice uses. Written here rather than in the seed so the

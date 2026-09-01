@@ -1,6 +1,6 @@
-import { guarded } from '../auth/guard.js';
-import type { Actor } from '../auth/permissions.js';
-import type { Tx } from '../db.js';
+import { guarded } from '../auth/guard';
+import type { Actor } from '../auth/permissions';
+import type { Tx } from '../db';
 
 /**
  * The auditor's surface. Read-only, and pointedly the only role that has it:

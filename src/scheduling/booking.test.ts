@@ -1,10 +1,10 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { guarded } from '../auth/guard.js';
-import { prisma } from '../db.js';
-import { Conflict } from '../errors.js';
-import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness.js';
-import { localDateOf, zonedToUtc } from '../time.js';
-import { availableSlots, bookAppointment, materialiseSeries, rescheduleAppointment } from './booking.js';
+import { guarded } from '../auth/guard';
+import { prisma } from '../db';
+import { Conflict } from '../errors';
+import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
+import { localDateOf, zonedToUtc } from '../time';
+import { availableSlots, bookAppointment, materialiseSeries, rescheduleAppointment } from './booking';
 
 const TUESDAY = '2026-09-01';
 const THREE_PM = 15 * 60;

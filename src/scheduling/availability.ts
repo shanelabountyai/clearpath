@@ -1,5 +1,5 @@
-import type { LocalDate } from '../time.js';
-import { weekdayOf } from '../time.js';
+import type { LocalDate } from '../time';
+import { weekdayOf } from '../time';
 
 /** A half-open interval of minutes from local midnight: [start, end). */
 export interface Span {

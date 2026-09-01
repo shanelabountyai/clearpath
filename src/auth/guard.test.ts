@@ -1,8 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { prisma } from '../db.js';
-import { Forbidden } from '../errors.js';
-import { actor, makeClient, makeUser, resetDb } from '../test/harness.js';
-import { guarded, may } from './guard.js';
+import { prisma } from '../db';
+import { Forbidden } from '../errors';
+import { actor, makeClient, makeUser, resetDb } from '../test/harness';
+import { guarded, may } from './guard';
 
 beforeEach(resetDb);
 afterAll(() => prisma.$disconnect());
@@ -35,7 +35,7 @@ describe('every access leaves exactly one audit row', () => {
       resourceId: client.id,
       clientId: client.id,
       allowed: true,
-      rule: 'treating',
+      rule: 'treatingOrSupervising',
       breakGlass: false,
       reason: null,
     });

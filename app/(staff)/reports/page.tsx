@@ -1,0 +1,139 @@
+import { requireSession } from '../../../src/session';
+import { utilizationReport, weeklyVolume } from '../../../src/reports/utilization';
+import { addDays, localDateOf } from '../../../src/time';
+import { Card, PageHeader } from '../../../src/ui/primitives';
+
+export const dynamic = 'force-dynamic';
+
+const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
+
+export default async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
+  const { actor } = await requireSession();
+  const q = await searchParams;
+  const to = q.to ?? localDateOf(new Date());
+  const from = q.from ?? addDays(to, -90);
+
+  const [report, weeks] = await Promise.all([
+    utilizationReport(actor, { from, to }),
+    weeklyVolume(actor, { from, to }),
+  ]);
+
+  const maxWeekly = Math.max(1, ...weeks.map((w) => w.sessions));
+
+  return (
+    <>
+      <PageHeader
+        title="Practice report"
+        subtitle={`${from} to ${to}`}
+        actions={
+          <form className="flex items-end gap-2">
+            <input type="date" name="from" defaultValue={from} className="rounded-[var(--radius)] border px-2 py-1.5 text-[13px]" style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }} />
+            <input type="date" name="to" defaultValue={to} className="rounded-[var(--radius)] border px-2 py-1.5 text-[13px]" style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }} />
+            <button className="rounded-[var(--radius)] px-3 py-1.5 text-[13px] font-medium" style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}>Apply</button>
+          </form>
+        }
+      />
+
+      <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Stat label="Sessions booked" value={report.totals.booked} />
+        <Stat label="Completed" value={report.totals.completed} />
+        <Stat label="No-show rate" value={pct(report.rates.noShow)} tone={report.rates.noShow > 0.1 ? 'danger' : undefined} />
+        <Stat label="Late-cancel rate" value={pct(report.rates.lateCancel)} tone={report.rates.lateCancel > 0.1 ? 'danger' : undefined} />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <h2 className="mb-3 font-semibold">Room utilization</h2>
+          <p className="mb-3 text-[12.5px] text-muted">
+            Against the practice&rsquo;s own working day — eight hours per weekday — rather than
+            against the clock, which would make a full practice look half empty.
+          </p>
+          <ul className="space-y-2.5">
+            {report.rooms.map((r) => (
+              <li key={r.id}>
+                <div className="mb-1 flex items-baseline justify-between text-[13px]">
+                  <span>{r.name}</span>
+                  <span className="font-mono text-muted">{pct(r.utilization)}</span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full" style={{ background: 'var(--surface-inset)' }}>
+                  <div
+                    className="h-full rounded-full"
+                    style={{ width: `${Math.min(100, r.utilization * 100)}%`, background: 'var(--accent)' }}
+                  />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Card>
+
+        <Card>
+          <h2 className="mb-3 font-semibold">Sessions by clinician</h2>
+          <div className="scroll-x">
+            <table className="w-full min-w-[380px] border-collapse text-[13px]">
+              <thead>
+                <tr className="text-left text-muted">
+                  <th className="border-b py-1.5 font-medium" style={{ borderColor: 'var(--border)' }}>Clinician</th>
+                  <th className="border-b py-1.5 text-right font-medium" style={{ borderColor: 'var(--border)' }}>Completed</th>
+                  <th className="border-b py-1.5 text-right font-medium" style={{ borderColor: 'var(--border)' }}>No show</th>
+                  <th className="border-b py-1.5 text-right font-medium" style={{ borderColor: 'var(--border)' }}>Late cancel</th>
+                  <th className="border-b py-1.5 text-right font-medium" style={{ borderColor: 'var(--border)' }}>Telehealth</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.clinicians.map((c) => (
+                  <tr key={c.id}>
+                    <td className="border-b py-1.5" style={{ borderColor: 'var(--border)' }}>{c.name}</td>
+                    <td className="border-b py-1.5 text-right font-mono" style={{ borderColor: 'var(--border)' }}>{c.completed}</td>
+                    <td className="border-b py-1.5 text-right font-mono" style={{ borderColor: 'var(--border)' }}>{c.noShow}</td>
+                    <td className="border-b py-1.5 text-right font-mono" style={{ borderColor: 'var(--border)' }}>{c.lateCancelled}</td>
+                    <td className="border-b py-1.5 text-right font-mono" style={{ borderColor: 'var(--border)' }}>{c.telehealth}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        <Card className="lg:col-span-2">
+          <h2 className="mb-3 font-semibold">Completed sessions per week</h2>
+          <div className="scroll-x">
+            <div className="flex min-w-[600px] items-end gap-1" style={{ height: 140 }}>
+              {Object.entries(
+                weeks.reduce<Record<string, number>>((acc, w) => {
+                  acc[w.week] = (acc[w.week] ?? 0) + w.sessions;
+                  return acc;
+                }, {}),
+              ).map(([week, sessions]) => (
+                <div key={week} className="flex flex-1 flex-col items-center justify-end gap-1">
+                  <span className="font-mono text-[10.5px] text-subtle">{sessions}</span>
+                  <div
+                    className="w-full rounded-t"
+                    style={{ height: `${(sessions / maxWeekly) * 110}px`, background: 'var(--accent)' }}
+                    title={`Week of ${week}: ${sessions}`}
+                  />
+                  <span className="font-mono text-[9.5px] text-subtle">{week.slice(5)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      <p className="mt-4 text-[12px] text-subtle">
+        Counts and rates only. No client is named on this screen and no session content is
+        reachable from it.
+      </p>
+    </>
+  );
+}
+
+function Stat({ label, value, tone }: { label: string; value: string | number; tone?: 'danger' }) {
+  return (
+    <Card>
+      <p className="text-[11.5px] font-medium tracking-wide text-subtle uppercase">{label}</p>
+      <p className="mt-1 font-mono text-2xl" style={{ color: tone === 'danger' ? 'var(--danger)' : undefined }}>
+        {value}
+      </p>
+    </Card>
+  );
+}

@@ -4,7 +4,7 @@ import {
   ACTIONS, RESOURCES, ROLES,
   can, ownCaseloadOnly,
   type Action, type Actor, type Resource, type Role, type Target,
-} from './permissions.js';
+} from './permissions';
 
 /**
  * The expected policy, written from the PRD rather than read back off the
@@ -113,17 +113,17 @@ const OTHER = 'u-other';
 /** Actor holds every relationship to the target it possibly could. */
 const insider = (role: Role): [Actor, Target] => [
   { id: ME, role, breakGlass: { reason: 'client in crisis' } },
-  { authorId: ME, authorSupervisorId: ME, clinicianId: ME, recipientId: ME },
+  { authorId: ME, authorSupervisorId: ME, clinicianId: ME, recipientId: ME, treatingSupervisorId: ME },
 ];
 /** Actor supervises the target's author but wrote nothing. */
 const oversight = (role: Role): [Actor, Target] => [
   { id: ME, role },
-  { authorId: OTHER, authorSupervisorId: ME, clinicianId: OTHER, recipientId: OTHER },
+  { authorId: OTHER, authorSupervisorId: ME, clinicianId: OTHER, recipientId: OTHER, treatingSupervisorId: ME },
 ];
 /** Actor holds no relationship at all. */
 const stranger = (role: Role): [Actor, Target] => [
   { id: ME, role },
-  { authorId: OTHER, authorSupervisorId: OTHER, clinicianId: OTHER, recipientId: OTHER },
+  { authorId: OTHER, authorSupervisorId: OTHER, clinicianId: OTHER, recipientId: OTHER, treatingSupervisorId: OTHER },
 ];
 
 describe('permission matrix — every cell', () => {
@@ -306,4 +306,38 @@ it('the client role can do nothing through the staff matrix', () => {
       expect(can(a, action, resource, t).allowed, `${resource}:${action}`).toBe(false);
     }
   }
+});
+
+describe("a supervisor's reach over a supervisee's caseload", () => {
+  const superviseesClient = { clinicianId: OTHER, treatingSupervisorId: ME };
+  const boss = { id: ME, role: 'supervisor' as Role };
+
+  it.each(['client', 'fee', 'attendance_history', 'form_submission'] as Resource[])(
+    'reaches %s',
+    (resource) => {
+      expect(can(boss, 'read', resource, superviseesClient).allowed).toBe(true);
+    },
+  );
+
+  it('stops at the process note — the one exception, and the point', () => {
+    expect(can(boss, 'read', 'process_note', { ...superviseesClient, authorId: OTHER }).allowed).toBe(false);
+  });
+
+  it('does not write into a supervisee’s record', () => {
+    expect(can(boss, 'create', 'progress_note', superviseesClient).allowed).toBe(false);
+    expect(can(boss, 'create', 'process_note', superviseesClient).allowed).toBe(false);
+  });
+
+  it('does not reach a clinician they do not supervise', () => {
+    const notMine = { clinicianId: OTHER, treatingSupervisorId: 'u-third' };
+    for (const resource of ['client', 'fee', 'attendance_history', 'form_submission'] as Resource[]) {
+      expect(can(boss, 'read', resource, notMine).allowed, resource).toBe(false);
+    }
+  });
+
+  it('is not available to a therapist who happens to be named as supervisor', () => {
+    // The rule checks the role as well as the relationship, so a data error
+    // that points a client at a non-supervisor grants nothing.
+    expect(can({ id: ME, role: 'therapist' }, 'read', 'client', superviseesClient).allowed).toBe(false);
+  });
 });

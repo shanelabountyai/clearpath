@@ -1,12 +1,13 @@
 import { randomBytes } from 'node:crypto';
-import { auditEvent, guarded } from '../auth/guard.js';
-import type { Actor } from '../auth/permissions.js';
-import { systemClock, type Clock, DAY } from '../clock.js';
-import { prisma, type Tx } from '../db.js';
-import { Conflict, NotFound } from '../errors.js';
-import { queueToClient, queueToClinician } from '../messaging/outbox.js';
-import { renderSubmission, validateSubmission, type Answers, type TemplateSchema } from './schema.js';
-import { scoreSubmission, type ScoringRules } from './scoring.js';
+import { auditEvent, guarded } from '../auth/guard';
+import type { Actor } from '../auth/permissions';
+import { systemClock, type Clock, DAY } from '../clock';
+import { clientTarget } from '../clients/repository';
+import { prisma, type Tx } from '../db';
+import { Conflict, NotFound } from '../errors';
+import { queueToClient, queueToClinician } from '../messaging/outbox';
+import { renderSubmission, validateSubmission, type Answers, type TemplateSchema } from './schema';
+import { scoreSubmission, type ScoringRules } from './scoring';
 
 /**
  * Forms, from template revision through tokenized submission to the private
@@ -259,16 +260,10 @@ export async function formStatus(actor: Actor, clientId: string) {
 
 /** Content and scores. Clinical: the treating clinician only. */
 export async function listSubmissions(actor: Actor, clientId: string) {
-  const client = await prisma.client.findUnique({
-    where: { id: clientId }, select: { treatingClinicianId: true },
-  });
-  if (!client) throw new NotFound('Client');
+  const target = await clientTarget(clientId);
 
   return guarded(
-    {
-      actor, action: 'read', resource: 'form_submission', clientId,
-      target: { clinicianId: client.treatingClinicianId },
-    },
+    { actor, action: 'read', resource: 'form_submission', clientId, target },
     (tx) =>
       tx.formSubmission.findMany({
         where: { clientId },
@@ -284,15 +279,14 @@ export async function listSubmissions(actor: Actor, clientId: string) {
 /** One submission, rendered against the version it was answered on. */
 export async function getSubmission(actor: Actor, submissionId: string) {
   const row = await prisma.formSubmission.findUnique({
-    where: { id: submissionId },
-    select: { clientId: true, client: { select: { treatingClinicianId: true } } },
+    where: { id: submissionId }, select: { clientId: true },
   });
   if (!row) throw new NotFound('FormSubmission');
 
   return guarded(
     {
       actor, action: 'read', resource: 'form_submission', resourceId: submissionId,
-      clientId: row.clientId, target: { clinicianId: row.client.treatingClinicianId },
+      clientId: row.clientId, target: await clientTarget(row.clientId),
     },
     async (tx) => {
       const s = await tx.formSubmission.findUniqueOrThrow({

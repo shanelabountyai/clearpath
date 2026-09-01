@@ -1,5 +1,5 @@
-import type { Answers, TemplateSchema } from './schema.js';
-import { visibleFields } from './schema.js';
+import type { Answers, TemplateSchema } from './schema';
+import { visibleFields } from './schema';
 
 /**
  * Screener scoring.

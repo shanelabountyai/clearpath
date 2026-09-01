@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { intakeForm, wellbeingCheckIn } from './fixtures.js';
-import { renderSubmission, validateSubmission, visibleFields } from './schema.js';
-import { scoreSubmission, type ScoringRules } from './scoring.js';
+import { intakeForm, wellbeingCheckIn } from './fixtures';
+import { renderSubmission, validateSubmission, visibleFields } from './schema';
+import { scoreSubmission, type ScoringRules } from './scoring';
 
 const { schema, scoring } = wellbeingCheckIn;
 

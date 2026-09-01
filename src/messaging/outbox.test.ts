@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { prisma } from '../db.js';
-import { makeClient, makeUser, resetDb, settings } from '../test/harness.js';
-import { CLIENT_TEMPLATES, DENY_LIST, IndiscreetMessage, assertDiscreet, indiscreetTerms, queueToClient, queueToClinician } from './outbox.js';
+import { prisma } from '../db';
+import { makeClient, makeUser, resetDb, settings } from '../test/harness';
+import { CLIENT_TEMPLATES, DENY_LIST, IndiscreetMessage, assertDiscreet, indiscreetTerms, queueToClient, queueToClinician } from './outbox';
 
 beforeEach(async () => {
   await resetDb();

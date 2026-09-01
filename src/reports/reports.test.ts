@@ -1,14 +1,14 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { guarded } from '../auth/guard.js';
-import { fixedClock, DAY, HOUR } from '../clock.js';
-import { prisma } from '../db.js';
-import { Forbidden } from '../errors.js';
-import { bookAppointment } from '../scheduling/booking.js';
-import { cancelAppointment, setStatus } from '../scheduling/lifecycle.js';
-import { continuityQueue, vacationImpact, waitlistMatches } from '../scheduling/worklists.js';
-import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness.js';
-import { clientAccessTrail, queryAuditLog, toCsv } from './audit.js';
-import { utilizationReport, weeklyVolume, weekStart } from './utilization.js';
+import { guarded } from '../auth/guard';
+import { fixedClock, DAY, HOUR } from '../clock';
+import { prisma } from '../db';
+import { Forbidden } from '../errors';
+import { bookAppointment } from '../scheduling/booking';
+import { cancelAppointment, setStatus } from '../scheduling/lifecycle';
+import { continuityQueue, vacationImpact, waitlistMatches } from '../scheduling/worklists';
+import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
+import { clientAccessTrail, queryAuditLog, toCsv } from './audit';
+import { utilizationReport, weeklyVolume, weekStart } from './utilization';
 
 let desk: Awaited<ReturnType<typeof makeUser>>;
 let therapist: Awaited<ReturnType<typeof makeUser>>;

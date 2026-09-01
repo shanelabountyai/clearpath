@@ -1,6 +1,6 @@
-import { prisma, type Tx } from '../db.js';
-import { Forbidden } from '../errors.js';
-import { can, type Action, type Actor, type Decision, type Resource, type Target } from './permissions.js';
+import { prisma, type Tx } from '../db';
+import { Forbidden } from '../errors';
+import { can, type Action, type Actor, type Decision, type Resource, type Target } from './permissions';
 
 /**
  * The single door to client data.
@@ -50,6 +50,18 @@ async function record(db: Tx | typeof prisma, req: GuardRequest, decision: Decis
  */
 export function may(req: GuardRequest): boolean {
   return can(req.actor, req.action, req.resource, req.target ?? {}).allowed;
+}
+
+/**
+ * Would break-glass change this answer?
+ *
+ * Used to decide which refusal a person sees. Offering "break glass" to someone
+ * who has no such power is a door that does not open, and offering it where the
+ * answer is absolute -- a process note -- would misrepresent the rule.
+ */
+export function breakGlassWouldHelp(req: GuardRequest): boolean {
+  if (may(req)) return false;
+  return may({ ...req, actor: { ...req.actor, breakGlass: { reason: 'probe' } } });
 }
 
 /**

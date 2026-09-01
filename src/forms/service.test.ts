@@ -1,13 +1,13 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { prisma } from '../db.js';
-import { Conflict, Forbidden } from '../errors.js';
-import { actor, makeClient, makeUser, resetDb, settings } from '../test/harness.js';
-import { fixedClock, DAY } from '../clock.js';
-import { consentToTreat, wellbeingCheckIn } from './fixtures.js';
+import { prisma } from '../db';
+import { Conflict, Forbidden } from '../errors';
+import { actor, makeClient, makeUser, resetDb, settings } from '../test/harness';
+import { fixedClock, DAY } from '../clock';
+import { consentToTreat, wellbeingCheckIn } from './fixtures';
 import {
   acknowledgeAlert, formStatus, getSubmission, issueForm, listSubmissions,
   myAlerts, openForm, publishTemplate, saveDraft, submitForm,
-} from './service.js';
+} from './service';
 
 let admin: Awaited<ReturnType<typeof makeUser>>;
 let desk: Awaited<ReturnType<typeof makeUser>>;

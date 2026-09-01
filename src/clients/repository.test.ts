@@ -1,8 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { prisma } from '../db.js';
-import { Forbidden } from '../errors.js';
-import { actor, makeClient, makeUser, resetDb, settings } from '../test/harness.js';
-import { clientAffordances, consentStatus, createClient, effectiveFeeCents, getClient, listClients, setFee, updateClient } from './repository.js';
+import { prisma } from '../db';
+import { Forbidden } from '../errors';
+import { actor, makeClient, makeUser, resetDb, settings } from '../test/harness';
+import { clientAffordances, consentStatus, createClient, effectiveFeeCents, getClient, listClients, setFee, updateClient } from './repository';
 
 let desk: Awaited<ReturnType<typeof makeUser>>;
 let therapist: Awaited<ReturnType<typeof makeUser>>;
@@ -150,13 +150,15 @@ describe('editing', () => {
 describe('affordances drive what gets rendered', () => {
   it('give front desk the operational tier and nothing clinical', () => {
     expect(clientAffordances(actor(desk), therapist.id)).toEqual({
-      edit: true, setFee: false, readProgressNotes: false, readScreeners: false, readAttendance: false,
+      edit: true, setFee: false, readProgressNotes: false, readScreeners: false,
+      readAttendance: false, authorsProcessNotes: false, isTreatingClinician: false,
     });
   });
 
   it('give the treating clinician the clinical tier', () => {
     expect(clientAffordances(actor(therapist), therapist.id)).toEqual({
-      edit: true, setFee: false, readProgressNotes: true, readScreeners: true, readAttendance: true,
+      edit: true, setFee: false, readProgressNotes: true, readScreeners: true,
+      readAttendance: true, authorsProcessNotes: true, isTreatingClinician: true,
     });
   });
 
@@ -169,5 +171,45 @@ describe('affordances drive what gets rendered', () => {
   it('cost nothing in the audit log — drawing a button is not an access', async () => {
     clientAffordances(actor(desk), therapist.id);
     expect(await prisma.auditEvent.count()).toBe(0);
+  });
+});
+
+describe("a supervisor and their supervisee's client", () => {
+  it('reads the record, the fee, attendance and screeners', async () => {
+    const boss = await makeUser('supervisor');
+    const assoc = await makeUser('associate', { supervisorId: boss.id });
+    const theirClient = await makeClient(assoc.id);
+
+    const got = await getClient(actor(boss), theirClient.id);
+    expect(got.id).toBe(theirClient.id);
+
+    const can = clientAffordances(actor(boss), assoc.id, boss.id);
+    expect(can).toMatchObject({
+      readScreeners: true, readAttendance: true, authorsProcessNotes: true, isTreatingClinician: false,
+    });
+  });
+
+  it('appears in their caseload list alongside their own clients', async () => {
+    const boss = await makeUser('supervisor');
+    const assoc = await makeUser('associate', { supervisorId: boss.id });
+    const mine = await makeClient(boss.id, { code: 'TC-BOSS' });
+    const theirs = await makeClient(assoc.id, { code: 'TC-ASSOC' });
+    await makeClient(other.id, { code: 'TC-UNRELATED' });
+
+    const list = await listClients(actor(boss));
+    expect(list.map((c) => c.code).sort()).toEqual(['TC-ASSOC', 'TC-BOSS']);
+    expect(list.map((c) => c.id)).not.toContain(mine.id === theirs.id ? '' : 'nope');
+  });
+
+  it('loses it the moment the supervision relationship moves', async () => {
+    const boss = await makeUser('supervisor');
+    const newBoss = await makeUser('supervisor');
+    const assoc = await makeUser('associate', { supervisorId: boss.id });
+    const theirClient = await makeClient(assoc.id);
+
+    await expect(getClient(actor(boss), theirClient.id)).resolves.toBeTruthy();
+    await prisma.user.update({ where: { id: assoc.id }, data: { supervisorId: newBoss.id } });
+    await expect(getClient(actor(boss), theirClient.id)).rejects.toBeInstanceOf(Forbidden);
+    await expect(getClient(actor(newBoss), theirClient.id)).resolves.toBeTruthy();
   });
 });

@@ -1,10 +1,10 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { fixedClock, HOUR } from '../clock.js';
-import { prisma } from '../db.js';
-import { Forbidden } from '../errors.js';
-import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness.js';
-import { bookAppointment } from './booking.js';
-import { attendanceSummary, canTransition, cancelAppointment, classifyCancellation, setStatus, TRANSITIONS, type Status } from './lifecycle.js';
+import { fixedClock, HOUR } from '../clock';
+import { prisma } from '../db';
+import { Forbidden } from '../errors';
+import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
+import { bookAppointment } from './booking';
+import { attendanceSummary, canTransition, cancelAppointment, classifyCancellation, setStatus, TRANSITIONS, type Status } from './lifecycle';
 
 const TUESDAY = '2026-09-01';
 const THREE_PM = 15 * 60;
