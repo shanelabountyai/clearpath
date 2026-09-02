@@ -84,7 +84,7 @@ export default function DesignSystemPage() {
         <div className="grid gap-2.5">
           {TYPE_SCALE.map(([cls, px, use]) => (
             <div key={cls} className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b pb-2" style={{ borderColor: 'var(--border)' }}>
-              <span className={`${cls} w-64 shrink-0 font-medium`}>Discreet reminder, Tue 3:00</span>
+              <span className={`${cls} w-[320px] shrink-0 font-medium whitespace-nowrap`}>Discreet reminder, Tue 3:00</span>
               <span className="font-mono text-caption text-muted">{cls}</span>
               <span className="font-mono text-nano text-subtle">{px}</span>
               <span className="text-caption text-subtle">{use}</span>
