@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   ACTIONS, RESOURCES, ROLES,
@@ -273,12 +273,19 @@ describe('auditor', () => {
 
 it('no ad-hoc role checks outside the auth module', () => {
   const offenders: string[] = [];
-  for (const f of readdirSync('src', { recursive: true, encoding: 'utf8' })) {
-    if (!f.endsWith('.ts') || f.startsWith('auth/')) continue;
-    const src = readFileSync(`src/${f}`, 'utf8');
-    // Authorization decisions come from can(); nothing else branches on a role.
-    if (/\.role\s*[=!]==|['"](front_desk|therapist|associate|supervisor|admin|auditor)['"]\s*[=!]==/.test(src)) {
-      offenders.push(f);
+  // `app/` is where the rule is easiest to break: a page that draws its own
+  // conclusion about a role is an endpoint doing its own authorization.
+  for (const dir of ['src', 'app']) {
+    for (const f of readdirSync(dir, { recursive: true, encoding: 'utf8' })) {
+      const path = `${dir}/${f}`;
+      if (!/\.tsx?$/.test(f) || f.endsWith('.test.ts')) continue;
+      if (path.startsWith('src/auth/') || path.startsWith('src/generated/')) continue;
+      if (!statSync(path).isFile()) continue;
+      const src = readFileSync(path, 'utf8');
+      // Authorization decisions come from can(); nothing else branches on a role.
+      if (/\.role\s*[=!]==|['"](front_desk|therapist|associate|supervisor|admin|auditor)['"]\s*[=!]==/.test(src)) {
+        offenders.push(path);
+      }
     }
   }
   expect(offenders).toEqual([]);

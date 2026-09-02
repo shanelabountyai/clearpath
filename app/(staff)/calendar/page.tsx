@@ -3,6 +3,7 @@ import { requireSession } from '../../../src/session';
 import { daySchedule, type DaySession } from '../../../src/scheduling/calendar';
 import { addDays, localDateOf, minutesToHHMM, WEEKDAYS, weekdayOf } from '../../../src/time';
 import { PageHeader, STATUS_META, TierBanner } from '../../../src/ui/primitives';
+import { systemClock } from '@/src/clock';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,7 +18,7 @@ export default async function CalendarPage({
 }) {
   const { actor } = await requireSession();
   const params = await searchParams;
-  const date = params.date && /^\d{4}-\d{2}-\d{2}$/.test(params.date) ? params.date : localDateOf(new Date());
+  const date = params.date && /^\d{4}-\d{2}-\d{2}$/.test(params.date) ? params.date : localDateOf(systemClock.now());
   const day = await daySchedule(actor, date);
 
   const byRoom = new Map<string, DaySession[]>();
@@ -38,7 +39,7 @@ export default async function CalendarPage({
         actions={
           <div className="flex items-center gap-1.5">
             <DayLink date={addDays(date, -1)} label="← Previous" />
-            <DayLink date={localDateOf(new Date())} label="Today" />
+            <DayLink date={localDateOf(systemClock.now())} label="Today" />
             <DayLink date={addDays(date, 1)} label="Next →" />
           </div>
         }

@@ -2,6 +2,7 @@ import { requireSession } from '../../../src/session';
 import { utilizationReport, weeklyVolume } from '../../../src/reports/utilization';
 import { addDays, localDateOf } from '../../../src/time';
 import { Card, PageHeader } from '../../../src/ui/primitives';
+import { systemClock } from '@/src/clock';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,7 +11,7 @@ const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
 export default async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
   const { actor } = await requireSession();
   const q = await searchParams;
-  const to = q.to ?? localDateOf(new Date());
+  const to = q.to ?? localDateOf(systemClock.now());
   const from = q.from ?? addDays(to, -90);
 
   const [report, weeks] = await Promise.all([

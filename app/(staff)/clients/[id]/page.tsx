@@ -14,6 +14,7 @@ import {
 } from '../../../../src/ui/primitives';
 import { addProcessNote, saveFee, sendForm } from '../actions';
 import { BreakGlassPrompt } from '../../break-glass';
+import { systemClock } from '@/src/clock';
 
 export const dynamic = 'force-dynamic';
 
@@ -59,7 +60,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
   const fee = await effectiveFeeCents(id);
 
   const upcoming = await prisma.appointment.findMany({
-    where: { clientId: id, startAt: { gte: new Date() }, status: { in: ['scheduled', 'confirmed'] } },
+    where: { clientId: id, startAt: { gte: systemClock.now() }, status: { in: ['scheduled', 'confirmed'] } },
     select: { id: true, startAt: true, modality: true, status: true, room: { select: { name: true } } },
     orderBy: { startAt: 'asc' },
     take: 4,

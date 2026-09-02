@@ -1,6 +1,7 @@
 import type { Actor } from '../auth/permissions';
 import { guarded } from '../auth/guard';
 import { prisma, type Tx } from '../db';
+import { systemClock, type Clock } from '../clock';
 import { Conflict, NotFound } from '../errors';
 import { addDays, localDateOf, zonedToUtc, type LocalDate } from '../time';
 import { freeSlots, pickRoom, workingWindows, type Span } from './availability';
@@ -171,14 +172,15 @@ export async function bookAppointment(actor: Actor, input: BookInput) {
 export async function materialiseSeries(
   actor: Actor,
   seriesId: string,
-  opts: { from?: LocalDate; horizonDays?: number } = {},
+  opts: { from?: LocalDate; horizonDays?: number; clock?: Clock } = {},
 ) {
   const series = await prisma.appointmentSeries.findUnique({ where: { id: seriesId } });
   if (!series) throw new NotFound('AppointmentSeries');
 
   const settings = await prisma.practiceSettings.findUnique({ where: { id: 1 } });
   const horizon = opts.horizonDays ?? settings?.recurrenceHorizonDays ?? 90;
-  const from = opts.from ?? localDateOf(new Date());
+  const clock = opts.clock ?? systemClock;
+  const from = opts.from ?? localDateOf(clock.now());
   const window = { from: from < localDateOf(series.startDate) ? localDateOf(series.startDate) : from, to: addDays(from, horizon) };
 
   const existing = await prisma.appointment.findMany({
@@ -238,7 +240,7 @@ export async function materialiseSeries(
       (tx) =>
         tx.appointment.updateMany({
           where: { id: { in: withdrawn } },
-          data: { status: 'cancelled', cancelReason: 'series updated', cancelledAt: new Date() },
+          data: { status: 'cancelled', cancelReason: 'series updated', cancelledAt: clock.now() },
         }),
     );
   }

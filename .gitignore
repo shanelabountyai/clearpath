@@ -9,3 +9,6 @@ out/
 test-results/
 playwright-report/
 src/generated/
+
+# tsc incremental cache — regenerated on every typecheck
+*.tsbuildinfo

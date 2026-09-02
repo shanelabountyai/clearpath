@@ -7,6 +7,7 @@ import { DURATION_MINUTES, type AppointmentType } from '../../../src/scheduling/
 import { addDays, localDateOf, minutesToHHMM, WEEKDAYS, weekdayOf } from '../../../src/time';
 import { Badge, Card, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { book } from './actions';
+import { systemClock } from '@/src/clock';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,7 +31,7 @@ export default async function BookPage({
   const clientId = q.clientId ?? clients[0]?.id ?? '';
   const chosenClient = clients.find((c) => c.id === clientId);
   const clinicianId = q.clinicianId ?? chosenClient?.treatingClinician.id ?? clinicians[0]?.id ?? '';
-  const date = q.date ?? addDays(localDateOf(new Date()), 1);
+  const date = q.date ?? addDays(localDateOf(systemClock.now()), 1);
   const type = (q.type ?? 'standard') as AppointmentType;
   const modality = (q.modality ?? 'in_person') as 'in_person' | 'telehealth';
 

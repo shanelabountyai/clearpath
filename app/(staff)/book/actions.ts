@@ -8,6 +8,7 @@ import { bookAppointment, materialiseSeries } from '../../../src/scheduling/book
 import { queueToClient } from '../../../src/messaging/outbox';
 import { weekdayOf, zonedToUtc } from '../../../src/time';
 import type { AppointmentType } from '../../../src/scheduling/recurrence';
+import { systemClock } from '@/src/clock';
 
 type Modality = 'in_person' | 'telehealth';
 
@@ -38,7 +39,7 @@ export async function book(formData: FormData) {
       const appt = await bookAppointment(actor, { clientId, clinicianId, date, startMinute, type, modality });
       await queueToClient({
         clientId, templateKey: 'appointment_confirmed',
-        scheduledFor: new Date(), startAt: appt.startAt,
+        scheduledFor: systemClock.now(), startAt: appt.startAt,
       });
       redirect(`/appointments/${appt.id}`);
     }

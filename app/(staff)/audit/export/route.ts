@@ -1,5 +1,6 @@
 import { queryAuditLog, toCsv } from '../../../../src/reports/audit';
 import { requireSession } from '../../../../src/session';
+import { systemClock } from '@/src/clock';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,7 +21,7 @@ export async function GET(request: Request) {
   return new Response(toCsv(rows), {
     headers: {
       'content-type': 'text/csv; charset=utf-8',
-      'content-disposition': `attachment; filename="clearpath-audit-${new Date().toISOString().slice(0, 10)}.csv"`,
+      'content-disposition': `attachment; filename="clearpath-audit-${systemClock.now().toISOString().slice(0, 10)}.csv"`,
     },
   });
 }

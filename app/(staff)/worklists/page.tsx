@@ -4,17 +4,18 @@ import { requireSession } from '../../../src/session';
 import { continuityQueue, vacationImpact, waitlistMatches } from '../../../src/scheduling/worklists';
 import { addDays, localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
 import { Badge, Card, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
+import { systemClock } from '@/src/clock';
 
 export const dynamic = 'force-dynamic';
 
 export default async function WorkListsPage() {
   const { actor } = await requireSession();
-  const today = localDateOf(new Date());
+  const today = localDateOf(systemClock.now());
 
   const [continuity, absences] = await Promise.all([
     continuityQueue(actor),
     prisma.availabilityOverride.findMany({
-      where: { kind: 'unavailable', toDate: { gte: new Date() } },
+      where: { kind: 'unavailable', toDate: { gte: systemClock.now() } },
       select: { userId: true, fromDate: true, toDate: true, reason: true, user: { select: { name: true } } },
       orderBy: { fromDate: 'asc' },
     }),

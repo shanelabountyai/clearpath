@@ -1,4 +1,5 @@
 import { prisma, type Tx } from '../db';
+import { systemClock } from '../clock';
 import { minutesToHHMM, utcToZoned, WEEKDAYS } from '../time';
 
 /**
@@ -148,7 +149,7 @@ export async function queueToClinician(
       templateKey: input.templateKey,
       subject: input.subject,
       body: input.body,
-      scheduledFor: input.scheduledFor ?? new Date(),
+      scheduledFor: input.scheduledFor ?? systemClock.now(),
     },
   });
 }

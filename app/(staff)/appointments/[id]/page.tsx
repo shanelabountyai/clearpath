@@ -9,6 +9,7 @@ import { localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../../sr
 import { Badge, Card, Field, PageHeader, STATUS_META, StatusChip, money } from '../../../../src/ui/primitives';
 import { BreakGlassPrompt } from '../../break-glass';
 import { advanceStatus, cancelSession, moveSession, startProgressNote } from '../actions';
+import { systemClock } from '@/src/clock';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,7 +34,7 @@ export default async function AppointmentPage({
   const when = utcToZoned(appt.startAt);
   const settings = await prisma.practiceSettings.findUnique({ where: { id: 1 } });
   const windowHours = settings?.lateCancelWindowHours ?? 24;
-  const wouldBeLate = classifyCancellation(appt.startAt, new Date(), windowHours) === 'late_cancelled';
+  const wouldBeLate = classifyCancellation(appt.startAt, systemClock.now(), windowHours) === 'late_cancelled';
   const next = TRANSITIONS[appt.status as Status];
   const canWriteNote = may({
     actor, action: 'create', resource: 'progress_note', target: { clinicianId: appt.clinicianId },
