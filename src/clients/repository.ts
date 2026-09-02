@@ -118,7 +118,7 @@ export async function listClients(actor: Actor, opts: { search?: string } = {}) 
   );
 }
 
-export type ClientEdit = Partial<{
+type ClientEdit = Partial<{
   firstName: string; lastName: string; email: string | null; phone: string | null;
   emergencyContactName: string | null; emergencyContactPhone: string | null;
   emergencyContactRelation: string | null;

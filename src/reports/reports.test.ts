@@ -7,7 +7,7 @@ import { bookAppointment } from '../scheduling/booking';
 import { cancelAppointment, setStatus } from '../scheduling/lifecycle';
 import { continuityQueue, vacationImpact, waitlistMatches } from '../scheduling/worklists';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
-import { clientAccessTrail, queryAuditLog, toCsv } from './audit';
+import { queryAuditLog, toCsv } from './audit';
 import { utilizationReport, weeklyVolume, weekStart } from './utilization';
 
 let desk: Awaited<ReturnType<typeof makeUser>>;
@@ -186,7 +186,7 @@ describe('the auditor', () => {
 
   it('answers "who touched client X"', async () => {
     const c = await someActivity();
-    const { rows } = await clientAccessTrail(actor(auditorUser), c.id);
+    const { rows } = await queryAuditLog(actor(auditorUser), { clientId: c.id });
     expect(rows.every((r) => r.clientId === c.id)).toBe(true);
     expect(new Set(rows.map((r) => r.actorId))).toEqual(new Set([desk.id, admin.id]));
   });

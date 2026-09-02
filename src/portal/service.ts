@@ -21,9 +21,9 @@ import { queueToClient } from '../messaging/outbox';
  * times of one person, and the audit log knows the link was opened.
  */
 
-export const newPortalToken = () => randomBytes(24).toString('base64url');
+const newPortalToken = () => randomBytes(24).toString('base64url');
 
-export interface IssuePortalLink {
+interface IssuePortalLink {
   clientId: string;
   expiresInDays?: number;
   baseUrl?: string;

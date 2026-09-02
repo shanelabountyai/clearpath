@@ -56,7 +56,9 @@
   --tier-private: #6b4a86;
   --tier-private-soft: #efe8f5;
 
-  /* Session status. Distinguishable in a dense calendar, and never by hue alone. */
+  /* Session status. Distinguishable in a dense calendar, and never by hue alone.
+     Read dynamically by AppointmentChip as var(--status-<status>), so a grep for
+     a literal token name will not find these. */
   --status-scheduled: #8a847b;
   --status-confirmed: #2c5578;
   --status-arrived: #8a5a12;
@@ -95,15 +97,11 @@
   --space: 0.25rem;
 
   /*
-   * Motion. Three durations and one curve, and nothing bounces. `state` is a
-   * property changing in place (hover, selection), `enter` is something
-   * arriving, `exit` is something leaving - exits are faster than entrances
-   * because a thing the user dismissed should not linger. The global
-   * prefers-reduced-motion rule in globals.css zeroes all of these.
+   * Motion. One duration and one curve, and nothing bounces: `state` is a
+   * property changing in place (hover, selection). The global
+   * prefers-reduced-motion rule in globals.css zeroes it.
    */
   --motion-state: 120ms;
-  --motion-enter: 180ms;
-  --motion-exit: 90ms;
   --motion-ease: cubic-bezier(0.2, 0, 0.3, 1);
 
   /*
@@ -117,8 +115,6 @@
   --radius: 6px;
   --radius-lg: 10px;
   --shadow-sm: 0 1px 2px rgb(34 32 29 / 0.06);
-  --shadow: 0 2px 8px rgb(34 32 29 / 0.08);
-  --shadow-lg: 0 8px 28px rgb(34 32 29 / 0.12);
 
   --font-ui: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   /* Notes are prose someone writes and reads for minutes. They get a real
@@ -176,7 +172,5 @@
     --on-solid: #14161a;
 
     --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
-    --shadow: 0 2px 10px rgb(0 0 0 / 0.45);
-    --shadow-lg: 0 8px 30px rgb(0 0 0 / 0.55);
   }
 }

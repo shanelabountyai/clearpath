@@ -37,7 +37,7 @@ export interface TrendInput {
   needsReview: boolean;
 }
 
-export interface TrendPoint {
+interface TrendPoint {
   submissionId: string;
   at: Date;
   total: number;
@@ -83,7 +83,7 @@ export function trendSeries(
   });
 }
 
-export interface ScreenerTrend {
+interface ScreenerTrend {
   templateKey: string;
   name: string;
   points: TrendPoint[];

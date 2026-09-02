@@ -9,7 +9,7 @@ import { toCsv as csv } from '../csv';
  * who broke glass, and the auditor who reads that log cannot open a record.
  */
 
-export interface AuditFilters {
+interface AuditFilters {
   clientId?: string;
   actorId?: string;
   resource?: string;
@@ -62,8 +62,3 @@ const CSV_COLUMNS = [
 
 /** CSV of an audit result. Ids only, exactly like the rows themselves. */
 export const toCsv = (rows: Record<string, unknown>[]): string => csv(CSV_COLUMNS, rows);
-
-/** "Who touched this client, and what did they do." The question the log exists for. */
-export async function clientAccessTrail(actor: Actor, clientId: string, limit = 200) {
-  return queryAuditLog(actor, { clientId, limit });
-}

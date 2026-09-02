@@ -2,23 +2,10 @@
 
 import { revalidatePath } from 'next/cache';
 import { requireSession } from '../../../src/session';
-import { setFee, updateClient } from '../../../src/clients/repository';
+import { setFee } from '../../../src/clients/repository';
 import { issueForm } from '../../../src/forms/service';
 import { createProcessNote } from '../../../src/notes/service';
 import { issuePortalLink } from '../../../src/portal/service';
-
-export async function saveClient(formData: FormData) {
-  const { actor } = await requireSession();
-  const id = String(formData.get('clientId'));
-  await updateClient(actor, id, {
-    phone: String(formData.get('phone') ?? '') || null,
-    email: String(formData.get('email') ?? '') || null,
-    emergencyContactName: String(formData.get('emergencyContactName') ?? '') || null,
-    emergencyContactPhone: String(formData.get('emergencyContactPhone') ?? '') || null,
-    reminderPreference: String(formData.get('reminderPreference') ?? 'email') as 'email' | 'sms' | 'none',
-  });
-  revalidatePath(`/clients/${id}`);
-}
 
 export async function saveFee(formData: FormData) {
   const { actor } = await requireSession();

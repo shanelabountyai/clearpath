@@ -225,7 +225,7 @@ export const money = (cents: number | null | undefined) =>
     ? '—'
     : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
 
-export type ButtonVariant = 'solid' | 'quiet' | 'danger' | 'private';
+type ButtonVariant = 'solid' | 'quiet' | 'danger' | 'private';
 
 const BUTTON_FILL: Record<ButtonVariant, { background: string; color: string; borderColor: string }> = {
   solid: { background: 'var(--accent)', color: 'var(--accent-contrast)', borderColor: 'var(--accent)' },
@@ -424,29 +424,6 @@ export function BreakGlassBar({
           Close break-glass
         </button>
       </form>
-    </div>
-  );
-}
-
-/**
- * A list-level denial. Not EmptyState — the list is not empty, you may not
- * see it — and not an error, because nothing went wrong. The border is solid
- * where EmptyState's is dashed, nothing is red, and the voice states the
- * rule rather than apologising for it.
- */
-export function DeniedState({ title, children }: { title: string; children?: ReactNode }) {
-  return (
-    <div
-      className="rounded-[var(--radius-lg)] border px-5 py-8 text-center"
-      style={{ borderColor: 'var(--border-strong)', background: 'var(--surface-sunken)' }}
-    >
-      <p className="font-medium">
-        <span aria-hidden style={{ color: 'var(--text-subtle)' }}>⊝ </span>
-        {title}
-      </p>
-      <p className="mx-auto mt-1 max-w-prose text-body text-muted">
-        {children ?? 'Your role does not include this. That is the practice working as designed, not a fault.'}
-      </p>
     </div>
   );
 }

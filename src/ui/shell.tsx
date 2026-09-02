@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { may } from '../auth/guard';
 import type { Actor } from '../auth/permissions';
 
-export interface NavItem {
+interface NavItem {
   href: string;
   label: string;
   glyph: string;

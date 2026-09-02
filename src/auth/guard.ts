@@ -14,7 +14,7 @@ import { can, type Action, type Actor, type Decision, type Resource, type Target
  * a log that leaks what it was protecting is worse than no log, because it
  * concentrates the leak in the one table everybody is allowed to read.
  */
-export interface GuardRequest {
+interface GuardRequest {
   actor: Actor;
   action: Action;
   resource: Resource;

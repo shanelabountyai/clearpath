@@ -22,7 +22,7 @@ export interface Threshold {
   alert?: boolean;
 }
 
-export interface CriticalItem {
+interface CriticalItem {
   id: string;
   field: string;
   /** Flag when the answer is at least this, or is one of these. */

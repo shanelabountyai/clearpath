@@ -137,7 +137,7 @@ const CLINICIAN: RoleMatrix = {
 /**
  * role × resource × action. Absent entry = deny. This file is the whole policy.
  */
-export const MATRIX: Record<Role, RoleMatrix> = {
+const MATRIX: Record<Role, RoleMatrix> = {
   front_desk: {
     // Runs the calendar. Never sees clinical content of any kind.
     client: { read: 'always', create: 'always', update: 'always' },

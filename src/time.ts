@@ -8,7 +8,7 @@
  * client's hour does not. Storing a UTC instant and adding 7 days is the
  * classic wrong answer: it silently walks the appointment an hour twice a year.
  */
-export const PRACTICE_TZ = 'America/New_York';
+const PRACTICE_TZ = 'America/New_York';
 
 /** 'YYYY-MM-DD' in the practice timezone. */
 export type LocalDate = string;

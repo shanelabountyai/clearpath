@@ -4,15 +4,13 @@
  * actually answered on. Nothing here reads the "current" template.
  */
 
-export type FieldType =
-  | 'short_text' | 'long_text' | 'single_select' | 'multi_select'
+type FieldType =
+  | 'short_text' | 'long_text' | 'single_select'
   | 'scale' | 'date' | 'boolean' | 'signature';
 
-export interface Condition {
+interface Condition {
   field: string;
   equals?: unknown;
-  in?: unknown[];
-  gte?: number;
 }
 
 export interface FieldDef {
@@ -37,11 +35,9 @@ export interface TemplateSchema {
 
 export type Answers = Record<string, unknown>;
 
-export function conditionHolds(cond: Condition, answers: Answers): boolean {
+function conditionHolds(cond: Condition, answers: Answers): boolean {
   const value = answers[cond.field];
   if (cond.equals !== undefined) return value === cond.equals;
-  if (cond.in !== undefined) return cond.in.includes(value as never);
-  if (cond.gte !== undefined) return typeof value === 'number' && value >= cond.gte;
   return value !== undefined && value !== null && value !== '';
 }
 
@@ -66,7 +62,7 @@ export function visibleFields(schema: TemplateSchema, answers: Answers): FieldDe
   return visible;
 }
 
-export interface ValidationError {
+interface ValidationError {
   field: string;
   message: string;
 }
@@ -97,13 +93,6 @@ export function validateSubmission(schema: TemplateSchema, answers: Answers): Va
       }
       case 'single_select': {
         if (!f.options?.some((o) => o.value === v)) errors.push({ field: f.key, message: 'Not one of the choices' });
-        break;
-      }
-      case 'multi_select': {
-        if (!Array.isArray(v)) { errors.push({ field: f.key, message: 'Expected a list' }); break; }
-        for (const item of v) {
-          if (!f.options?.some((o) => o.value === item)) errors.push({ field: f.key, message: 'Not one of the choices' });
-        }
         break;
       }
       case 'boolean': {

@@ -56,7 +56,7 @@ export function assertDiscreet(text: string): void {
   if (terms.length) throw new IndiscreetMessage(terms);
 }
 
-export interface ClientMessageContext {
+interface ClientMessageContext {
   practice: string;
   startAt?: Date;
   link?: string;
@@ -96,7 +96,7 @@ async function practiceName(db: Tx | typeof prisma): Promise<string> {
   return s?.messagingName ?? 'Stillwater';
 }
 
-export interface QueueToClient {
+interface QueueToClient {
   clientId: string;
   templateKey: keyof typeof CLIENT_TEMPLATES;
   scheduledFor: Date;

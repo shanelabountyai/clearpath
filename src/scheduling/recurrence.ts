@@ -11,7 +11,7 @@ import { addDays, daysBetween, weekdayOf, type LocalDate } from '../time';
  * it from the pattern does not free the slot for the engine to refill.
  */
 
-export type Frequency = 'weekly' | 'biweekly';
+type Frequency = 'weekly' | 'biweekly';
 
 export interface Pattern {
   frequency: Frequency;
@@ -21,7 +21,7 @@ export interface Pattern {
   endDate?: LocalDate | null;
 }
 
-export interface Window {
+interface Window {
   from: LocalDate;
   to: LocalDate;
 }

@@ -26,7 +26,7 @@ type Modality = 'in_person' | 'telehealth';
  * sharing a group key as one booking of the clinician and the room.
  */
 
-export interface GroupBooking {
+interface GroupBooking {
   clinicianId: string;
   clientIds: string[];
   date: LocalDate;

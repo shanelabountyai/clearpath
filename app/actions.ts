@@ -2,7 +2,6 @@
 
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
-import { redirect } from 'next/navigation';
 import { BREAK_GLASS_COOKIE, USER_COOKIE, requireSession } from '../src/session';
 import { auditEvent } from '../src/auth/guard';
 
@@ -16,13 +15,6 @@ export async function switchUser(formData: FormData) {
   // required-reason field exists to prevent.
   jar.delete(BREAK_GLASS_COOKIE);
   revalidatePath('/', 'layout');
-}
-
-export async function signOut() {
-  const jar = await cookies();
-  jar.delete(USER_COOKIE);
-  jar.delete(BREAK_GLASS_COOKIE);
-  redirect('/');
 }
 
 /**

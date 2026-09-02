@@ -135,7 +135,7 @@ async function dayLoad(db: Tx | typeof prisma, date: LocalDate) {
   });
 }
 
-export interface SlotQuery {
+interface SlotQuery {
   clinicianId: string;
   date: LocalDate;
   type: AppointmentType;
@@ -180,7 +180,7 @@ export async function availableSlots(q: SlotQuery): Promise<number[]> {
   );
 }
 
-export interface BookInput {
+interface BookInput {
   clientId: string;
   clinicianId: string;
   date: LocalDate;

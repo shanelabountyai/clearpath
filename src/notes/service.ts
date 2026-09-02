@@ -82,7 +82,7 @@ export async function updateProgressNote(actor: Actor, noteId: string, content: 
   );
 }
 
-export interface SignResult {
+interface SignResult {
   id: string;
   status: 'signed' | 'cosigned';
   /** True while an associate's note still awaits its supervisor. */

@@ -10,13 +10,8 @@
 import { config } from 'dotenv';
 if (!process.env.DATABASE_URL) config({ path: '.env', quiet: true });
 
-const url = process.env.DATABASE_URL ?? '';
-if (/neon\.tech|rds\.amazonaws|supabase\.co|\.azure\./.test(url)) {
-  throw new Error('Refusing to seed synthetic clinical data into a hosted database.');
-}
-
 const { prisma } = await import('../src/db');
-const { actor } = await import('../src/test/harness');
+const { actor, resetDb } = await import('../src/test/harness');
 const { TEMPLATES } = await import('../src/forms/fixtures');
 const { publishTemplate, issueForm, submitForm } = await import('../src/forms/service');
 const { materialiseSeries } = await import('../src/scheduling/booking');
@@ -43,18 +38,11 @@ const TODAY = '2026-09-01';
 const QUARTER_START = '2026-06-01';
 const HORIZON_DAYS = 35;
 
-async function wipe() {
-  const tables = await prisma.$queryRaw<{ tablename: string }[]>`
-    SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> '_prisma_migrations'`;
-  const list = tables.map((t) => `"${t.tablename}"`).join(', ');
-  if (list) await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${list} RESTART IDENTITY CASCADE`);
-}
-
 const log = (msg: string) => console.log(`  ${msg}`);
 
 async function main() {
   console.log('\nSeeding Stillwater Counseling — synthetic data only.\n');
-  await wipe();
+  await resetDb();
 
   await prisma.practiceSettings.create({
     data: {

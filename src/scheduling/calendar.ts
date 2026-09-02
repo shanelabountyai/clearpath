@@ -77,7 +77,7 @@ export async function daySchedule(actor: Actor, date: LocalDate) {
   );
 }
 
-export type DaySchedule = Awaited<ReturnType<typeof daySchedule>>;
+type DaySchedule = Awaited<ReturnType<typeof daySchedule>>;
 export type DaySession = DaySchedule['sessions'][number];
 
 /** One session in full, with everything the detail screen needs. */
@@ -98,31 +98,5 @@ export async function getAppointment(actor: Actor, id: string) {
           progressNote: { select: { id: true, status: true, authorId: true } },
         },
       }),
-  );
-}
-
-/** The week a clinician is working, for the week view. */
-export async function weekSchedule(actor: Actor, clinicianId: string, weekStartDate: LocalDate) {
-  return guarded(
-    { actor, action: 'read', resource: 'appointment' },
-    async (tx) => {
-      const from = zonedToUtc(weekStartDate, 0);
-      const to = zonedToUtc(addDays(weekStartDate, 7), 0);
-      const sessions = await tx.appointment.findMany({
-        where: { clinicianId, startAt: { gte: from, lt: to } },
-        select: {
-          id: true, startAt: true, endAt: true, status: true, modality: true, roomId: true,
-          client: { select: { id: true, code: true, firstName: true, lastName: true } },
-          room: { select: { name: true } },
-        },
-        orderBy: { startAt: 'asc' },
-      });
-      return sessions.map((s) => ({
-        ...s,
-        date: localDateOf(s.startAt),
-        startMinute: Math.round((s.startAt.getTime() - zonedToUtc(localDateOf(s.startAt), 0).getTime()) / 60_000),
-        endMinute: Math.round((s.endAt.getTime() - zonedToUtc(localDateOf(s.startAt), 0).getTime()) / 60_000),
-      }));
-    },
   );
 }

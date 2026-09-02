@@ -4,35 +4,13 @@
 /* `inline` makes the utilities reference the custom properties themselves, so
    a token that changes with the colour scheme changes the rendered colour. */
 @theme inline {
-  --color-surface: var(--surface);
-  --color-raised: var(--surface-raised);
-  --color-sunken: var(--surface-sunken);
-  --color-inset: var(--surface-inset);
-  --color-line: var(--border);
-  --color-line-strong: var(--border-strong);
+  /* Only the four the app asks for as utilities: text-ink, text-muted,
+     text-subtle, text-accent. Every other colour is applied as an inline
+     `var(--token)`, so bridging it here would generate classes nobody writes. */
   --color-ink: var(--text);
   --color-muted: var(--text-muted);
   --color-subtle: var(--text-subtle);
   --color-accent: var(--accent);
-  --color-accent-hover: var(--accent-hover);
-  --color-accent-contrast: var(--accent-contrast);
-  --color-accent-soft: var(--accent-soft);
-  --color-success: var(--success);
-  --color-success-soft: var(--success-soft);
-  --color-warning: var(--warning);
-  --color-warning-soft: var(--warning-soft);
-  --color-danger: var(--danger);
-  --color-danger-soft: var(--danger-soft);
-  --color-info: var(--info);
-  --color-info-soft: var(--info-soft);
-  --color-tier-operational: var(--tier-operational);
-  --color-tier-operational-soft: var(--tier-operational-soft);
-  --color-tier-clinical: var(--tier-clinical);
-  --color-tier-clinical-soft: var(--tier-clinical-soft);
-  --color-tier-private: var(--tier-private);
-  --color-tier-private-soft: var(--tier-private-soft);
-
-  --color-on-solid: var(--on-solid);
 
   /* The type scale, as utilities: text-body, text-micro, text-title. */
   --text-nano: var(--type-nano);
@@ -56,12 +34,8 @@
   /* leading-reading: the serif prose line height. */
   --leading-reading: var(--reading-leading);
 
-  --font-sans: var(--font-ui);
   --font-serif: var(--font-reading);
   --font-mono: var(--font-mono);
-
-  --radius-token: var(--radius);
-  --radius-token-lg: var(--radius-lg);
 }
 
 html { background: var(--surface); }

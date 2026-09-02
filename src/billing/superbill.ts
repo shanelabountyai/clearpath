@@ -25,13 +25,13 @@ type Modality = 'in_person' | 'telehealth';
  * the session was, so it is derived from the appointment type rather than typed
  * by whoever exports it — the two ways to get this wrong are both fraud.
  */
-export const CPT: Record<AppointmentType, { code: string; description: string }> = {
+const CPT: Record<AppointmentType, { code: string; description: string }> = {
   intake: { code: '90791', description: 'Psychiatric diagnostic evaluation' },
   standard: { code: '90834', description: 'Psychotherapy, 45 minutes' },
   extended: { code: '90837', description: 'Psychotherapy, 60 minutes' },
 };
 
-export interface ServiceCode {
+interface ServiceCode {
   code: string;
   description: string;
   /** `95` marks a session delivered by interactive telecommunication. */
@@ -58,7 +58,7 @@ export interface BillableSession {
   clinicianName: string;
 }
 
-export interface SuperbillLine {
+interface SuperbillLine {
   date: LocalDate;
   code: string;
   description: string;
@@ -192,7 +192,7 @@ export async function buildSuperbill(
  * is not. Saying so on the export is the honest version; silently omitting it
  * sends the client to their insurer with a document that gets rejected.
  */
-export const OMISSIONS = [
+const OMISSIONS = [
   'No diagnosis (ICD-10) code: Clearpath does not record diagnoses. Your clinician must add one before this is claimable.',
   'No NPI or tax identification: this is a synthetic-data project, not a billing system.',
   'Payments are not tracked. Amounts shown are the fees recorded at the time of service.',

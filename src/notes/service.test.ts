@@ -338,7 +338,7 @@ function callArgs(src: string, from: number): string {
   return src.slice(open);
 }
 
-export function unauthoredProcessNoteQueries(): string[] {
+function unauthoredProcessNoteQueries(): string[] {
   const offenders: string[] = [];
   for (const path of sourceFiles()) {
     const src = readFileSync(path, 'utf8');

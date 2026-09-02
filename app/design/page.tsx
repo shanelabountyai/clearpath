@@ -1,6 +1,6 @@
 import { Logo, Wordmark } from '@/src/ui/logo';
 import {
-  AppointmentChip, Badge, Button, Card, DeniedState, EmptyState, Field,
+  AppointmentChip, Badge, Button, Card, EmptyState, Field,
   LockedPanel, PageHeader, STATUS_META, StatusChip, TierBanner, money,
   type Tier, type Tone,
 } from '@/src/ui/primitives';
@@ -159,12 +159,6 @@ export default function DesignSystemPage() {
         </div>
         <div className="mt-4">
           <LockedPanel />
-        </div>
-        <div className="mt-4">
-          <DeniedState title="Process notes are not listed for your role">
-            A denial is a designed state: the list exists, the rule is stated, nothing is red
-            and nothing apologises. Distinct from EmptyState&rsquo;s dashed border and empty voice.
-          </DeniedState>
         </div>
       </Section>
 

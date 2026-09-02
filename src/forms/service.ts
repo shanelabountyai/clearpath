@@ -27,9 +27,9 @@ const asSchema = (v: unknown) => v as TemplateSchema;
 const asRules = (v: unknown) => (v ?? null) as ScoringRules | null;
 
 /** 32 bytes of randomness. Opaque, carries no client identifier. */
-export const newToken = () => randomBytes(24).toString('base64url');
+const newToken = () => randomBytes(24).toString('base64url');
 
-export interface TemplateDraft {
+interface TemplateDraft {
   key: string;
   name: string;
   kind: 'intake' | 'consent' | 'screener';
@@ -62,7 +62,7 @@ export async function publishTemplate(actor: Actor, draft: TemplateDraft) {
   );
 }
 
-export const latestTemplate = (key: string) =>
+const latestTemplate = (key: string) =>
   prisma.formTemplate.findFirst({ where: { key, published: true }, orderBy: { version: 'desc' } });
 
 export async function issueForm(
@@ -145,7 +145,7 @@ export async function saveDraft(token: string, answers: Answers, opts: { clock?:
   });
 }
 
-export interface SubmitResult {
+interface SubmitResult {
   submissionId: string;
   needsReview: boolean;
   /** Reason codes. Safe to log; deliberately not the score or the answers. */

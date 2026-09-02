@@ -22,6 +22,6 @@ export function fixedClock(at: Date | string): Clock & { set(d: Date | string): 
   };
 }
 
-export const MINUTE = 60_000;
+const MINUTE = 60_000;
 export const HOUR = 60 * MINUTE;
 export const DAY = 24 * HOUR;
