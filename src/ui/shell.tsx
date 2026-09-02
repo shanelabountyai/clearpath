@@ -29,6 +29,10 @@ export function navFor(actor: Actor): NavItem[] {
       { href: '/book', label: 'Book a session', glyph: '＋' },
     ],
     [
+      may({ actor, action: 'create', resource: 'appointment' }),
+      { href: '/book/group', label: 'Book a group', glyph: '⁂' },
+    ],
+    [
       may({ actor, action: 'read', resource: 'alert', target: { recipientId: actor.id } }),
       { href: '/alerts', label: 'Alerts', glyph: '◆' },
     ],

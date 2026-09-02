@@ -27,6 +27,8 @@ export async function daySchedule(actor: Actor, date: LocalDate) {
           select: {
             id: true, startAt: true, endAt: true, status: true, modality: true, type: true,
             roomId: true, clinicianId: true, seriesId: true, detached: true,
+            groupSessionId: true,
+            groupSession: { select: { topic: true } },
             client: { select: { id: true, code: true, firstName: true, lastName: true } },
             clinician: { select: { id: true, name: true } },
             room: { select: { id: true, name: true } },

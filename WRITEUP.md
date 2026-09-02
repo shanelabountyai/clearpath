@@ -14,6 +14,8 @@ Kept as the work happens, not reconstructed afterwards.
 5. **The superbill** — a claim document assembled entirely from records that
    already existed, and honest about the one it cannot supply.
 6. **Screener trends** — the feature whose design is mostly refusals.
+7. **Group sessions** — a plural booking of a singular appointment, paid for
+   with two exclusion constraints instead of a rewrite.
 
 ---
 
@@ -299,6 +301,68 @@ use for.
 
 ---
 
+## 7. Group sessions
+
+The requirement reads "one appointment, N clients", and building it that way
+would have been the expensive mistake.
+
+An appointment carrying a list of clients means every path that asks "whose
+appointment is this?" has to learn to ask "which attendee?" — the progress note,
+the fee at completion, the attendance count, the audit row, the client record,
+the continuity queue, the superbill. All of those are about a *person*, not
+about an hour, and none of them wanted to change.
+
+So the appointment stays singular and the *booking* becomes plural: a group
+session is N appointment rows sharing a `groupSessionId`, one per attendee. Six
+people, six notes, six fees, six audit rows, and not one existing query touched.
+Attendance-level notes — the part the requirement called out as the hard bit —
+came for free, because they were never anything other than what the system
+already did.
+
+**What it cost was two constraints.** The clinician and room exclusion
+constraints see six rows with the same clinician in the same room at the same
+time, which is precisely the double-booking they exist to reject. Adding the
+group key as a third excluded column fixes it:
+
+```sql
+EXCLUDE USING gist (
+  "clinicianId" WITH =,
+  (COALESCE("groupSessionId", id)) WITH <>,
+  tstzrange("startAt", "endAt", '[)') WITH &&
+)
+```
+
+Two rows now conflict only if they share the resource, overlap in time, *and*
+belong to different bookings. The `COALESCE` is the load-bearing part and the
+easy thing to get wrong: with a bare `"groupSessionId" WITH <>`, two ordinary
+appointments both have NULL there, `NULL <> NULL` is NULL rather than true, and
+the constraint silently stops rejecting anything at all. Falling back to the
+row's own id gives every non-group row a key unique to itself, so it still
+differs from every other row and the original behaviour is exactly preserved.
+A constraint that fails open is worse than no constraint, because the tests
+that covered it keep passing.
+
+**Leaving a group is moving out of the hour.** Rescheduling an attendee clears
+their group key. Keeping it would let two attendees be rescheduled onto the same
+new time and double-book the clinician, since co-attendees are deliberately
+exempt from the overlap rule — the exemption has to end where the shared hour
+does.
+
+**Cancelling the group cancels six appointments, not one event.** Each goes
+through the ordinary cancellation, so each attendee is judged against the
+late-cancel window on their own. The practice calling off a group and one client
+dropping out of it are different events, and the fee logic already knew that.
+
+**On the calendar it is one chip.** Drawn literally, six attendees are six chips
+stacked on the same pixels — which is what a double-booking looks like. Front
+desk sees one hour with six people in it and opens the roster from there.
+
+The audit door grew one function for this: `guardedAll`, which nests the guard
+once per client record so a booking that writes to six records leaves six rows,
+each naming its own client, in the same transaction as the appointments.
+
+---
+
 ## Decisions log
 
 | Decision | Why |
@@ -324,6 +388,9 @@ use for.
 | Booking takes a per-slot advisory lock before it inserts | The exclusion constraints make a double-booking impossible but they do not make a *rejection* truthful: outside a lock, `23P01` means either "that room is booked" or "someone is part-way through booking it and may roll back", and ten concurrent bookings of one hour therefore all walk past a room that ends up empty. Measured at three runs in forty. Inside the lock a conflict is a committed conflict, the deadlock storm disappears with the shared lock ordering, and 150 rounds pass in 7s where 40 used to take minutes |
 | A trend refuses to compute a change across a template version | Scoring rules version with the template, so totals either side of a revision measure different things. A line drawn through them renders a rules edit as clinical movement |
 | Screener trends live on their own page, not on the client record | A chart of somebody's mental state over time should not be something you meet while looking for their phone number. Reaching it is a deliberate navigation, and the read is logged as one |
+| A group session is N appointments sharing a key, not one appointment with N clients | Notes, fees, attendance, audit rows and the superbill are all about a person rather than an hour. Keeping the appointment singular meant none of them changed, and attendance-level notes needed no work at all |
+| The group key enters the exclusion constraints as `COALESCE(groupSessionId, id)` | A bare `groupSessionId WITH <>` compares NULL to NULL for every pair of ordinary appointments, which is NULL rather than true, so the constraint would stop rejecting anything and every existing test would still pass. Falling back to the row's own id keeps individual bookings conflicting |
+| Rescheduling an attendee clears their group key | The exemption that lets co-attendees share a clinician has to end where the shared hour does, or two rescheduled attendees can land on each other |
 | Producing a superbill needs both the fee and the demographics permission | It is both records at once. Guarding it twice meant no new matrix row and no new question: whoever may already see both halves may produce it, and the practice manager still has to break glass, because billing is not a carve-out from the rule that their clinical reach is logged |
 
 ## What this project deliberately is not

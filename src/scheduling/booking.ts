@@ -57,7 +57,7 @@ const isRetryable = (e: unknown): boolean =>
  *
  * The lock is per slot, not global: two different hours never wait on each other.
  */
-const slotLock = (tx: Tx, date: LocalDate, startMinute: number) =>
+export const slotLock = (tx: Tx, date: LocalDate, startMinute: number) =>
   tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${date}T${startMinute}`})::bigint)`;
 
 /**
@@ -88,7 +88,7 @@ const backoff = (attempt: number) =>
  * stop (there is no second clinician to fall through to), and a write conflict
  * means the question was never answered, so ask again.
  */
-async function claimRoom<T>(
+export async function claimRoom<T>(
   candidates: readonly (string | null)[],
   attempt: (roomId: string | null) => Promise<T>,
 ): Promise<{ booked: T } | { conflict: 'room' | 'clinician' | null }> {
@@ -363,7 +363,15 @@ export async function rescheduleAppointment(
         await slotLock(tx, to.date, to.startMinute);
         return tx.appointment.update({
           where: { id: appointmentId },
-          data: { startAt, endAt, roomId, type, modality, detached: current.seriesId ? true : false },
+          data: {
+            startAt, endAt, roomId, type, modality,
+            detached: current.seriesId ? true : false,
+            // Moving an attendee out of the hour moves them out of the group.
+            // Keeping the key would let two members be rescheduled onto each
+            // other and double-book the clinician, since co-attendees are
+            // exempt from the overlap constraint by design.
+            groupSessionId: null,
+          },
         });
       },
     ),

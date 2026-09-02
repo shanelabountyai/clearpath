@@ -141,10 +141,11 @@ function Column({
             style={{ top: (m - hours[0]!) * PX_PER_MIN, borderColor: 'var(--border)', opacity: 0.55 }}
           />
         ))}
-        {sessions.map((s) => (
+        {collapseGroups(sessions).map(({ session: s, group }) => (
           <AppointmentChip
             key={s.id}
             session={s}
+            group={group}
             top={(s.startMinute - hours[0]!) * PX_PER_MIN}
             height={(s.endMinute - s.startMinute) * PX_PER_MIN - 3}
           />
@@ -154,3 +155,36 @@ function Column({
   );
 }
 
+/**
+ * One chip per booking, not one per attendee.
+ *
+ * A group session is N appointment rows in the same room at the same time, so
+ * drawn literally it is N chips stacked on the same pixels — which is exactly
+ * what a double-booking looks like. Front desk needs to see one hour with six
+ * people in it, and open the roster from there.
+ */
+function collapseGroups(sessions: DaySession[]) {
+  const seen = new Map<string, number>();
+  for (const s of sessions) {
+    if (s.groupSessionId) seen.set(s.groupSessionId, (seen.get(s.groupSessionId) ?? 0) + 1);
+  }
+  const drawn = new Set<string>();
+  const out: { session: DaySession; group?: { id: string; topic: string | null; count: number } }[] = [];
+  for (const s of sessions) {
+    if (!s.groupSessionId) {
+      out.push({ session: s });
+      continue;
+    }
+    if (drawn.has(s.groupSessionId)) continue;
+    drawn.add(s.groupSessionId);
+    out.push({
+      session: s,
+      group: {
+        id: s.groupSessionId,
+        topic: s.groupSession?.topic ?? null,
+        count: seen.get(s.groupSessionId) ?? 1,
+      },
+    });
+  }
+  return out;
+}

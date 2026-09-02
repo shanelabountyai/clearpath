@@ -99,6 +99,26 @@ export async function guarded<T>(
 }
 
 /**
+ * Authorize N client records for one indivisible piece of work.
+ *
+ * A group session writes to six clients' records in one transaction, and hard
+ * rule 4 wants six audit rows saying so — one per record touched, each naming
+ * its own client, all committing or rolling back with the work. Nesting the
+ * guard is how that stays honest: every request goes through the matrix, any
+ * one denial refuses the whole thing, and the audit rows land in the same
+ * transaction as the appointments they describe.
+ */
+export function guardedAll<T>(
+  reqs: readonly GuardRequest[],
+  work: (tx: Tx) => Promise<T>,
+  tx?: Tx,
+): Promise<T> {
+  const [head, ...rest] = reqs;
+  if (!head) throw new TypeError('guardedAll needs at least one request');
+  return guarded(head, (t) => (rest.length ? guardedAll(rest, work, t) : work(t)), tx);
+}
+
+/**
  * Log an event that is not itself a data access — a threshold alert firing, a
  * break-glass session opening. Carries reason codes, never content.
  */

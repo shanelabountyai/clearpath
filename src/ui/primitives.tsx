@@ -273,10 +273,17 @@ export function AppointmentChip({
   session,
   top,
   height,
+  group,
 }: {
   session: DaySession;
   top: number;
   height: number;
+  /**
+   * Set when this chip stands for a whole group session. Six attendees at 3pm
+   * are one booking of the room, so they are one chip — six stacked chips would
+   * read as the double-booking the constraints exist to prevent.
+   */
+  group?: { id: string; topic: string | null; count: number };
 }) {
   const meta = STATUS_META[session.status] ?? { label: session.status, glyph: '·', tone: 'neutral' as Tone };
   const statusVar = `var(--status-${session.status.replace('_', '-')})`;
@@ -287,7 +294,7 @@ export function AppointmentChip({
   const background = cancelled ? 'var(--surface-sunken)' : 'var(--surface-raised)';
   return (
     <Link
-      href={`/appointments/${session.id}`}
+      href={group ? `/groups/${group.id}` : `/appointments/${session.id}`}
       className="absolute inset-x-1 block overflow-hidden rounded-[var(--radius)] border px-1.5 py-1 text-micro"
       style={{
         top,
@@ -305,8 +312,9 @@ export function AppointmentChip({
       <div className="flex items-center gap-1 text-body font-medium" style={{ color: 'var(--text)' }}>
         <span aria-hidden style={{ color: statusVar }}>{meta.glyph}</span>
         <span className="truncate" style={{ textDecoration: cancelled ? 'line-through' : undefined }}>
-          {session.client.lastName}
+          {group ? (group.topic ?? 'Group session') : session.client.lastName}
         </span>
+        {group && <span className="shrink-0 text-micro text-subtle">×{group.count}</span>}
         {chargeable && (
           <>
             <span aria-hidden style={{ color: 'var(--danger)' }}>$</span>

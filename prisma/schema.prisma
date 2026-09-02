@@ -25,11 +25,11 @@ enum Role {
 }
 
 model User {
-  id        String  @id @default(cuid())
-  name      String
-  email     String  @unique
-  role      Role
-  active    Boolean @default(true)
+  id     String  @id @default(cuid())
+  name   String
+  email  String  @unique
+  role   Role
+  active Boolean @default(true)
 
   /// Supervision is data, not code: repointing this reroutes both read access
   /// to progress notes and the co-signature queue, with no deploy.
@@ -37,16 +37,16 @@ model User {
   supervisor   User?   @relation("supervision", fields: [supervisorId], references: [id])
   supervisees  User[]  @relation("supervision")
 
-  clients        Client[]
-  appointments   Appointment[]
-  series         AppointmentSeries[]
-  availability   Availability[]
-  overrides      AvailabilityOverride[]
-  progressNotes  ProgressNote[]        @relation("noteAuthor")
-  coSigned       ProgressNote[]        @relation("noteCoSigner")
-  processNotes   ProcessNote[]
-  amendments     NoteAmendment[]
-  alerts         Alert[]
+  clients       Client[]
+  appointments  Appointment[]
+  series        AppointmentSeries[]
+  availability  Availability[]
+  overrides     AvailabilityOverride[]
+  progressNotes ProgressNote[]         @relation("noteAuthor")
+  coSigned      ProgressNote[]         @relation("noteCoSigner")
+  processNotes  ProcessNote[]
+  amendments    NoteAmendment[]
+  alerts        Alert[]
 
   createdAt DateTime @default(now())
 }
@@ -67,11 +67,11 @@ model Client {
   /// Obviously-fake display code for seeded data, e.g. "TC-001".
   code String @unique
 
-  firstName String
-  lastName  String
+  firstName   String
+  lastName    String
   dateOfBirth DateTime @db.Date
-  email     String?
-  phone     String?
+  email       String?
+  phone       String?
 
   emergencyContactName     String?
   emergencyContactPhone    String?
@@ -87,15 +87,15 @@ model Client {
   reminderPreference ReminderPreference @default(email)
   status             ClientStatus       @default(active)
 
-  appointments   Appointment[]
-  series         AppointmentSeries[]
-  progressNotes  ProgressNote[]
-  processNotes   ProcessNote[]
-  formRequests   FormRequest[]
-  submissions    FormSubmission[]
-  alerts         Alert[]
-  outbox         OutboxMessage[]
-  waitlist       WaitlistEntry[]
+  appointments  Appointment[]
+  series        AppointmentSeries[]
+  progressNotes ProgressNote[]
+  processNotes  ProcessNote[]
+  formRequests  FormRequest[]
+  submissions   FormSubmission[]
+  alerts        Alert[]
+  outbox        OutboxMessage[]
+  waitlist      WaitlistEntry[]
 
   createdAt DateTime @default(now())
 
@@ -103,7 +103,7 @@ model Client {
 }
 
 model PracticeSettings {
-  id                    Int @id @default(1)
+  id                    Int    @id @default(1)
   name                  String @default("Stillwater Counseling")
   /// The name that appears in messages to clients. Deliberately not the legal
   /// name: "Stillwater Counseling" in an SMS preview on a lock screen tells a
@@ -130,11 +130,11 @@ model Room {
 // ───────────────────────────── availability ─────────────────────────────
 
 model Availability {
-  id        String @id @default(cuid())
-  userId    String
-  user      User   @relation(fields: [userId], references: [id])
+  id          String @id @default(cuid())
+  userId      String
+  user        User   @relation(fields: [userId], references: [id])
   /// 0 = Sunday.
-  weekday   Int
+  weekday     Int
   /// Minutes from local midnight, practice timezone.
   startMinute Int
   endMinute   Int
@@ -148,17 +148,17 @@ enum OverrideKind {
 }
 
 model AvailabilityOverride {
-  id     String @id @default(cuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id])
+  id          String       @id @default(cuid())
+  userId      String
+  user        User         @relation(fields: [userId], references: [id])
   /// Inclusive date range, so a week of vacation is one row.
-  fromDate DateTime @db.Date
-  toDate   DateTime @db.Date
-  kind     OverrideKind @default(unavailable)
+  fromDate    DateTime     @db.Date
+  toDate      DateTime     @db.Date
+  kind        OverrideKind @default(unavailable)
   startMinute Int?
   endMinute   Int?
   /// Operational, never clinical. Shown to front desk.
-  reason   String?
+  reason      String?
 
   @@index([userId, fromDate])
 }
@@ -182,13 +182,13 @@ enum Frequency {
 }
 
 model AppointmentSeries {
-  id          String @id @default(cuid())
+  id          String  @id @default(cuid())
   clientId    String
-  client      Client @relation(fields: [clientId], references: [id])
+  client      Client  @relation(fields: [clientId], references: [id])
   clinicianId String
-  clinician   User   @relation(fields: [clinicianId], references: [id])
+  clinician   User    @relation(fields: [clinicianId], references: [id])
   roomId      String?
-  room        Room?  @relation(fields: [roomId], references: [id])
+  room        Room?   @relation(fields: [roomId], references: [id])
 
   type     AppointmentType @default(standard)
   modality Modality        @default(in_person)
@@ -202,7 +202,7 @@ model AppointmentSeries {
   active    Boolean   @default(true)
 
   appointments Appointment[]
-  createdAt    DateTime @default(now())
+  createdAt    DateTime      @default(now())
 
   @@index([clientId])
   @@index([clinicianId])
@@ -220,21 +220,26 @@ enum AppointmentStatus {
 }
 
 model Appointment {
-  id       String  @id @default(cuid())
-  seriesId String?
-  series   AppointmentSeries? @relation(fields: [seriesId], references: [id])
+  id             String             @id @default(cuid())
+  seriesId       String?
+  series         AppointmentSeries? @relation(fields: [seriesId], references: [id])
+  /// P2: a group session is N appointments sharing this key, one per attendee,
+  /// so notes, fees, attendance and audit stay per-client. The exclusion
+  /// constraints treat co-attendees as one booking of the clinician and room.
+  groupSessionId String?
+  groupSession   GroupSession?      @relation(fields: [groupSessionId], references: [id])
   /// A rescheduled instance detaches from its pattern and stops being
   /// regenerated. Same regression that bit Groundwork.
-  detached Boolean @default(false)
+  detached       Boolean            @default(false)
 
   clientId    String
-  client      Client @relation(fields: [clientId], references: [id])
+  client      Client  @relation(fields: [clientId], references: [id])
   clinicianId String
-  clinician   User   @relation(fields: [clinicianId], references: [id])
+  clinician   User    @relation(fields: [clinicianId], references: [id])
   /// Null for telehealth. The room requirement is conditional on modality —
   /// enforced by a CHECK constraint in the migration, not just here.
-  roomId String?
-  room   Room?   @relation(fields: [roomId], references: [id])
+  roomId      String?
+  room        Room?   @relation(fields: [roomId], references: [id])
 
   startAt DateTime @db.Timestamptz(3)
   endAt   DateTime @db.Timestamptz(3)
@@ -246,10 +251,10 @@ model Appointment {
   /// Telehealth join URL. Not a video integration; a text field.
   joinLink String?
 
-  cancelledAt   DateTime?
-  cancelledById String?
+  cancelledAt    DateTime?
+  cancelledById  String?
   /// Operational reason only ("client rescheduled"). Never clinical.
-  cancelReason  String?
+  cancelReason   String?
   /// Set when a cancellation lands inside the late-cancel window, or on
   /// no-show. Chargeable flag only — no payment processing here.
   chargeFeeCents Int?
@@ -267,6 +272,22 @@ model Appointment {
   @@index([clientId, startAt])
   @@index([roomId, startAt])
   @@index([status, startAt])
+  @@index([groupSessionId])
+}
+
+/// The shared half of a group session, and deliberately only that.
+///
+/// Time, clinician and room are NOT stored here: every attendee's appointment
+/// already carries them, and a second copy is a second thing to keep in sync.
+/// What is here is what has no other home — the operational label.
+model GroupSession {
+  id    String  @id @default(cuid())
+  /// Operational label ("Tuesday skills group"). Never clinical content: this
+  /// reaches the front-desk calendar.
+  topic String?
+
+  appointments Appointment[]
+  createdAt    DateTime      @default(now())
 }
 
 // ──────────────────────────── clinical notes ────────────────────────────
@@ -318,7 +339,7 @@ model ProcessNote {
   authorId String
   author   User   @relation(fields: [authorId], references: [id])
 
-  content String
+  content  String
   /// Signed-off equivalent: process notes have no signature workflow, but they
   /// become immutable once the author closes them, and amend appends.
   closedAt DateTime?
@@ -362,15 +383,15 @@ enum FormKind {
 }
 
 model FormTemplate {
-  id      String   @id @default(cuid())
-  key     String
-  name    String
-  kind    FormKind
-  version Int      @default(1)
-  published Boolean @default(false)
+  id        String   @id @default(cuid())
+  key       String
+  name      String
+  kind      FormKind
+  version   Int      @default(1)
+  published Boolean  @default(false)
 
   /// Field definitions, including conditional-display rules.
-  schema Json
+  schema  Json
   /// Answer→value maps, total thresholds, and critical items. Versions with the
   /// template, so a v1 submission always scores by v1 rules.
   scoring Json?
@@ -391,15 +412,15 @@ enum FormRequestStatus {
 }
 
 model FormRequest {
-  id         String @id @default(cuid())
+  id         String       @id @default(cuid())
   clientId   String
-  client     Client @relation(fields: [clientId], references: [id])
+  client     Client       @relation(fields: [clientId], references: [id])
   /// Pinned to the exact template version the client is answering.
   templateId String
   template   FormTemplate @relation(fields: [templateId], references: [id])
 
   /// Opaque, high-entropy, single-purpose. Carries no PHI.
-  token     String @unique
+  token     String            @unique
   status    FormRequestStatus @default(sent)
   expiresAt DateTime
 
@@ -417,20 +438,20 @@ model FormRequest {
 }
 
 model FormSubmission {
-  id        String @id @default(cuid())
-  requestId String @unique
-  request   FormRequest @relation(fields: [requestId], references: [id])
-  clientId  String
-  client    Client @relation(fields: [clientId], references: [id])
+  id         String       @id @default(cuid())
+  requestId  String       @unique
+  request    FormRequest  @relation(fields: [requestId], references: [id])
+  clientId   String
+  client     Client       @relation(fields: [clientId], references: [id])
   /// The version answered. Rendering always uses this, never the latest.
   templateId String
   template   FormTemplate @relation(fields: [templateId], references: [id])
 
   answers Json
 
-  totalScore   Int?
+  totalScore    Int?
   /// True when the total crossed a threshold or a critical item was flagged.
-  needsReview  Boolean  @default(false)
+  needsReview   Boolean  @default(false)
   /// Rule identifiers only, e.g. ["threshold:moderate", "critical:item_9"].
   /// Never answer content — this string reaches alert and review surfaces.
   reviewReasons String[] @default([])
@@ -465,7 +486,7 @@ model Alert {
   submission   FormSubmission? @relation(fields: [submissionId], references: [id])
 
   kind    AlertKind
-  reasons String[] @default([])
+  reasons String[]  @default([])
 
   createdAt      DateTime  @default(now())
   acknowledgedAt DateTime?
@@ -481,7 +502,7 @@ enum OutboxChannel {
 /// Nothing is actually sent. Bodies are lint-tested against a deny-list of
 /// clinical terms — a reminder says "Appointment reminder", never why.
 model OutboxMessage {
-  id       String @id @default(cuid())
+  id       String  @id @default(cuid())
   clientId String?
   client   Client? @relation(fields: [clientId], references: [id])
   /// Set for clinician-directed alerts.
@@ -503,15 +524,15 @@ model OutboxMessage {
 // ──────────────────────────────── waitlist ────────────────────────────────
 
 model WaitlistEntry {
-  id       String @id @default(cuid())
-  clientId String
-  client   Client @relation(fields: [clientId], references: [id])
+  id             String  @id @default(cuid())
+  clientId       String
+  client         Client  @relation(fields: [clientId], references: [id])
   /// Preferred weekdays (0 = Sunday) and window, both optional.
-  weekdays    Int[]  @default([])
+  weekdays       Int[]   @default([])
   earliestMinute Int?
   latestMinute   Int?
-  note     String?
-  active   Boolean @default(true)
+  note           String?
+  active         Boolean @default(true)
 
   createdAt DateTime @default(now())
 }
@@ -521,8 +542,8 @@ model WaitlistEntry {
 /// Append-only. A database rule blocks UPDATE and DELETE — see the migration.
 /// Ids only: no names, no note content, no answers, no scores.
 model AuditEvent {
-  id      String @id @default(cuid())
-  at      DateTime @default(now())
+  id String   @id @default(cuid())
+  at DateTime @default(now())
 
   actorId   String
   actorRole Role
