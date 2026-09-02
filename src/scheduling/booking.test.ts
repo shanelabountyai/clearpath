@@ -150,6 +150,12 @@ describe('the race for the last room', () => {
     );
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(4);
     expect(await prisma.appointment.count()).toBe(4);
+
+    // The half that used to break: every loser must be told the rooms are full
+    // *because they are*. A racer that walks past a room another transaction is
+    // still part-way through booking reports no_room while a room stands empty.
+    const reasons = results.flatMap((r) => (r.status === 'rejected' ? [r.reason.code] : []));
+    expect(reasons).toEqual(Array(6).fill('no_room'));
   });
 });
 

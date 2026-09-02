@@ -25,6 +25,97 @@ function conflictKind(e: unknown): 'room' | 'clinician' | null {
   return null;
 }
 
+/**
+ * Postgres asking to be asked again.
+ *
+ * P2034 is a write conflict or deadlock, P2028 a transaction that ran out of
+ * budget waiting. Neither is an answer about whether the room is free — the
+ * database is saying it could not decide this time. Treating them as "no room
+ * available", which is what any `catch` that only understands constraint
+ * violations does, tells a client the practice is full while a room sits empty.
+ */
+const RETRYABLE = new Set(['P2034', 'P2028']);
+
+const isRetryable = (e: unknown): boolean =>
+  typeof e === 'object' && e !== null && RETRYABLE.has(String((e as { code?: unknown }).code));
+
+/**
+ * One booking at a time per time slot.
+ *
+ * The exclusion constraints make double-booking impossible, but they do not make
+ * a *rejection* meaningful. Without this lock, `23P01` means either "that room is
+ * booked" or "another transaction is part-way through booking it and may still
+ * roll back" — and the two are indistinguishable to the caller. Ten concurrent
+ * bookings of the same hour therefore all walk past a room that ends up empty,
+ * and every one of them is told the practice is full. Measured: three runs in
+ * forty filled three of four rooms and rejected seven requests.
+ *
+ * Holding an advisory lock on the slot for the length of the attempt makes the
+ * answer honest: inside it, a conflict is a *committed* conflict. It also gives
+ * every contender the same lock ordering, which is what removes the deadlock
+ * storm — Postgres was aborting these transactions in pairs.
+ *
+ * The lock is per slot, not global: two different hours never wait on each other.
+ */
+const slotLock = (tx: Tx, date: LocalDate, startMinute: number) =>
+  tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${date}T${startMinute}`})::bigint)`;
+
+/**
+ * Attempts allowed per candidate room before moving on.
+ *
+ * With the slot lock in place a retry is for the residual — a deadlock against
+ * some *other* slot's transaction touching the same client or clinician row —
+ * so the budget is small on purpose. A large one here would only slow down the
+ * honest answer that a room is genuinely taken.
+ */
+const ATTEMPTS_PER_ROOM = 3;
+
+/**
+ * Desynchronise the retry.
+ *
+ * Retrying instantly means the same set of transactions collide in the same
+ * order and deadlock again — the pile never drains, it just re-forms. The jitter
+ * matters more than the delay: it is what stops lockstep.
+ */
+const backoff = (attempt: number) =>
+  new Promise<void>((r) => setTimeout(r, 5 + Math.random() * 15 * (attempt + 1)));
+
+/**
+ * Walk the candidate rooms, letting the database arbitrate each attempt.
+ *
+ * Shared by booking and rescheduling because they are the same problem: a
+ * conflict on a room means try the next one, a conflict on the clinician means
+ * stop (there is no second clinician to fall through to), and a write conflict
+ * means the question was never answered, so ask again.
+ */
+async function claimRoom<T>(
+  candidates: readonly (string | null)[],
+  attempt: (roomId: string | null) => Promise<T>,
+): Promise<{ booked: T } | { conflict: 'room' | 'clinician' | null }> {
+  let lastConflict: 'room' | 'clinician' | null = null;
+
+  for (const roomId of candidates) {
+    for (let tries = 0; tries < ATTEMPTS_PER_ROOM; tries++) {
+      try {
+        return { booked: await attempt(roomId) };
+      } catch (e) {
+        const kind = conflictKind(e);
+        if (kind !== null) {
+          lastConflict = kind;
+          break; // Decided: this room (or the clinician) is genuinely taken.
+        }
+        if (!isRetryable(e)) throw e;
+        // Undecided. The same room may still be free, so ask again — after a
+        // pause, so this attempt does not re-collide with the one it lost to.
+        await backoff(tries);
+      }
+    }
+    if (lastConflict === 'clinician') break;
+  }
+
+  return { conflict: lastConflict };
+}
+
 const spanOf = (a: { startAt: Date; endAt: Date }, date: LocalDate): Span => {
   const midnight = zonedToUtc(date, 0).getTime();
   return {
@@ -126,41 +217,35 @@ export async function bookAppointment(actor: Actor, input: BookInput) {
     candidates.push(...ordered.map((r) => r.id));
   }
 
-  let lastConflict: 'room' | 'clinician' | null = null;
-
-  for (const roomId of candidates) {
-    try {
-      return await guarded(
-        { actor, action: 'create', resource: 'appointment', clientId: input.clientId },
-        (tx) =>
-          tx.appointment.create({
-            data: {
-              clientId: input.clientId,
-              clinicianId: input.clinicianId,
-              roomId,
-              startAt,
-              endAt,
-              type: input.type,
-              modality: input.modality,
-              joinLink: input.joinLink ?? null,
-              seriesId: input.seriesId ?? null,
-              occurrenceKey: input.occurrenceKey ?? null,
-            },
-          }),
-      );
-    } catch (e) {
-      const kind = conflictKind(e);
-      if (kind === null) throw e;
-      lastConflict = kind;
-      if (kind === 'clinician') break;
-    }
-  }
+  const result = await claimRoom(candidates, (roomId) =>
+    guarded(
+      { actor, action: 'create', resource: 'appointment', clientId: input.clientId },
+      async (tx) => {
+        await slotLock(tx, input.date, input.startMinute);
+        return tx.appointment.create({
+          data: {
+            clientId: input.clientId,
+            clinicianId: input.clinicianId,
+            roomId,
+            startAt,
+            endAt,
+            type: input.type,
+            modality: input.modality,
+            joinLink: input.joinLink ?? null,
+            seriesId: input.seriesId ?? null,
+            occurrenceKey: input.occurrenceKey ?? null,
+          },
+        });
+      },
+    ),
+  );
+  if ('booked' in result) return result.booked;
 
   throw new Conflict(
-    lastConflict === 'clinician'
+    result.conflict === 'clinician'
       ? 'That clinician is already booked at this time'
       : 'No therapy room is free at this time',
-    lastConflict === 'clinician' ? 'clinician_busy' : 'no_room',
+    result.conflict === 'clinician' ? 'clinician_busy' : 'no_room',
   );
 }
 
@@ -271,26 +356,22 @@ export async function rescheduleAppointment(
     : [];
   const candidates: (string | null)[] = modality === 'in_person' ? rooms.map((r) => r.id) : [null];
 
-  let lastConflict: 'room' | 'clinician' | null = null;
-  for (const roomId of candidates) {
-    try {
-      return await guarded(
-        { actor, action: 'update', resource: 'appointment', resourceId: appointmentId, clientId: current.clientId },
-        (tx) =>
-          tx.appointment.update({
-            where: { id: appointmentId },
-            data: { startAt, endAt, roomId, type, modality, detached: current.seriesId ? true : false },
-          }),
-      );
-    } catch (e) {
-      const kind = conflictKind(e);
-      if (kind === null) throw e;
-      lastConflict = kind;
-      if (kind === 'clinician') break;
-    }
-  }
+  const result = await claimRoom(candidates, (roomId) =>
+    guarded(
+      { actor, action: 'update', resource: 'appointment', resourceId: appointmentId, clientId: current.clientId },
+      async (tx) => {
+        await slotLock(tx, to.date, to.startMinute);
+        return tx.appointment.update({
+          where: { id: appointmentId },
+          data: { startAt, endAt, roomId, type, modality, detached: current.seriesId ? true : false },
+        });
+      },
+    ),
+  );
+  if ('booked' in result) return result.booked;
+
   throw new Conflict(
-    lastConflict === 'clinician' ? 'That clinician is already booked at this time' : 'No therapy room is free at this time',
-    lastConflict === 'clinician' ? 'clinician_busy' : 'no_room',
+    result.conflict === 'clinician' ? 'That clinician is already booked at this time' : 'No therapy room is free at this time',
+    result.conflict === 'clinician' ? 'clinician_busy' : 'no_room',
   );
 }

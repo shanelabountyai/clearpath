@@ -68,6 +68,17 @@ function flags(item: CriticalItem, value: unknown): boolean {
   return false;
 }
 
+/**
+ * The band a total falls in, highest matching bound first.
+ *
+ * Separate from scoring because a stored score needs its band back without its
+ * answers — a trend over time is a list of totals, and re-reading the responses
+ * to label them would be reaching for content the caller does not need.
+ */
+export function bandFor(total: number, thresholds: readonly Threshold[] = []): Threshold | null {
+  return [...thresholds].sort((a, b) => b.min - a.min).find((t) => total >= t.min) ?? null;
+}
+
 export function scoreSubmission(
   schema: TemplateSchema,
   rules: ScoringRules | null | undefined,
@@ -86,8 +97,7 @@ export function scoreSubmission(
     else total += points(rules, f.key, v);
   }
 
-  const bands = [...(rules.thresholds ?? [])].sort((a, b) => b.min - a.min);
-  const band = bands.find((t) => total >= t.min) ?? null;
+  const band = bandFor(total, rules.thresholds);
 
   const reasons: string[] = [];
   if (band?.alert) reasons.push(`threshold:${band.id}`);
