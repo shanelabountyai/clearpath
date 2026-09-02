@@ -13,6 +13,7 @@ Kept as the work happens, not reconstructed afterwards.
 4. **Two-tier notes with supervisory co-signature.**
 5. **The superbill** — a claim document assembled entirely from records that
    already existed, and honest about the one it cannot supply.
+6. **Screener trends** — the feature whose design is mostly refusals.
 
 ---
 
@@ -255,6 +256,49 @@ by software with no clinical vocabulary behind it.
 
 ---
 
+## 6. Screener trends, and what a chart claims
+
+Plotting somebody's screener totals over time is four lines of code and the
+most ethically loaded surface in the project. Nearly all the design here is
+refusal.
+
+**A scoring revision breaks the line.** Rules version with the template — that
+was already true, and it is what makes this feature dangerous. Two totals scored
+under different versions of an instrument are not two measurements of the same
+thing, so the change between them is `null`, not a number. Draw them as a
+continuous line and a rules edit renders as clinical movement, in the direction
+whoever edited the rules happened to push it. This is the one place where the
+versioning work done for P0-6 pays off in a way that was not obvious when it was
+built: the trend could not have been made honest without it.
+
+**One instrument per series.** Points group by template key. A depression total
+and a sleep total on one axis is a chart that means nothing and looks like it
+means something.
+
+**It reports, it does not conclude.** No slope, no projection, no "improving" or
+"deteriorating" flag. A number going down is not a person getting better —
+it is nine self-reported answers on a Tuesday — and software that says otherwise
+gets believed, by clinicians under time pressure and eventually by whoever else
+sees the screen.
+
+**It is its own page.** The obvious build was a panel on the client record. It
+is a separate route reached by an explicit link, because a longitudinal chart of
+somebody's mental state is not something to meet while scrolling for their phone
+number. Asking for it is a deliberate act, and it is logged as one.
+
+**Who can see it.** `form_submission`, which no non-clinical role holds at all.
+Front desk cannot reach it; neither can the practice manager, and unlike
+demographics or progress notes, break-glass does not open it. There is no
+emergency that is answered by a chart of somebody's screener history. That
+falls out of the existing matrix without a new rule, which is the second time
+this project got a hard question answered by a table it had already written.
+
+The query deliberately does not select `answers`. A trend is a list of totals,
+and reaching for the responses to draw it would pull content the surface has no
+use for.
+
+---
+
 ## Decisions log
 
 | Decision | Why |
@@ -278,6 +322,8 @@ by software with no clinical vocabulary behind it.
 | The author-only rule gets a structural lint, not just behavioural tests | The suite proved the helpers that exist refuse the wrong reader. It could not say anything about the helper written next month: a `processNote` query that filters by client and forgets the author passes every existing test, because none of them call it. The lint reads the shape of the call instead — `authorId` must appear inside the query, which is the difference between filtering in SQL and filtering in JS. Two read-backs that had leaned on a preceding author-filtered `updateMany` now filter for themselves, so the rule has no exceptions to remember |
 | The superbill reads the fee stored on the appointment, not the client's fee today | The completion transition already recorded what the session cost, for the late-cancel logic. Billing a March session at September's sliding-scale rate is wrong in a way no reader of the document could detect |
 | Booking takes a per-slot advisory lock before it inserts | The exclusion constraints make a double-booking impossible but they do not make a *rejection* truthful: outside a lock, `23P01` means either "that room is booked" or "someone is part-way through booking it and may roll back", and ten concurrent bookings of one hour therefore all walk past a room that ends up empty. Measured at three runs in forty. Inside the lock a conflict is a committed conflict, the deadlock storm disappears with the shared lock ordering, and 150 rounds pass in 7s where 40 used to take minutes |
+| A trend refuses to compute a change across a template version | Scoring rules version with the template, so totals either side of a revision measure different things. A line drawn through them renders a rules edit as clinical movement |
+| Screener trends live on their own page, not on the client record | A chart of somebody's mental state over time should not be something you meet while looking for their phone number. Reaching it is a deliberate navigation, and the read is logged as one |
 | Producing a superbill needs both the fee and the demographics permission | It is both records at once. Guarding it twice meant no new matrix row and no new question: whoever may already see both halves may produce it, and the practice manager still has to break glass, because billing is not a carve-out from the rule that their clinical reach is logged |
 
 ## What this project deliberately is not
