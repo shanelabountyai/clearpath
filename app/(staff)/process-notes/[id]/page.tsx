@@ -50,14 +50,14 @@ export default async function ProcessNotePage({ params }: { params: Promise<{ id
       <div className="mx-auto max-w-3xl space-y-4">
         <Card>
           {note.closedAt ? (
-            <article className="font-serif text-subhead leading-[1.75] whitespace-pre-wrap">{note.content}</article>
+            <article className="font-serif text-subhead leading-reading whitespace-pre-wrap">{note.content}</article>
           ) : (
             <form action={saveProcessNote}>
               <input type="hidden" name="noteId" value={note.id} />
               <label htmlFor="content" className="sr-only">Note</label>
               <textarea
                 id="content" name="content" rows={14} defaultValue={note.content}
-                className="w-full rounded-[var(--radius)] border p-4 font-serif text-subhead leading-[1.7]"
+                className="w-full rounded-[var(--radius)] border p-4 font-serif text-subhead leading-reading"
                 style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
               />
               <div className="mt-3 flex items-center gap-2">
@@ -80,7 +80,7 @@ export default async function ProcessNotePage({ params }: { params: Promise<{ id
               {note.amendments.map((a) => (
                 <li key={a.id} className="border-l-2 pl-3" style={{ borderColor: 'var(--tier-private)' }}>
                   <p className="text-caption text-subtle">{localDateOf(a.createdAt)}</p>
-                  <p className="mt-0.5 font-serif text-subhead leading-relaxed whitespace-pre-wrap">{a.content}</p>
+                  <p className="mt-0.5 font-serif text-subhead leading-reading whitespace-pre-wrap">{a.content}</p>
                 </li>
               ))}
             </ol>

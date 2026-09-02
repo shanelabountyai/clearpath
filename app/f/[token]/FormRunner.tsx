@@ -188,7 +188,7 @@ function Question({
         {label}
         <textarea
           id={id} rows={4} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}
-          className="mt-2 w-full rounded-[var(--radius)] border p-3 font-serif text-subhead leading-relaxed"
+          className="mt-2 w-full rounded-[var(--radius)] border p-3 font-serif text-subhead leading-reading"
           style={inputStyle}
         />
       </>

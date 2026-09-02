@@ -231,7 +231,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
                   <textarea
                     id="content" name="content" rows={3}
                     placeholder="Your own working note about this session…"
-                    className="w-full rounded-[var(--radius)] border p-2.5 font-serif text-lead leading-relaxed"
+                    className="w-full rounded-[var(--radius)] border p-2.5 font-serif text-lead leading-reading"
                     style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
                   />
                   <Button variant="private" className="mt-2">
@@ -331,6 +331,13 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
                     </li>
                   ))}
                 </ul>
+              )}
+              {submissions.length > 0 && (
+                <p className="mt-3 border-t pt-2 text-caption" style={{ borderColor: 'var(--border)' }}>
+                  <Link href={`/clients/${client.id}/trends`} className="text-accent hover:underline">
+                    Screeners over time
+                  </Link>
+                </p>
               )}
             </Card>
           )}

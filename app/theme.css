@@ -86,6 +86,34 @@
    */
   --on-solid: #ffffff;
 
+  /*
+   * Spacing. One base unit, named so a surface can state its rhythm instead
+   * of inheriting Tailwind's implicit default: the dense calendar composes
+   * small multiples of it, the note editor large ones. 0.25rem rather than
+   * 4px on purpose - spacing keeps scaling with the user's root font size.
+   */
+  --space: 0.25rem;
+
+  /*
+   * Motion. Three durations and one curve, and nothing bounces. `state` is a
+   * property changing in place (hover, selection), `enter` is something
+   * arriving, `exit` is something leaving - exits are faster than entrances
+   * because a thing the user dismissed should not linger. The global
+   * prefers-reduced-motion rule in globals.css zeroes all of these.
+   */
+  --motion-state: 120ms;
+  --motion-enter: 180ms;
+  --motion-exit: 90ms;
+  --motion-ease: cubic-bezier(0.2, 0, 0.3, 1);
+
+  /*
+   * Line height for the reading face. Note prose is read for minutes at a
+   * time and wants air (1.7); the 1.45 that --text-subhead carries is a
+   * heading's leading, not prose's. Pages were hand-rolling 1.7 and 1.75 -
+   * this is the one name they share now.
+   */
+  --reading-leading: 1.7;
+
   --radius: 6px;
   --radius-lg: 10px;
   --shadow-sm: 0 1px 2px rgb(34 32 29 / 0.06);

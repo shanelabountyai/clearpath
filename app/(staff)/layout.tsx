@@ -3,6 +3,7 @@ import { currentSession, switchableUsers } from '../../src/session';
 import { NavLinks, ROLE_LABEL } from '../../src/ui/shell';
 import { endBreakGlass, switchUser } from '../actions';
 import { Wordmark } from '@/src/ui/logo';
+import { BreakGlassBar } from '@/src/ui/primitives';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,7 +38,7 @@ export default async function StaffLayout({ children }: { children: React.ReactN
             </aside>
 
             <div className="min-w-0 flex-1">
-              {session.actor.breakGlass && <BreakGlassBar reason={session.actor.breakGlass.reason} />}
+              {session.actor.breakGlass && <BreakGlassBar reason={session.actor.breakGlass.reason} endAction={endBreakGlass} />}
               <main className="mx-auto max-w-[1200px] px-5 py-6">{children}</main>
             </div>
           </div>
@@ -129,26 +130,3 @@ function UserSwitcher({ users, currentId }: { users: SwitchUser[]; currentId: st
   );
 }
 
-function BreakGlassBar({ reason }: { reason: string }) {
-  return (
-    <div
-      className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-2"
-      style={{ borderColor: 'var(--danger)', background: 'var(--danger-soft)' }}
-    >
-      <p className="text-body">
-        <span aria-hidden>⚠ </span>
-        <strong>Break-glass access is open.</strong> Everything you open is logged against
-        your name with this reason: <em>{reason}</em>
-      </p>
-      <form action={endBreakGlass}>
-        <button
-          type="submit"
-          className="rounded-[var(--radius)] border px-2.5 py-1 text-caption font-medium"
-          style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }}
-        >
-          Close break-glass
-        </button>
-      </form>
-    </div>
-  );
-}

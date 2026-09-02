@@ -1,4 +1,8 @@
+import Link from 'next/link';
 import type { ReactNode } from 'react';
+import { CHARGEABLE } from '../scheduling/lifecycle';
+import { minutesToHHMM } from '../time';
+import type { DaySession } from '../scheduling/calendar';
 
 /**
  * The visual vocabulary. Two rules run through all of it:
@@ -107,12 +111,29 @@ const TONE_VARS: Record<Tone, { fg: string; bg: string }> = {
   info: { fg: 'var(--info)', bg: 'var(--info-soft)' },
 };
 
-export function Badge({ tone = 'neutral', glyph, children }: { tone?: Tone; glyph?: string; children: ReactNode }) {
+/*
+ * The hatch: a fill that reads without colour vision, layered over a tone's
+ * soft background. It marks money - a status that will appear on a bill.
+ */
+const HATCH =
+  'repeating-linear-gradient(135deg, transparent 0 3px, color-mix(in srgb, currentColor 14%, transparent) 3px 4.5px)';
+
+export function Badge({
+  tone = 'neutral',
+  glyph,
+  hatched = false,
+  children,
+}: {
+  tone?: Tone;
+  glyph?: string;
+  hatched?: boolean;
+  children: ReactNode;
+}) {
   const v = TONE_VARS[tone];
   return (
     <span
       className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-micro font-medium whitespace-nowrap"
-      style={{ color: v.fg, background: v.bg }}
+      style={{ color: v.fg, background: hatched ? `${HATCH}, ${v.bg}` : v.bg }}
     >
       {glyph && <span aria-hidden>{glyph}</span>}
       {children}
@@ -132,9 +153,27 @@ export const STATUS_META: Record<string, { label: string; glyph: string; tone: T
   late_cancelled: { label: 'Late cancel', glyph: '⊗', tone: 'danger' },
 };
 
+/**
+ * `no_show` and `late_cancelled` share a hue and a tone by design - both are
+ * red, both are bad news - but both also take money, and money must not hang
+ * off a glyph difference alone at 11.5px. The chargeable treatment is a hatch
+ * fill plus a currency mark, and WHICH statuses get it comes from the state
+ * machine's own CHARGEABLE list, never a copy kept here.
+ */
 export function StatusChip({ status }: { status: string }) {
   const meta = STATUS_META[status] ?? { label: status, glyph: '·', tone: 'neutral' as Tone };
-  return <Badge tone={meta.tone} glyph={meta.glyph}>{meta.label}</Badge>;
+  const chargeable = (CHARGEABLE as readonly string[]).includes(status);
+  return (
+    <Badge tone={meta.tone} glyph={meta.glyph} hatched={chargeable}>
+      {meta.label}
+      {chargeable && (
+        <>
+          <span aria-hidden>·&thinsp;$</span>
+          <span className="sr-only">, chargeable</span>
+        </>
+      )}
+    </Badge>
+  );
 }
 
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
@@ -214,5 +253,192 @@ export function Button({
       className={`rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium whitespace-nowrap ${className}`}
       style={{ ...BUTTON_FILL[variant], ...props.style }}
     />
+  );
+}
+
+/**
+ * One session in a day column. A calendar chip is not a badge: it has to say
+ * status, modality, series membership and money in about 40px of height, and
+ * the primary line has to read at 13px (text-body) because the day view is
+ * what a clinician stares at all day.
+ *
+ *  - The LEFT EDGE carries the weight: status colour, and thicker while the
+ *    session is live (arrived / in session) so "now" is findable at a glance.
+ *  - MODALITY is a shape, not a word: ▮ is a room, ◠ is a call.
+ *  - A SERIES member carries ↻ (standing) or ↷ (moved off its pattern).
+ *  - A CHARGEABLE outcome gets the same hatch + currency mark as StatusChip,
+ *    from the same CHARGEABLE list.
+ */
+export function AppointmentChip({
+  session,
+  top,
+  height,
+}: {
+  session: DaySession;
+  top: number;
+  height: number;
+}) {
+  const meta = STATUS_META[session.status] ?? { label: session.status, glyph: '·', tone: 'neutral' as Tone };
+  const statusVar = `var(--status-${session.status.replace('_', '-')})`;
+  const cancelled = session.status === 'cancelled' || session.status === 'late_cancelled';
+  const live = session.status === 'arrived' || session.status === 'in_session';
+  const chargeable = (CHARGEABLE as readonly string[]).includes(session.status);
+  const telehealth = session.modality === 'telehealth';
+  const background = cancelled ? 'var(--surface-sunken)' : 'var(--surface-raised)';
+  return (
+    <Link
+      href={`/appointments/${session.id}`}
+      className="absolute inset-x-1 block overflow-hidden rounded-[var(--radius)] border px-1.5 py-1 text-micro"
+      style={{
+        top,
+        height,
+        borderColor: statusVar,
+        // Cancelled sessions stay visible but recede — the hour is free, and
+        // the record of who was meant to be in it still matters.
+        background: chargeable ? `${HATCH}, ${background}` : background,
+        borderLeftWidth: live ? 5 : 3,
+        opacity: cancelled ? 0.72 : 1,
+        transition: 'box-shadow var(--motion-state) var(--motion-ease)',
+        color: chargeable ? 'var(--danger)' : undefined,
+      }}
+    >
+      <div className="flex items-center gap-1 text-body font-medium" style={{ color: 'var(--text)' }}>
+        <span aria-hidden style={{ color: statusVar }}>{meta.glyph}</span>
+        <span className="truncate" style={{ textDecoration: cancelled ? 'line-through' : undefined }}>
+          {session.client.lastName}
+        </span>
+        {chargeable && (
+          <>
+            <span aria-hidden style={{ color: 'var(--danger)' }}>$</span>
+            <span className="sr-only">chargeable</span>
+          </>
+        )}
+      </div>
+      <div className="truncate text-nano text-subtle">
+        <span aria-hidden>{telehealth ? '◠' : '▮'} </span>
+        <span className="sr-only">{telehealth ? 'telehealth, ' : 'in person, '}</span>
+        {minutesToHHMM(session.startMinute)} · {session.clinician.name.split(' ')[0]}
+        {session.seriesId && (
+          <>
+            {' '}
+            <span aria-hidden>{session.detached ? '↷' : '↻'}</span>
+            <span className="sr-only">{session.detached ? ', moved off its series' : ', standing appointment'}</span>
+          </>
+        )}
+      </div>
+    </Link>
+  );
+}
+
+/**
+ * What a practice manager meets instead of a record.
+ *
+ * The friction is deliberate and proportionate: a reason is required, the
+ * consequence is stated plainly, and the access is attributed. It is not
+ * punitive — somebody reaches for this when a client is in crisis and the
+ * clinician is unreachable, and it should not feel like an accusation.
+ *
+ * The server action arrives as a prop: primitives never import from app/.
+ */
+export function BreakGlassDialog({
+  resource,
+  action,
+}: {
+  resource: string;
+  action: (formData: FormData) => void | Promise<void>;
+}) {
+  return (
+    <div className="mx-auto max-w-lg py-10">
+      <div
+        className="rounded-[var(--radius-lg)] border p-5"
+        style={{ borderColor: 'var(--border-strong)', background: 'var(--surface-raised)' }}
+      >
+        <h1 className="text-lg font-semibold">Break-glass access required</h1>
+        <p className="mt-2 text-body text-muted">
+          Your role administers the practice rather than its clinical records. You can open{' '}
+          {resource} in an emergency, and doing so is recorded against your name with the
+          reason you give.
+        </p>
+        <form action={action} className="mt-4">
+          <label htmlFor="reason" className="block text-micro font-medium tracking-wide text-subtle uppercase">
+            Reason (required)
+          </label>
+          <textarea
+            id="reason" name="reason" rows={3} required minLength={10}
+            placeholder="e.g. client called the practice in distress and their clinician is on leave"
+            className="mt-1 w-full rounded-[var(--radius)] border p-2.5 text-body"
+            style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
+          />
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <p className="text-caption text-subtle">
+              Break-glass reaches demographics and progress notes. It does not reach
+              process notes — nothing does.
+            </p>
+            <Button variant="danger" className="shrink-0">
+              Break glass
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The standing reminder that break-glass is open. It renders from the staff
+ * LAYOUT, above every page, so it persists across route changes for the whole
+ * duration of the access — the one place it must never be possible to
+ * navigate away from.
+ */
+export function BreakGlassBar({
+  reason,
+  endAction,
+}: {
+  reason: string;
+  endAction: () => void | Promise<void>;
+}) {
+  return (
+    <div
+      className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-2"
+      style={{ borderColor: 'var(--danger)', background: 'var(--danger-soft)' }}
+    >
+      <p className="text-body">
+        <span aria-hidden>⚠ </span>
+        <strong>Break-glass access is open.</strong> Everything you open is logged against
+        your name with this reason: <em>{reason}</em>
+      </p>
+      <form action={endAction}>
+        <button
+          type="submit"
+          className="rounded-[var(--radius)] border px-2.5 py-1 text-caption font-medium"
+          style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }}
+        >
+          Close break-glass
+        </button>
+      </form>
+    </div>
+  );
+}
+
+/**
+ * A list-level denial. Not EmptyState — the list is not empty, you may not
+ * see it — and not an error, because nothing went wrong. The border is solid
+ * where EmptyState's is dashed, nothing is red, and the voice states the
+ * rule rather than apologising for it.
+ */
+export function DeniedState({ title, children }: { title: string; children?: ReactNode }) {
+  return (
+    <div
+      className="rounded-[var(--radius-lg)] border px-5 py-8 text-center"
+      style={{ borderColor: 'var(--border-strong)', background: 'var(--surface-sunken)' }}
+    >
+      <p className="font-medium">
+        <span aria-hidden style={{ color: 'var(--text-subtle)' }}>⊝ </span>
+        {title}
+      </p>
+      <p className="mx-auto mt-1 max-w-prose text-body text-muted">
+        {children ?? 'Your role does not include this. That is the practice working as designed, not a fault.'}
+      </p>
+    </div>
   );
 }

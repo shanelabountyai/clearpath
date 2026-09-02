@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { requireSession } from '../../../src/session';
 import { daySchedule, type DaySession } from '../../../src/scheduling/calendar';
 import { addDays, localDateOf, minutesToHHMM, WEEKDAYS, weekdayOf } from '../../../src/time';
-import { PageHeader, STATUS_META, TierBanner } from '../../../src/ui/primitives';
+import { AppointmentChip, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
 
 export const dynamic = 'force-dynamic';
@@ -142,41 +142,15 @@ function Column({
           />
         ))}
         {sessions.map((s) => (
-          <SessionChip key={s.id} session={s} top={(s.startMinute - hours[0]!) * PX_PER_MIN} />
+          <AppointmentChip
+            key={s.id}
+            session={s}
+            top={(s.startMinute - hours[0]!) * PX_PER_MIN}
+            height={(s.endMinute - s.startMinute) * PX_PER_MIN - 3}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function SessionChip({ session, top }: { session: DaySession; top: number }) {
-  const meta = STATUS_META[session.status]!;
-  const cancelled = session.status === 'cancelled' || session.status === 'late_cancelled';
-  return (
-    <Link
-      href={`/appointments/${session.id}`}
-      className="absolute inset-x-1 block overflow-hidden rounded-[var(--radius)] border px-1.5 py-1 text-micro transition-shadow hover:shadow-[var(--shadow)]"
-      style={{
-        top,
-        height: (session.endMinute - session.startMinute) * PX_PER_MIN - 3,
-        borderColor: `var(--status-${session.status.replace('_', '-')})`,
-        // Cancelled sessions stay visible but recede — the hour is free, and the
-        // record of who was meant to be in it still matters.
-        background: cancelled ? 'var(--surface-sunken)' : 'var(--surface-raised)',
-        borderLeftWidth: 3,
-        opacity: cancelled ? 0.72 : 1,
-      }}
-    >
-      <div className="flex items-center gap-1 font-medium">
-        <span aria-hidden style={{ color: `var(--status-${session.status.replace('_', '-')})` }}>{meta.glyph}</span>
-        <span className="truncate" style={{ textDecoration: cancelled ? 'line-through' : undefined }}>
-          {session.client.lastName}
-        </span>
-      </div>
-      <div className="truncate text-nano text-subtle">
-        {minutesToHHMM(session.startMinute)} · {session.clinician.name.split(' ')[0]}
-        {session.seriesId ? (session.detached ? ' · moved' : ' · standing') : ''}
-      </div>
-    </Link>
-  );
-}

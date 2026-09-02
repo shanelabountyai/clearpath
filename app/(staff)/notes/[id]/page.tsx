@@ -61,7 +61,7 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
                 <label htmlFor="content" className="sr-only">Note</label>
                 <textarea
                   id="content" name="content" rows={16} defaultValue={note.content}
-                  className="w-full rounded-[var(--radius)] border p-4 font-serif text-subhead leading-[1.7]"
+                  className="w-full rounded-[var(--radius)] border p-4 font-serif text-subhead leading-reading"
                   style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
                 />
                 <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -84,7 +84,7 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
                 </div>
               </form>
             ) : (
-              <article className="font-serif text-subhead leading-[1.75] whitespace-pre-wrap">
+              <article className="font-serif text-subhead leading-reading whitespace-pre-wrap">
                 {note.content || <span className="text-subtle">This note is empty.</span>}
               </article>
             )}
@@ -99,7 +99,7 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
                     <p className="text-caption text-subtle">
                       {a.author.name} · {localDateOf(a.createdAt)}
                     </p>
-                    <p className="mt-0.5 font-serif text-subhead leading-relaxed whitespace-pre-wrap">{a.content}</p>
+                    <p className="mt-0.5 font-serif text-subhead leading-reading whitespace-pre-wrap">{a.content}</p>
                   </li>
                 ))}
               </ol>

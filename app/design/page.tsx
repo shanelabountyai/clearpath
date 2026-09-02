@@ -1,7 +1,8 @@
 import { Logo, Wordmark } from '@/src/ui/logo';
 import {
-  Badge, Button, Card, EmptyState, Field, LockedPanel, PageHeader,
-  STATUS_META, StatusChip, TierBanner, money, type Tier, type Tone,
+  AppointmentChip, Badge, Button, Card, DeniedState, EmptyState, Field,
+  LockedPanel, PageHeader, STATUS_META, StatusChip, TierBanner, money,
+  type Tier, type Tone,
 } from '@/src/ui/primitives';
 
 /**
@@ -90,7 +91,7 @@ export default function DesignSystemPage() {
               <span className="text-caption text-subtle">{use}</span>
             </div>
           ))}
-          <p className="mt-2 max-w-prose font-serif text-subhead leading-relaxed">
+          <p className="mt-2 max-w-prose font-serif text-subhead leading-reading">
             Note prose sets in the reading face — a serif, because a progress note is
             written and re-read for minutes at a time, not scanned.
           </p>
@@ -123,7 +124,7 @@ export default function DesignSystemPage() {
         </div>
       </Section>
 
-      <Section title="Status" note="Session lifecycle. Late cancel is chargeable, so it never looks like an ordinary cancellation.">
+      <Section title="Status" note="Session lifecycle. No-show and late cancel both take money — the state machine's own CHARGEABLE list — so both carry the hatch and the currency mark, never a glyph difference alone.">
         <div className="flex flex-wrap gap-2">
           {Object.keys(STATUS_META).map((s) => <StatusChip key={s} status={s} />)}
         </div>
@@ -158,6 +159,45 @@ export default function DesignSystemPage() {
         </div>
         <div className="mt-4">
           <LockedPanel />
+        </div>
+        <div className="mt-4">
+          <DeniedState title="Process notes are not listed for your role">
+            A denial is a designed state: the list exists, the rule is stated, nothing is red
+            and nothing apologises. Distinct from EmptyState&rsquo;s dashed border and empty voice.
+          </DeniedState>
+        </div>
+      </Section>
+
+      <Section
+        title="Appointment chip"
+        note="A calendar chip is not a badge: left-edge weight (thicker while live), modality shape (▮ room, ◠ call), series marker (↻ standing, ↷ moved), and the chargeable hatch — with the primary line reading at 13px."
+      >
+        <div className="relative h-[290px] max-w-xs">
+          {[
+            { id: 'd1', status: 'confirmed', modality: 'in_person', seriesId: 's', detached: false, top: 0 },
+            { id: 'd2', status: 'in_session', modality: 'telehealth', seriesId: null, detached: false, top: 60 },
+            { id: 'd3', status: 'no_show', modality: 'in_person', seriesId: 's', detached: true, top: 120 },
+            { id: 'd4', status: 'late_cancelled', modality: 'telehealth', seriesId: 's', detached: false, top: 180 },
+            { id: 'd5', status: 'cancelled', modality: 'in_person', seriesId: null, detached: false, top: 240 },
+          ].map((d) => (
+            <AppointmentChip
+              key={d.id}
+              top={d.top}
+              height={46}
+              // The gallery fabricates the session shape; the app passes the real one.
+              session={{
+                id: d.id,
+                status: d.status,
+                modality: d.modality,
+                seriesId: d.seriesId,
+                detached: d.detached,
+                startMinute: 9 * 60,
+                endMinute: 9 * 60 + 50,
+                client: { lastName: 'Okafor' },
+                clinician: { name: 'Maya Lindqvist' },
+              } as never}
+            />
+          ))}
         </div>
       </Section>
     </main>

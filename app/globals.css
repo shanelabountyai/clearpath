@@ -50,6 +50,12 @@
   --text-title: var(--type-title);
   --text-title--line-height: 1.25;
 
+  /* Every numeric spacing utility (p-4, gap-2, h-11) derives from this. */
+  --spacing: var(--space);
+
+  /* leading-reading: the serif prose line height. */
+  --leading-reading: var(--reading-leading);
+
   --font-sans: var(--font-ui);
   --font-serif: var(--font-reading);
   --font-mono: var(--font-mono);
