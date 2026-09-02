@@ -20,6 +20,10 @@ protections is the lesson, claiming them would be the credibility-killer.
 
 ---
 
+![The calendar as the front desk sees it: five columns of named sessions with times, rooms and clinicians, and a banner reading "Operational — names, times and rooms. Why anyone is here does not appear on this screen at any level of detail."](docs/screenshots/calendar-front-desk.png)
+
+---
+
 ## The access rule that shapes everything
 
 Two classes of clinical note, with different rules:
@@ -32,6 +36,11 @@ Two classes of clinical note, with different rules:
 | Practice manager (admin) | read via logged **break-glass** | **403, always — break-glass does not reach it** |
 | Front desk | no | no |
 | Auditor | no (sees the access event, not the content) | no |
+
+![The panel a supervisor gets where their supervisee's process notes would be, explaining that process notes are visible only to their author — supervisors, the practice manager and break-glass included — and that this is a rule of the practice, not a permission you are missing.](docs/screenshots/process-notes-locked.png)
+
+A refusal is a sentence, not a 403: what the reader gets is the rule and where
+the official record is instead.
 
 Every one of those cells is asserted in [`src/auth/permissions.test.ts`](src/auth/permissions.test.ts).
 Authorization happens in exactly one place — [`src/auth/permissions.ts`](src/auth/permissions.ts) —
@@ -98,8 +107,13 @@ person — see **Known limitations**. Authorization is real either way.
    panel stating the rule.
 3. Act as **Elena Sarkis** (practice manager) → open the same client → break
    glass with a reason → the record opens, flagged. The process notes stay shut.
+
+   ![The practice manager's break-glass gate: a required reason field, and a note that break-glass reaches demographics and progress notes but not process notes — nothing does.](docs/screenshots/break-glass.png)
+
 4. Act as **Owen Delacroix** (auditor) → **Audit log** → both events are there,
    the co-signature and the refusal.
+
+   ![The audit log filtered to denials of process notes, showing one row: a supervisor's read, denied. Ids only — no names, no note content, no answers.](docs/screenshots/audit-log.png)
 
 `e2e/confidentiality.spec.ts` is that walkthrough as a test.
 
