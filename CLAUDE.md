@@ -7,11 +7,13 @@ decoration, it is the first thing a reader must hit.
 
 1. **Authorization only via `src/auth/permissions.ts`.** No endpoint, loader,
    query or component performs its own role check. `permissions.test.ts` greps
-   `src/` for role comparisons outside `src/auth/` and fails the build.
+   `src/` and `app/` for role comparisons outside `src/auth/` and fails the build.
 2. **Process notes are author-only at every layer** — query, API, export,
    search, report, CSV. Any code path by which a non-author can reach process
    note *content* is a P0 bug, not a bug report. Repository helpers for process
-   notes always take the author id and filter on it in SQL, never in JS.
+   notes always take the author id and filter on it in SQL, never in JS —
+   `notes/service.test.ts` greps `src/` and `app/` for a `processNote` query
+   that does not name `authorId` inside the call, and fails the build.
 3. **No PHI anywhere but the record itself.** Not in URLs, not in the audit log,
    not in app logs, not in error messages, not in outbound message templates.
    Ids only. The audit log records *that* a screener crossed a threshold, never

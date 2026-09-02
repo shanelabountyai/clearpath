@@ -1,3 +1,4 @@
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../db';
 import { Conflict, Forbidden } from '../errors';
@@ -299,4 +300,56 @@ describe('progress note reads', () => {
     const [row] = await prisma.auditEvent.findMany({ where: { breakGlass: true, allowed: true } });
     expect(row!.reason).toContain('subpoena');
   });
+});
+
+/**
+ * The rule with no exceptions, checked structurally.
+ *
+ * Everything above tests the helpers that exist. This tests the one nobody has
+ * written yet: a `processNote` query added later that filters by client and
+ * forgets the author reads someone's private thinking, and every behavioural
+ * test in this file still passes, because none of them call it. So the check is
+ * on the shape of the call — `authorId` must appear inside the query itself,
+ * which is the difference between filtering in SQL and filtering in JS.
+ */
+function sourceFiles() {
+  const out: string[] = [];
+  for (const dir of ['src', 'app']) {
+    for (const f of readdirSync(dir, { recursive: true, encoding: 'utf8' })) {
+      const path = `${dir}/${f}`;
+      if (!/\.tsx?$/.test(f) || f.endsWith('.test.ts')) continue;
+      if (path.startsWith('src/generated/')) continue;
+      if (!statSync(path).isFile()) continue;
+      out.push(path);
+    }
+  }
+  return out;
+}
+
+/** The argument text of the call starting at `from`, parens balanced. */
+function callArgs(src: string, from: number): string {
+  const open = src.indexOf('(', from);
+  if (open === -1) return '';
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '(') depth++;
+    else if (src[i] === ')' && --depth === 0) return src.slice(open, i + 1);
+  }
+  return src.slice(open);
+}
+
+export function unauthoredProcessNoteQueries(): string[] {
+  const offenders: string[] = [];
+  for (const path of sourceFiles()) {
+    const src = readFileSync(path, 'utf8');
+    for (const m of src.matchAll(/\bprocessNote\.\w+/g)) {
+      const args = callArgs(src, (m.index ?? 0) + m[0].length);
+      if (!args.includes('authorId')) offenders.push(`${path}: ${m[0]}`);
+    }
+  }
+  return offenders;
+}
+
+it('every process-note query names the author inside the query', () => {
+  expect(unauthoredProcessNoteQueries()).toEqual([]);
 });

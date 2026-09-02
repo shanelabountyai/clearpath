@@ -329,7 +329,7 @@ export async function updateProcessNote(actor: Actor, noteId: string, content: s
         data: { content },
       });
       if (count === 0) throw new NotFound('ProcessNote');
-      return tx.processNote.findUniqueOrThrow({ where: { id: noteId } });
+      return tx.processNote.findFirstOrThrow({ where: { id: noteId, authorId: actor.id } });
     },
   );
 }
@@ -351,7 +351,7 @@ export async function closeProcessNote(actor: Actor, noteId: string, opts: { clo
         data: { closedAt: (opts.clock ?? systemClock).now() },
       });
       if (count === 0) throw new NotFound('ProcessNote');
-      return tx.processNote.findUniqueOrThrow({ where: { id: noteId } });
+      return tx.processNote.findFirstOrThrow({ where: { id: noteId, authorId: actor.id } });
     },
   );
 }
