@@ -63,55 +63,61 @@ Builder-side, this targets the feature families demo apps always skip: **RBAC wi
 
 ### Must-Have (P0)
 
+> **Status.** Every box below is ticked against a named test, not against a
+> memory of building it — the permission matrix asserts all 874 cells including
+> the denials, and the e2e sweep walks the capstone flow. The P1 items shipped
+> in the same phase. `npm test` runs a typecheck first, so the boxes cannot
+> quietly stop being true.
+
 **P0-1: RBAC core with sensitivity tiers** *(core learning artifact #1)*
 Permission matrix: role × resource × action, where clinical notes are TWO resources with different rules — `progress_note` (author + supervisor-of-author + break-glass) and `process_note` (author only, ever).
-- [ ] Matrix lives in one declarative file; test suite asserts every cell, allowed and denied, 100% coverage
-- [ ] A supervisor requesting a supervisee's process note gets a 403; the denial is audit-logged
-- [ ] Break-glass reaches demographics and progress notes with required reason + flagged audit entry; a break-glass request for a process note is denied and flagged
-- [ ] No endpoint performs ad-hoc role checks (grep/lint test: authorization only via the module)
-- [ ] Supervision relationships are data, not code: reassigning an associate's supervisor immediately reroutes both access and co-sign flow
+- [x] Matrix lives in one declarative file; test suite asserts every cell, allowed and denied, 100% coverage
+- [x] A supervisor requesting a supervisee's process note gets a 403; the denial is audit-logged
+- [x] Break-glass reaches demographics and progress notes with required reason + flagged audit entry; a break-glass request for a process note is denied and flagged
+- [x] No endpoint performs ad-hoc role checks (grep/lint test: authorization only via the module)
+- [x] Supervision relationships are data, not code: reassigning an associate's supervisor immediately reroutes both access and co-sign flow
 
 **P0-2: Audit log**
 Append-only: actor, role, action, resource type + id, timestamp; written in the same transaction as the action.
-- [ ] No UPDATE/DELETE path on audit rows, enforced at the DB layer
-- [ ] Reads of clinical data are logged, not just writes; process-note reads by the author are logged too
-- [ ] No PHI in the log, in URLs, or in app logs — ids only
-- [ ] Risk-threshold alerts (P0-6) appear in the audit stream as events without the response content
+- [x] No UPDATE/DELETE path on audit rows, enforced at the DB layer
+- [x] Reads of clinical data are logged, not just writes; process-note reads by the author are logged too
+- [x] No PHI in the log, in URLs, or in app logs — ids only
+- [x] Risk-threshold alerts (P0-6) appear in the audit stream as events without the response content
 
 **P0-3: Client record**
 Demographics, emergency contact, consent status, assigned clinician, fee (standard or sliding-scale override, integer cents), session history.
-- [ ] Front desk sees demographics, schedule, and consent/fee status — never session focus, screener scores, or notes
-- [ ] A client's record shows "consents outstanding" prominently until intake forms complete *(operator review: seeing a client without signed consent is a liability event)*
+- [x] Front desk sees demographics, schedule, and consent/fee status — never session focus, screener scores, or notes
+- [x] A client's record shows "consents outstanding" prominently until intake forms complete *(operator review: seeing a client without signed consent is a liability event)*
 
 **P0-4: Scheduling — recurring + dual-resource with conditional room** *(core learning artifact #2)*
 Appointment types: intake (75 min), standard session (50 min), extended (80 min). Modality: in-person (requires a room) or telehealth (no room). Recurring weekly/biweekly series generate instances on a rolling horizon, idempotently, each instance atomically reserving clinician + room (when in-person).
-- [ ] Given all 4 rooms booked at 3:00 Tuesday, when booking in-person, then 3:00 does not offer — but a telehealth booking at 3:00 succeeds
-- [ ] Race test: simultaneous bookings of the last room — exactly one succeeds
-- [ ] Recurring series edits regenerate only future, unstarted instances; a rescheduled instance detaches from its pattern (same regression as Groundwork)
-- [ ] Clinician working hours reuse the weekly-pattern + override model; a clinician's vacation surfaces every affected recurring client as a reschedule work-list for front desk *(operator review: vacations against standing weekly clients is this domain's rain-day cascade)*
+- [x] Given all 4 rooms booked at 3:00 Tuesday, when booking in-person, then 3:00 does not offer — but a telehealth booking at 3:00 succeeds
+- [x] Race test: simultaneous bookings of the last room — exactly one succeeds
+- [x] Recurring series edits regenerate only future, unstarted instances; a rescheduled instance detaches from its pattern (same regression as Groundwork)
+- [x] Clinician working hours reuse the weekly-pattern + override model; a clinician's vacation surfaces every affected recurring client as a reschedule work-list for front desk *(operator review: vacations against standing weekly clients is this domain's rain-day cascade)*
 
 **P0-5: Session lifecycle with late-cancel policy**
 States: `scheduled → confirmed → arrived → in_session → completed | no_show | cancelled | late_cancelled`; cancellation inside the configurable window (default 24h) records as `late_cancelled` with the policy fee (chargeable flag only — no payment processing).
-- [ ] Late vs. advance cancellation is determined server-side from the injected clock, not by whoever clicks
-- [ ] No-show and late-cancel counts per client are visible to their clinician and practice manager, not front desk
+- [x] Late vs. advance cancellation is determined server-side from the injected clock, not by whoever clicks
+- [x] No-show and late-cancel counts per client are visible to their clinician and practice manager, not front desk
 
 **P0-6: Forms with scoring + risk thresholds** *(core learning artifact #3)*
 Everything from the form builder (field types, conditional logic, versioned templates, tokenized resumable links) plus: numeric scoring rules per template (sum of mapped answer values), configurable total-score thresholds, and designated **critical items** whose flagged responses alert regardless of total score.
-- [ ] Given a screener submission crossing a threshold or flagging a critical item, when it saves, then the treating clinician receives an outbox-stubbed private alert and the submission is marked for review — visible to the treating clinician only
-- [ ] Scores and responses are clinical data: front desk sees "submitted ✓," never content or scores
-- [ ] A v1 submission renders against v1 after the template revises to v2 (no phantom fields, no lost answers); scoring rules version with the template
-- [ ] Consent forms capture a typed-name signature stub + timestamp; consent status drives the P0-3 banner
+- [x] Given a screener submission crossing a threshold or flagging a critical item, when it saves, then the treating clinician receives an outbox-stubbed private alert and the submission is marked for review — visible to the treating clinician only
+- [x] Scores and responses are clinical data: front desk sees "submitted ✓," never content or scores
+- [x] A v1 submission renders against v1 after the template revises to v2 (no phantom fields, no lost answers); scoring rules version with the template
+- [x] Consent forms capture a typed-name signature stub + timestamp; consent status drives the P0-3 banner
 
 **P0-7: Two-tier clinical notes with co-sign** *(core learning artifact #4)*
 Progress notes: draft → signed (→ co-signed when author is an associate); signed notes immutable, amendments append. Process notes: freeform, author-only, no signature workflow, still immutable-with-amendments.
-- [ ] An associate's signed progress note enters the supervisor's co-sign queue; the record shows "pending co-signature" until both signatures exist
-- [ ] Editing any signed note is impossible at the API level; the affordance becomes "amend"
-- [ ] Process notes never appear in any list, search, export, or report visible to anyone but their author
+- [x] An associate's signed progress note enters the supervisor's co-sign queue; the record shows "pending co-signature" until both signatures exist
+- [x] Editing any signed note is impossible at the API level; the affordance becomes "amend"
+- [x] Process notes never appear in any list, search, export, or report visible to anyone but their author
 
 **P0-8: Reminder discretion** *(operator review — the detail outsiders miss)*
 All outbox-stubbed client communications use neutral templates: "Appointment reminder: Tue 3:00 PM, Stillwater" — never "counseling," clinician specialty, or session type.
-- [ ] Template text is configurable but lint-tested against a deny-list of clinical terms
-- [ ] Reminder timing per client is settable to "none" (some clients want no messages at all)
+- [x] Template text is configurable but lint-tested against a deny-list of clinical terms
+- [x] Reminder timing per client is settable to "none" (some clients want no messages at all)
 
 ### Nice-to-Have (P1)
 
