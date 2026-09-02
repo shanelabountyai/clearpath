@@ -66,6 +66,26 @@
   --status-cancelled: #a49d93;
   --status-late-cancelled: #9a2f2f;
 
+  /*
+   * Type scale. Seven steps, because the app had grown twelve improvised sizes
+   * between 9.5px and 22px and nobody could tell 12px from 12.5px on purpose.
+   * Dense clinical tables are the constraint: the workhorse stays at 13px and
+   * the steps below it are small deliberately, not by accident.
+   */
+  --type-nano: 10.5px;      /* chart axis labels, the calendar's hour gutter */
+  --type-micro: 11.5px;     /* uppercase field labels, badges, status chips */
+  --type-caption: 12.5px;   /* secondary metadata under a primary line */
+  --type-body: 13px;        /* the workhorse: lists, tables, most prose */
+  --type-lead: 14px;        /* form controls and anything typed into */
+  --type-subhead: 15px;     /* section titles, and note prose in the serif */
+  --type-title: 22px;       /* one per page, at the top */
+
+  /*
+   * Text on a solid tier or status fill. White is wrong in dark mode, where
+   * those fills are light — this is a contrast fix, not a preference.
+   */
+  --on-solid: #ffffff;
+
   --radius: 6px;
   --radius-lg: 10px;
   --shadow-sm: 0 1px 2px rgb(34 32 29 / 0.06);
@@ -124,6 +144,8 @@
     --status-no-show: #e08a84;
     --status-cancelled: #6a6660;
     --status-late-cancelled: #e08a84;
+
+    --on-solid: #14161a;
 
     --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
     --shadow: 0 2px 10px rgb(0 0 0 / 0.45);

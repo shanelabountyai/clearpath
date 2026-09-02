@@ -54,7 +54,7 @@ export default async function CalendarPage({
 
       {day.away.length > 0 && (
         <p
-          className="mb-4 rounded-[var(--radius)] border px-3 py-2 text-[13px]"
+          className="mb-4 rounded-[var(--radius)] border px-3 py-2 text-body"
           style={{ borderColor: 'var(--warning)', background: 'var(--warning-soft)' }}
         >
           <span aria-hidden>⚠ </span>
@@ -75,7 +75,7 @@ export default async function CalendarPage({
               {hours.map((m) => (
                 <div
                   key={m}
-                  className="absolute right-2 -translate-y-1/2 font-mono text-[11px] text-subtle"
+                  className="absolute right-2 -translate-y-1/2 font-mono text-nano text-subtle"
                   style={{ top: (m - DAY_START) * PX_PER_MIN }}
                 >
                   {minutesToHHMM(m)}
@@ -108,7 +108,7 @@ function DayLink({ date, label }: { date: string; label: string }) {
   return (
     <Link
       href={`/calendar?date=${date}`}
-      className="rounded-[var(--radius)] border px-2.5 py-1 text-[12.5px] transition-colors hover:bg-[var(--surface-inset)]"
+      className="rounded-[var(--radius)] border px-2.5 py-1 text-caption transition-colors hover:bg-[var(--surface-inset)]"
       style={{ borderColor: 'var(--border)' }}
     >
       {label}
@@ -130,8 +130,8 @@ function Column({
           background: accent ? 'var(--accent-soft)' : 'var(--surface-sunken)',
         }}
       >
-        <span className="text-[12.5px] font-semibold leading-tight">{title}</span>
-        <span className="text-[10.5px] leading-tight text-subtle">{subtitle}</span>
+        <span className="text-caption font-semibold leading-tight">{title}</span>
+        <span className="text-nano leading-tight text-subtle">{subtitle}</span>
       </div>
       <div className="relative" style={{ height: (hours[hours.length - 1]! - hours[0]!) * PX_PER_MIN + 60 }}>
         {hours.map((m) => (
@@ -155,7 +155,7 @@ function SessionChip({ session, top }: { session: DaySession; top: number }) {
   return (
     <Link
       href={`/appointments/${session.id}`}
-      className="absolute inset-x-1 block overflow-hidden rounded-[var(--radius)] border px-1.5 py-1 text-[11.5px] transition-shadow hover:shadow-[var(--shadow)]"
+      className="absolute inset-x-1 block overflow-hidden rounded-[var(--radius)] border px-1.5 py-1 text-micro transition-shadow hover:shadow-[var(--shadow)]"
       style={{
         top,
         height: (session.endMinute - session.startMinute) * PX_PER_MIN - 3,
@@ -173,7 +173,7 @@ function SessionChip({ session, top }: { session: DaySession; top: number }) {
           {session.client.lastName}
         </span>
       </div>
-      <div className="truncate text-[10.5px] text-subtle">
+      <div className="truncate text-nano text-subtle">
         {minutesToHHMM(session.startMinute)} · {session.clinician.name.split(' ')[0]}
         {session.seriesId ? (session.detached ? ' · moved' : ' · standing') : ''}
       </div>

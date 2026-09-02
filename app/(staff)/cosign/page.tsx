@@ -51,7 +51,7 @@ export default async function CoSignPage() {
                     <Link href={`/notes/${n.id}`} className="font-medium text-accent hover:underline">
                       {n.client.lastName}, {n.client.firstName}
                     </Link>
-                    <p className="text-[12.5px] text-muted">
+                    <p className="text-caption text-muted">
                       <span className="font-mono">{n.client.code}</span> · {n.author.name} ·
                       session {n.appointment ? localDateOf(n.appointment.startAt) : '—'} ·
                       signed {n.signedAt ? localDateOf(n.signedAt) : '—'}
@@ -63,7 +63,7 @@ export default async function CoSignPage() {
                       <input type="hidden" name="noteId" value={n.id} />
                       <input type="hidden" name="returnTo" value="queue" />
                       <button
-                        className="rounded-[var(--radius)] px-3 py-1.5 text-[12.5px] font-medium"
+                        className="rounded-[var(--radius)] px-3 py-1.5 text-caption font-medium"
                         style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}
                       >
                         Co-sign

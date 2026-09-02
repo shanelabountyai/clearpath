@@ -10,6 +10,7 @@ import { Badge, Card, Field, PageHeader, STATUS_META, StatusChip, money } from '
 import { BreakGlassPrompt } from '../../break-glass';
 import { advanceStatus, cancelSession, moveSession, startProgressNote } from '../actions';
 import { systemClock } from '@/src/clock';
+import { Button } from '@/src/ui/primitives';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,7 +55,7 @@ export default async function AppointmentPage({
       />
 
       {error && (
-        <p className="mb-4 rounded-[var(--radius)] border px-3 py-2 text-[13px]" style={{ borderColor: 'var(--danger)', background: 'var(--danger-soft)' }}>
+        <p className="mb-4 rounded-[var(--radius)] border px-3 py-2 text-body" style={{ borderColor: 'var(--danger)', background: 'var(--danger-soft)' }}>
           {error}
         </p>
       )}
@@ -97,7 +98,7 @@ export default async function AppointmentPage({
                       <input type="hidden" name="appointmentId" value={appt.id} />
                       <input type="hidden" name="to" value={to} />
                       <button
-                        className="rounded-[var(--radius)] border px-3 py-1.5 text-[13px] font-medium transition-colors hover:bg-[var(--surface-inset)]"
+                        className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium transition-colors hover:bg-[var(--surface-inset)]"
                         style={{ borderColor: 'var(--border-strong)' }}
                       >
                         {STATUS_META[to]?.glyph} Mark {STATUS_META[to]?.label.toLowerCase()}
@@ -115,7 +116,7 @@ export default async function AppointmentPage({
                   it. Whether it counts as late is decided by the server from the
                   clock — this is a preview of that decision, not the decision. */}
               <p
-                className="mt-2 rounded-[var(--radius)] px-3 py-2 text-[13px]"
+                className="mt-2 rounded-[var(--radius)] px-3 py-2 text-body"
                 style={{
                   background: wouldBeLate ? 'var(--danger-soft)' : 'var(--success-soft)',
                   color: wouldBeLate ? 'var(--danger)' : 'var(--success)',
@@ -135,21 +136,18 @@ export default async function AppointmentPage({
               <form action={cancelSession} className="mt-3 flex flex-wrap items-end gap-2">
                 <input type="hidden" name="appointmentId" value={appt.id} />
                 <div className="min-w-[220px] flex-1">
-                  <label htmlFor="reason" className="block text-[11.5px] font-medium tracking-wide text-subtle uppercase">
+                  <label htmlFor="reason" className="block text-micro font-medium tracking-wide text-subtle uppercase">
                     Reason (operational only — never clinical)
                   </label>
                   <input
                     id="reason" name="reason" placeholder="e.g. client rescheduled"
-                    className="mt-1 w-full rounded-[var(--radius)] border px-2 py-1.5 text-[13px]"
+                    className="mt-1 w-full rounded-[var(--radius)] border px-2 py-1.5 text-body"
                     style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
                   />
                 </div>
-                <button
-                  className="rounded-[var(--radius)] px-3 py-1.5 text-[13px] font-medium"
-                  style={{ background: 'var(--danger)', color: '#fff' }}
-                >
+                <Button variant="danger">
                   Cancel session
-                </button>
+                </Button>
               </form>
             </Card>
           )}
@@ -157,29 +155,29 @@ export default async function AppointmentPage({
           {['scheduled', 'confirmed'].includes(appt.status) && (
             <Card>
               <h2 className="font-semibold">Move it</h2>
-              <p className="mt-1 text-[13px] text-muted">
+              <p className="mt-1 text-body text-muted">
                 Moving a standing session detaches this week from the pattern. The rest of
                 the series carries on, and the horizon will not refill this slot.
               </p>
               <form action={moveSession} className="mt-3 flex flex-wrap items-end gap-2">
                 <input type="hidden" name="appointmentId" value={appt.id} />
                 <div>
-                  <label htmlFor="date" className="block text-[11.5px] font-medium tracking-wide text-subtle uppercase">Date</label>
+                  <label htmlFor="date" className="block text-micro font-medium tracking-wide text-subtle uppercase">Date</label>
                   <input id="date" name="date" type="date" defaultValue={when.date} required
-                    className="mt-1 rounded-[var(--radius)] border px-2 py-1.5 text-[13px]"
+                    className="mt-1 rounded-[var(--radius)] border px-2 py-1.5 text-body"
                     style={{ borderColor: 'var(--border)', background: 'var(--surface)' }} />
                 </div>
                 <div>
-                  <label htmlFor="startMinute" className="block text-[11.5px] font-medium tracking-wide text-subtle uppercase">Start</label>
+                  <label htmlFor="startMinute" className="block text-micro font-medium tracking-wide text-subtle uppercase">Start</label>
                   <select id="startMinute" name="startMinute" defaultValue={when.minutes}
-                    className="mt-1 rounded-[var(--radius)] border px-2 py-1.5 text-[13px]"
+                    className="mt-1 rounded-[var(--radius)] border px-2 py-1.5 text-body"
                     style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
                     {Array.from({ length: 40 }, (_, i) => 8 * 60 + i * 15).map((m) => (
                       <option key={m} value={m}>{minutesToHHMM(m)}</option>
                     ))}
                   </select>
                 </div>
-                <button className="rounded-[var(--radius)] border px-3 py-1.5 text-[13px] font-medium" style={{ borderColor: 'var(--border-strong)' }}>
+                <button className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium" style={{ borderColor: 'var(--border-strong)' }}>
                   Move
                 </button>
               </form>
@@ -197,12 +195,12 @@ export default async function AppointmentPage({
             ) : canWriteNote ? (
               <form action={startProgressNote}>
                 <input type="hidden" name="appointmentId" value={appt.id} />
-                <button className="rounded-[var(--radius)] px-3 py-1.5 text-[13px] font-medium" style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}>
+                <button className="rounded-[var(--radius)] px-3 py-1.5 text-body font-medium" style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}>
                   Start a progress note
                 </button>
               </form>
             ) : (
-              <p className="text-[13px] text-muted">
+              <p className="text-body text-muted">
                 The clinical record for this session is written by {appt.clinician.name}.
               </p>
             )}
@@ -211,7 +209,7 @@ export default async function AppointmentPage({
           {appt.joinLink && (
             <Card>
               <h2 className="mb-1 font-semibold">Telehealth</h2>
-              <p className="font-mono text-[12px] break-all text-muted">{appt.joinLink}</p>
+              <p className="font-mono text-caption break-all text-muted">{appt.joinLink}</p>
             </Card>
           )}
         </div>

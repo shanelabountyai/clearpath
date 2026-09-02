@@ -34,14 +34,14 @@ export function TierBanner({ tier, children }: { tier: Tier; children?: ReactNod
   const meta = TIER_META[tier];
   return (
     <div
-      className="flex items-start gap-2.5 rounded-[var(--radius)] border px-3 py-2 text-[13px]"
+      className="flex items-start gap-2.5 rounded-[var(--radius)] border px-3 py-2 text-body"
       style={{
         borderColor: `var(--tier-${tier})`,
         background: `var(--tier-${tier}-soft)`,
         color: 'var(--text)',
       }}
     >
-      <span aria-hidden className="mt-px text-[15px] leading-none" style={{ color: `var(--tier-${tier})` }}>
+      <span aria-hidden className="mt-px text-subhead leading-none" style={{ color: `var(--tier-${tier})` }}>
         {meta.glyph}
       </span>
       <div>
@@ -79,7 +79,7 @@ export function LockedPanel({
         <span aria-hidden style={{ color: 'var(--tier-private)' }}>⬤</span>
         <h2 id="locked-title" className="font-semibold">{title}</h2>
       </div>
-      <p className="mt-2 max-w-prose text-[13px] text-muted">
+      <p className="mt-2 max-w-prose text-body text-muted">
         {children ?? (
           <>
             Process notes are the author&rsquo;s own working record and are visible only to
@@ -89,7 +89,7 @@ export function LockedPanel({
           </>
         )}
       </p>
-      <p className="mt-2 text-[12px] text-subtle">
+      <p className="mt-2 text-caption text-subtle">
         The official record for these sessions is under Progress notes.
       </p>
     </section>
@@ -111,7 +111,7 @@ export function Badge({ tone = 'neutral', glyph, children }: { tone?: Tone; glyp
   const v = TONE_VARS[tone];
   return (
     <span
-      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11.5px] font-medium whitespace-nowrap"
+      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-micro font-medium whitespace-nowrap"
       style={{ color: v.fg, background: v.bg }}
     >
       {glyph && <span aria-hidden>{glyph}</span>}
@@ -152,8 +152,8 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
   return (
     <header className="mb-5 flex flex-wrap items-end justify-between gap-3">
       <div>
-        <h1 className="text-[22px] font-semibold tracking-tight">{title}</h1>
-        {subtitle && <p className="mt-0.5 text-[13px] text-muted">{subtitle}</p>}
+        <h1 className="text-title font-semibold tracking-tight">{title}</h1>
+        {subtitle && <p className="mt-0.5 text-body text-muted">{subtitle}</p>}
       </div>
       {actions && <div className="flex items-center gap-2">{actions}</div>}
     </header>
@@ -167,7 +167,7 @@ export function EmptyState({ title, children }: { title: string; children?: Reac
       style={{ borderColor: 'var(--border)' }}
     >
       <p className="font-medium">{title}</p>
-      {children && <p className="mx-auto mt-1 max-w-prose text-[13px] text-muted">{children}</p>}
+      {children && <p className="mx-auto mt-1 max-w-prose text-body text-muted">{children}</p>}
     </div>
   );
 }
@@ -175,7 +175,7 @@ export function EmptyState({ title, children }: { title: string; children?: Reac
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>
-      <dt className="text-[11.5px] font-medium tracking-wide text-subtle uppercase">{label}</dt>
+      <dt className="text-micro font-medium tracking-wide text-subtle uppercase">{label}</dt>
       <dd className="mt-0.5">{children || <span className="text-subtle">—</span>}</dd>
     </div>
   );
@@ -185,3 +185,34 @@ export const money = (cents: number | null | undefined) =>
   cents === null || cents === undefined
     ? '—'
     : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
+
+export type ButtonVariant = 'solid' | 'quiet' | 'danger' | 'private';
+
+const BUTTON_FILL: Record<ButtonVariant, { background: string; color: string; borderColor: string }> = {
+  solid: { background: 'var(--accent)', color: 'var(--accent-contrast)', borderColor: 'var(--accent)' },
+  quiet: { background: 'transparent', color: 'var(--text)', borderColor: 'var(--border-strong)' },
+  // Chargeable or irreversible. Red is spoken for, and this is what spends it.
+  danger: { background: 'var(--danger)', color: 'var(--on-solid)', borderColor: 'var(--danger)' },
+  // Author-only actions carry the private tier's colour, so the one place a
+  // clinician writes something nobody else will read looks like nowhere else.
+  private: { background: 'var(--tier-private)', color: 'var(--on-solid)', borderColor: 'var(--tier-private)' },
+};
+
+/**
+ * `--on-solid` rather than white: in dark mode the danger and private fills are
+ * light, and white text on them fails contrast. A solid button is the one place
+ * the foreground cannot be inherited.
+ */
+export function Button({
+  variant = 'solid',
+  className = '',
+  ...props
+}: { variant?: ButtonVariant } & React.ComponentPropsWithoutRef<'button'>) {
+  return (
+    <button
+      {...props}
+      className={`rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium whitespace-nowrap ${className}`}
+      style={{ ...BUTTON_FILL[variant], ...props.style }}
+    />
+  );
+}

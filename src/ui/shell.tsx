@@ -70,9 +70,9 @@ export function NavLinks({ actor }: { actor: Actor }) {
         <Link
           key={item.href}
           href={item.href}
-          className="flex items-center gap-2.5 rounded-[var(--radius)] px-2.5 py-1.5 text-[13px] text-muted transition-colors hover:bg-[var(--surface-inset)] hover:text-ink"
+          className="flex items-center gap-2.5 rounded-[var(--radius)] px-2.5 py-1.5 text-body text-muted transition-colors hover:bg-[var(--surface-inset)] hover:text-ink"
         >
-          <span aria-hidden className="w-4 text-center text-[13px] text-subtle">{item.glyph}</span>
+          <span aria-hidden className="w-4 text-center text-body text-subtle">{item.glyph}</span>
           {item.label}
         </Link>
       ))}

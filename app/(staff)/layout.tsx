@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { currentSession, switchableUsers } from '../../src/session';
 import { NavLinks, ROLE_LABEL } from '../../src/ui/shell';
 import { endBreakGlass, switchUser } from '../actions';
+import { Wordmark } from '@/src/ui/logo';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,8 +29,7 @@ export default async function StaffLayout({ children }: { children: React.ReactN
             >
               <div>
                 <Link href="/" className="mb-5 block px-2.5">
-                  <span className="text-[15px] font-semibold tracking-tight">Clearpath</span>
-                  <span className="block text-[11.5px] text-subtle">Stillwater Counseling</span>
+                  <Wordmark practice="Stillwater Counseling" size="sm" />
                 </Link>
                 <NavLinks actor={session.actor} />
               </div>
@@ -51,21 +51,20 @@ type SwitchUser = { id: string; name: string; role: string; supervisor: { name: 
 function SignInPanel({ users }: { users: SwitchUser[] }) {
   return (
     <div>
-      <h1 className="text-2xl font-semibold tracking-tight">Clearpath</h1>
-      <p className="mt-1 text-muted">Stillwater Counseling — practice operations</p>
+      <Wordmark practice="Stillwater Counseling — practice operations" />
 
       <div
         className="mt-6 rounded-[var(--radius-lg)] border p-4"
         style={{ borderColor: 'var(--warning)', background: 'var(--warning-soft)' }}
       >
-        <p className="text-[13px]">
+        <p className="text-body">
           <strong>Learning project, synthetic data only.</strong> Clearpath applies
           HIPAA-inspired design principles. It is not HIPAA-compliant software and must
           never hold real client data.
         </p>
       </div>
 
-      <p className="mt-6 text-[13px] text-muted">
+      <p className="mt-6 text-body text-muted">
         There is no authentication here — pick a person and the app runs as them.
         Authorization is real: every screen below is decided by the same permission
         matrix a signed-in user would meet.
@@ -82,7 +81,7 @@ function SignInPanel({ users }: { users: SwitchUser[] }) {
                 style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
               >
                 <span className="font-medium">{u.name}</span>
-                <span className="text-[12px] text-muted">
+                <span className="text-caption text-muted">
                   {ROLE_LABEL[u.role]}
                   {u.supervisor ? ` · supervised by ${u.supervisor.name}` : ''}
                 </span>
@@ -104,14 +103,14 @@ function UserSwitcher({ users, currentId }: { users: SwitchUser[]; currentId: st
       className="rounded-[var(--radius)] border border-dashed p-2"
       style={{ borderColor: 'var(--border-strong)' }}
     >
-      <label htmlFor="userId" className="block font-mono text-[10.5px] tracking-wide text-subtle uppercase">
+      <label htmlFor="userId" className="block font-mono text-nano tracking-wide text-subtle uppercase">
         dev: acting as
       </label>
       <select
         id="userId"
         name="userId"
         defaultValue={currentId}
-        className="mt-1 w-full rounded-[3px] border bg-[var(--surface-raised)] px-1.5 py-1 text-[12.5px]"
+        className="mt-1 w-full rounded-[3px] border bg-[var(--surface-raised)] px-1.5 py-1 text-caption"
         style={{ borderColor: 'var(--border)' }}
       >
         {users.map((u) => (
@@ -121,8 +120,8 @@ function UserSwitcher({ users, currentId }: { users: SwitchUser[]; currentId: st
         ))}
       </select>
       <div className="mt-1.5 flex items-center justify-between">
-        <span className="text-[11px] text-subtle">{current ? ROLE_LABEL[current.role] : ''}</span>
-        <button type="submit" className="text-[11.5px] font-medium text-accent hover:underline">
+        <span className="text-nano text-subtle">{current ? ROLE_LABEL[current.role] : ''}</span>
+        <button type="submit" className="text-micro font-medium text-accent hover:underline">
           Switch
         </button>
       </div>
@@ -136,7 +135,7 @@ function BreakGlassBar({ reason }: { reason: string }) {
       className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-2"
       style={{ borderColor: 'var(--danger)', background: 'var(--danger-soft)' }}
     >
-      <p className="text-[13px]">
+      <p className="text-body">
         <span aria-hidden>⚠ </span>
         <strong>Break-glass access is open.</strong> Everything you open is logged against
         your name with this reason: <em>{reason}</em>
@@ -144,7 +143,7 @@ function BreakGlassBar({ reason }: { reason: string }) {
       <form action={endBreakGlass}>
         <button
           type="submit"
-          className="rounded-[var(--radius)] border px-2.5 py-1 text-[12.5px] font-medium"
+          className="rounded-[var(--radius)] border px-2.5 py-1 text-caption font-medium"
           style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }}
         >
           Close break-glass

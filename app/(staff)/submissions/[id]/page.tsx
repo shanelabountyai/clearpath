@@ -45,8 +45,8 @@ export default async function SubmissionPage({ params }: { params: Promise<{ id:
           <dl className="divide-y" style={{ borderColor: 'var(--border)' }}>
             {s.fields.map(({ field, value }) => (
               <div key={field.key} className="grid gap-1 py-2.5 sm:grid-cols-[1fr_auto] sm:items-baseline sm:gap-4">
-                <dt className="text-[13.5px]">{field.label}</dt>
-                <dd className="font-serif text-[14px] sm:text-right">
+                <dt className="text-body">{field.label}</dt>
+                <dd className="font-serif text-lead sm:text-right">
                   {formatAnswer(field, value)}
                 </dd>
               </div>
@@ -55,12 +55,12 @@ export default async function SubmissionPage({ params }: { params: Promise<{ id:
 
           {s.orphans.length > 0 && (
             <div className="mt-4 rounded-[var(--radius)] border p-3" style={{ borderColor: 'var(--border-strong)', background: 'var(--surface-sunken)' }}>
-              <p className="text-[12.5px] font-medium">Answers to retired questions</p>
-              <p className="mt-0.5 text-[12px] text-muted">
+              <p className="text-caption font-medium">Answers to retired questions</p>
+              <p className="mt-0.5 text-caption text-muted">
                 These were answered on an earlier version of this form. They are kept rather
                 than dropped — the client did answer them.
               </p>
-              <ul className="mt-1.5 font-mono text-[12px] text-muted">
+              <ul className="mt-1.5 font-mono text-caption text-muted">
                 {s.orphans.map((o) => <li key={o.key}>{o.key}: {String(o.value)}</li>)}
               </ul>
             </div>
@@ -72,8 +72,8 @@ export default async function SubmissionPage({ params }: { params: Promise<{ id:
             <Card>
               <h2 className="mb-1 font-semibold">Score</h2>
               <p className="font-mono text-3xl">{s.totalScore}</p>
-              {s.band && <p className="mt-1 text-[13px] text-muted">{s.band.label} band</p>}
-              <p className="mt-3 text-[12px] text-subtle">
+              {s.band && <p className="mt-1 text-body text-muted">{s.band.label} band</p>}
+              <p className="mt-3 text-caption text-subtle">
                 A total is a conversation starter, not a diagnosis, and not a trend to chase.
               </p>
             </Card>
@@ -81,10 +81,10 @@ export default async function SubmissionPage({ params }: { params: Promise<{ id:
           {s.needsReview && (
             <Card>
               <h2 className="mb-1 font-semibold">Why this is flagged</h2>
-              <ul className="space-y-1 font-mono text-[12px] text-muted">
+              <ul className="space-y-1 font-mono text-caption text-muted">
                 {s.reviewReasons.map((r) => <li key={r}>{r}</li>)}
               </ul>
-              <p className="mt-2 text-[12px] text-subtle">
+              <p className="mt-2 text-caption text-subtle">
                 Reason codes are what travel to the alert and the audit log. The answers do not.
               </p>
             </Card>
@@ -92,8 +92,8 @@ export default async function SubmissionPage({ params }: { params: Promise<{ id:
           {s.signatureName && (
             <Card>
               <h2 className="mb-1 font-semibold">Signature</h2>
-              <p className="font-serif text-[15px]">{s.signatureName}</p>
-              <p className="text-[12px] text-subtle">Typed name, {localDateOf(s.submittedAt)}</p>
+              <p className="font-serif text-subhead">{s.signatureName}</p>
+              <p className="text-caption text-subtle">Typed name, {localDateOf(s.submittedAt)}</p>
             </Card>
           )}
         </div>

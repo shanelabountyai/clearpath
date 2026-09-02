@@ -55,7 +55,7 @@ export function FormRunner({
       {error && (
         <p
           role="alert"
-          className="mt-6 rounded-[var(--radius)] border px-3 py-2 text-[14px]"
+          className="mt-6 rounded-[var(--radius)] border px-3 py-2 text-lead"
           style={{ borderColor: 'var(--danger)', background: 'var(--danger-soft)' }}
         >
           {error}
@@ -66,7 +66,7 @@ export function FormRunner({
         <button
           type="submit"
           disabled={pending}
-          className="rounded-[var(--radius)] px-5 py-2.5 text-[15px] font-medium disabled:opacity-60"
+          className="rounded-[var(--radius)] px-5 py-2.5 text-subhead font-medium disabled:opacity-60"
           style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}
         >
           {pending ? 'Sending…' : 'Send to the practice'}
@@ -75,12 +75,12 @@ export function FormRunner({
           type="button"
           disabled={pending}
           onClick={() => startTransition(async () => { await saveProgress(token, payload()); setSaved(true); })}
-          className="rounded-[var(--radius)] border px-4 py-2.5 text-[15px]"
+          className="rounded-[var(--radius)] border px-4 py-2.5 text-subhead"
           style={{ borderColor: 'var(--border-strong)' }}
         >
           Save and finish later
         </button>
-        {saved && <span className="text-[13px]" style={{ color: 'var(--success)' }}>Saved. Your link will bring you back here.</span>}
+        {saved && <span className="text-body" style={{ color: 'var(--success)' }}>Saved. Your link will bring you back here.</span>}
       </div>
     </form>
   );
@@ -93,8 +93,8 @@ function Question({
 }) {
   const id = `q-${field.key}`;
   const label = (
-    <label htmlFor={id} className="block text-[15px] leading-snug">
-      <span className="mr-1.5 font-mono text-[12px] text-subtle">{index}</span>
+    <label htmlFor={id} className="block text-subhead leading-snug">
+      <span className="mr-1.5 font-mono text-caption text-subtle">{index}</span>
       {field.label}
       {field.required && <span aria-hidden className="ml-1" style={{ color: 'var(--danger)' }}>*</span>}
     </label>
@@ -108,8 +108,8 @@ function Question({
   if (field.type === 'scale' && field.options) {
     return (
       <fieldset>
-        <legend className="mb-2 text-[15px] leading-snug">
-          <span className="mr-1.5 font-mono text-[12px] text-subtle">{index}</span>
+        <legend className="mb-2 text-subhead leading-snug">
+          <span className="mr-1.5 font-mono text-caption text-subtle">{index}</span>
           {field.label}
         </legend>
         <div className="flex flex-wrap gap-2">
@@ -118,7 +118,7 @@ function Question({
             return (
               <label
                 key={String(o.value)}
-                className="flex cursor-pointer items-center gap-2 rounded-[var(--radius)] border px-3 py-2 text-[14px]"
+                className="flex cursor-pointer items-center gap-2 rounded-[var(--radius)] border px-3 py-2 text-lead"
                 style={{
                   borderColor: active ? 'var(--accent)' : 'var(--border)',
                   background: active ? 'var(--accent-soft)' : 'var(--surface-raised)',
@@ -146,7 +146,7 @@ function Question({
         {label}
         <select
           id={id} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}
-          className="mt-2 w-full rounded-[var(--radius)] border px-3 py-2 text-[15px]" style={inputStyle}
+          className="mt-2 w-full rounded-[var(--radius)] border px-3 py-2 text-subhead" style={inputStyle}
         >
           <option value="">Choose one…</option>
           {field.options.map((o) => <option key={String(o.value)} value={String(o.value)}>{o.label}</option>)}
@@ -158,15 +158,15 @@ function Question({
   if (field.type === 'boolean') {
     return (
       <fieldset>
-        <legend className="mb-2 text-[15px] leading-snug">
-          <span className="mr-1.5 font-mono text-[12px] text-subtle">{index}</span>
+        <legend className="mb-2 text-subhead leading-snug">
+          <span className="mr-1.5 font-mono text-caption text-subtle">{index}</span>
           {field.label}
         </legend>
         <div className="flex gap-2">
           {[['Yes', true], ['No', false]].map(([text, v]) => (
             <label
               key={String(v)}
-              className="flex cursor-pointer items-center gap-2 rounded-[var(--radius)] border px-4 py-2 text-[14px]"
+              className="flex cursor-pointer items-center gap-2 rounded-[var(--radius)] border px-4 py-2 text-lead"
               style={{
                 borderColor: value === v ? 'var(--accent)' : 'var(--border)',
                 background: value === v ? 'var(--accent-soft)' : 'var(--surface-raised)',
@@ -188,7 +188,7 @@ function Question({
         {label}
         <textarea
           id={id} rows={4} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}
-          className="mt-2 w-full rounded-[var(--radius)] border p-3 font-serif text-[15px] leading-relaxed"
+          className="mt-2 w-full rounded-[var(--radius)] border p-3 font-serif text-subhead leading-relaxed"
           style={inputStyle}
         />
       </>
@@ -203,7 +203,7 @@ function Question({
         type={field.type === 'date' ? 'date' : 'text'}
         value={String(value ?? '')}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-2 w-full rounded-[var(--radius)] border px-3 py-2 text-[15px]"
+        className="mt-2 w-full rounded-[var(--radius)] border px-3 py-2 text-subhead"
         style={{
           ...inputStyle,
           fontFamily: field.type === 'signature' ? 'var(--font-reading)' : undefined,

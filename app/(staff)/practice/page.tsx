@@ -37,7 +37,7 @@ export default async function PracticePage() {
           <Card>
             <h2 className="mb-3 font-semibold">People</h2>
             <div className="scroll-x">
-              <table className="w-full min-w-[520px] border-collapse text-[13px]">
+              <table className="w-full min-w-[520px] border-collapse text-body">
                 <thead>
                   <tr className="text-left text-muted">
                     {['Name', 'Role', 'Supervised by', 'Status'].map((h) => (
@@ -50,7 +50,7 @@ export default async function PracticePage() {
                     <tr key={u.id}>
                       <td className="border-b py-2" style={{ borderColor: 'var(--border)' }}>
                         <span className="font-medium">{u.name}</span>
-                        <span className="block text-[12px] text-subtle">{u.email}</span>
+                        <span className="block text-caption text-subtle">{u.email}</span>
                       </td>
                       <td className="border-b py-2 text-muted" style={{ borderColor: 'var(--border)' }}>{ROLE_LABEL[u.role]}</td>
                       <td className="border-b py-2" style={{ borderColor: 'var(--border)' }}>
@@ -68,17 +68,17 @@ export default async function PracticePage() {
 
           <Card>
             <h2 className="font-semibold">Supervision</h2>
-            <p className="mt-1 mb-3 max-w-prose text-[13px] text-muted">
+            <p className="mt-1 mb-3 max-w-prose text-body text-muted">
               These relationships are data, not code. Repointing one immediately reroutes
               both read access to progress notes and the co-signature queue — no deploy, no
               cache to clear.
             </p>
             {supervisors.length === 0 ? (
-              <p className="text-[13px] text-muted">Nobody is currently supervising.</p>
+              <p className="text-body text-muted">Nobody is currently supervising.</p>
             ) : (
               <ul className="space-y-3">
                 {supervisors.map((s) => (
-                  <li key={s.id} className="flex flex-wrap items-center gap-2 text-[13px]">
+                  <li key={s.id} className="flex flex-wrap items-center gap-2 text-body">
                     <span className="font-medium">{s.name}</span>
                     <span aria-hidden className="text-subtle">→</span>
                     {s.supervisees.map((sv) => (
@@ -88,7 +88,7 @@ export default async function PracticePage() {
                 ))}
               </ul>
             )}
-            <p className="mt-3 text-[12px] text-subtle">
+            <p className="mt-3 text-caption text-subtle">
               A supervisor reads and co-signs their supervisees&rsquo; progress notes. They do not
               read anyone&rsquo;s process notes, supervisees included.
             </p>
@@ -98,7 +98,7 @@ export default async function PracticePage() {
         <div className="space-y-4">
           <Card>
             <h2 className="mb-2 font-semibold">Rooms</h2>
-            <ul className="space-y-1.5 text-[13px]">
+            <ul className="space-y-1.5 text-body">
               {data.rooms.map((r) => (
                 <li key={r.id} className="flex items-center justify-between">
                   <span>{r.name}</span>
@@ -119,7 +119,7 @@ export default async function PracticePage() {
                 <Field label="Continuity gap">{data.settings.continuityGapDays} days</Field>
                 <Field label="Name used in messages">{data.settings.messagingName}</Field>
               </dl>
-              <p className="mt-3 text-[12px] text-subtle">
+              <p className="mt-3 text-caption text-subtle">
                 Messages to clients use &ldquo;{data.settings.messagingName}&rdquo;, not
                 &ldquo;{data.settings.name}&rdquo;. A lock-screen preview should not say why
                 somebody is coming in.

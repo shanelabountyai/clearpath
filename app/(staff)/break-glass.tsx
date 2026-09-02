@@ -1,4 +1,5 @@
 import { startBreakGlass } from '../actions';
+import { Button } from '@/src/ui/primitives';
 
 /**
  * What a practice manager meets instead of a record.
@@ -16,32 +17,29 @@ export function BreakGlassPrompt({ resource }: { resource: string }) {
         style={{ borderColor: 'var(--border-strong)', background: 'var(--surface-raised)' }}
       >
         <h1 className="text-lg font-semibold">Break-glass access required</h1>
-        <p className="mt-2 text-[13.5px] text-muted">
+        <p className="mt-2 text-body text-muted">
           Your role administers the practice rather than its clinical records. You can open{' '}
           {resource} in an emergency, and doing so is recorded against your name with the
           reason you give.
         </p>
         <form action={startBreakGlass} className="mt-4">
-          <label htmlFor="reason" className="block text-[11.5px] font-medium tracking-wide text-subtle uppercase">
+          <label htmlFor="reason" className="block text-micro font-medium tracking-wide text-subtle uppercase">
             Reason (required)
           </label>
           <textarea
             id="reason" name="reason" rows={3} required minLength={10}
             placeholder="e.g. client called the practice in distress and their clinician is on leave"
-            className="mt-1 w-full rounded-[var(--radius)] border p-2.5 text-[13.5px]"
+            className="mt-1 w-full rounded-[var(--radius)] border p-2.5 text-body"
             style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
           />
           <div className="mt-3 flex items-center justify-between gap-3">
-            <p className="text-[12px] text-subtle">
+            <p className="text-caption text-subtle">
               Break-glass reaches demographics and progress notes. It does not reach
               process notes — nothing does.
             </p>
-            <button
-              className="shrink-0 rounded-[var(--radius)] px-3 py-1.5 text-[13px] font-medium"
-              style={{ background: 'var(--danger)', color: '#fff' }}
-            >
+            <Button variant="danger" className="shrink-0">
               Break glass
-            </button>
+            </Button>
           </div>
         </form>
       </div>

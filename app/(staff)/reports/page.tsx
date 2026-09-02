@@ -28,9 +28,9 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         subtitle={`${from} to ${to}`}
         actions={
           <form className="flex items-end gap-2">
-            <input type="date" name="from" defaultValue={from} className="rounded-[var(--radius)] border px-2 py-1.5 text-[13px]" style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }} />
-            <input type="date" name="to" defaultValue={to} className="rounded-[var(--radius)] border px-2 py-1.5 text-[13px]" style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }} />
-            <button className="rounded-[var(--radius)] px-3 py-1.5 text-[13px] font-medium" style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}>Apply</button>
+            <input type="date" name="from" defaultValue={from} className="rounded-[var(--radius)] border px-2 py-1.5 text-body" style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }} />
+            <input type="date" name="to" defaultValue={to} className="rounded-[var(--radius)] border px-2 py-1.5 text-body" style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }} />
+            <button className="rounded-[var(--radius)] px-3 py-1.5 text-body font-medium" style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}>Apply</button>
           </form>
         }
       />
@@ -45,14 +45,14 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <h2 className="mb-3 font-semibold">Room utilization</h2>
-          <p className="mb-3 text-[12.5px] text-muted">
+          <p className="mb-3 text-caption text-muted">
             Against the practice&rsquo;s own working day — eight hours per weekday — rather than
             against the clock, which would make a full practice look half empty.
           </p>
           <ul className="space-y-2.5">
             {report.rooms.map((r) => (
               <li key={r.id}>
-                <div className="mb-1 flex items-baseline justify-between text-[13px]">
+                <div className="mb-1 flex items-baseline justify-between text-body">
                   <span>{r.name}</span>
                   <span className="font-mono text-muted">{pct(r.utilization)}</span>
                 </div>
@@ -70,7 +70,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         <Card>
           <h2 className="mb-3 font-semibold">Sessions by clinician</h2>
           <div className="scroll-x">
-            <table className="w-full min-w-[380px] border-collapse text-[13px]">
+            <table className="w-full min-w-[380px] border-collapse text-body">
               <thead>
                 <tr className="text-left text-muted">
                   <th className="border-b py-1.5 font-medium" style={{ borderColor: 'var(--border)' }}>Clinician</th>
@@ -106,13 +106,13 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                 }, {}),
               ).map(([week, sessions]) => (
                 <div key={week} className="flex flex-1 flex-col items-center justify-end gap-1">
-                  <span className="font-mono text-[10.5px] text-subtle">{sessions}</span>
+                  <span className="font-mono text-nano text-subtle">{sessions}</span>
                   <div
                     className="w-full rounded-t"
                     style={{ height: `${(sessions / maxWeekly) * 110}px`, background: 'var(--accent)' }}
                     title={`Week of ${week}: ${sessions}`}
                   />
-                  <span className="font-mono text-[9.5px] text-subtle">{week.slice(5)}</span>
+                  <span className="font-mono text-nano text-subtle">{week.slice(5)}</span>
                 </div>
               ))}
             </div>
@@ -120,7 +120,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         </Card>
       </div>
 
-      <p className="mt-4 text-[12px] text-subtle">
+      <p className="mt-4 text-caption text-subtle">
         Counts and rates only. No client is named on this screen and no session content is
         reachable from it.
       </p>
@@ -131,7 +131,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
 function Stat({ label, value, tone }: { label: string; value: string | number; tone?: 'danger' }) {
   return (
     <Card>
-      <p className="text-[11.5px] font-medium tracking-wide text-subtle uppercase">{label}</p>
+      <p className="text-micro font-medium tracking-wide text-subtle uppercase">{label}</p>
       <p className="mt-1 font-mono text-2xl" style={{ color: tone === 'danger' ? 'var(--danger)' : undefined }}>
         {value}
       </p>

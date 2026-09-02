@@ -61,30 +61,30 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
                 <label htmlFor="content" className="sr-only">Note</label>
                 <textarea
                   id="content" name="content" rows={16} defaultValue={note.content}
-                  className="w-full rounded-[var(--radius)] border p-4 font-serif text-[15px] leading-[1.7]"
+                  className="w-full rounded-[var(--radius)] border p-4 font-serif text-subhead leading-[1.7]"
                   style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
                 />
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <button
                     formAction={saveDraftNote}
-                    className="rounded-[var(--radius)] border px-3 py-1.5 text-[13px] font-medium"
+                    className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
                     style={{ borderColor: 'var(--border-strong)' }}
                   >
                     Save draft
                   </button>
                   <button
-                    className="rounded-[var(--radius)] px-3 py-1.5 text-[13px] font-medium"
+                    className="rounded-[var(--radius)] px-3 py-1.5 text-body font-medium"
                     style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}
                   >
                     Sign
                   </button>
-                  <span className="text-[12px] text-subtle">
+                  <span className="text-caption text-subtle">
                     Signing freezes the text. Corrections after that append as amendments.
                   </span>
                 </div>
               </form>
             ) : (
-              <article className="font-serif text-[15px] leading-[1.75] whitespace-pre-wrap">
+              <article className="font-serif text-subhead leading-[1.75] whitespace-pre-wrap">
                 {note.content || <span className="text-subtle">This note is empty.</span>}
               </article>
             )}
@@ -96,10 +96,10 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
               <ol className="space-y-3">
                 {note.amendments.map((a) => (
                   <li key={a.id} className="border-l-2 pl-3" style={{ borderColor: 'var(--border-strong)' }}>
-                    <p className="text-[12px] text-subtle">
+                    <p className="text-caption text-subtle">
                       {a.author.name} · {localDateOf(a.createdAt)}
                     </p>
-                    <p className="mt-0.5 font-serif text-[14.5px] leading-relaxed whitespace-pre-wrap">{a.content}</p>
+                    <p className="mt-0.5 font-serif text-subhead leading-relaxed whitespace-pre-wrap">{a.content}</p>
                   </li>
                 ))}
               </ol>
@@ -109,7 +109,7 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
           {note.status !== 'draft' && isAuthor && (
             <Card>
               <h2 className="font-semibold">Amend</h2>
-              <p className="mt-1 text-[13px] text-muted">
+              <p className="mt-1 text-body text-muted">
                 The signed text stays exactly as signed. An amendment appends beneath it.
               </p>
               <form action={amendNote} className="mt-2">
@@ -117,10 +117,10 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
                 <label htmlFor="amend" className="sr-only">Amendment</label>
                 <textarea
                   id="amend" name="content" rows={3} required
-                  className="w-full rounded-[var(--radius)] border p-2.5 font-serif text-[14px]"
+                  className="w-full rounded-[var(--radius)] border p-2.5 font-serif text-lead"
                   style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
                 />
-                <button className="mt-2 rounded-[var(--radius)] border px-3 py-1.5 text-[13px] font-medium" style={{ borderColor: 'var(--border-strong)' }}>
+                <button className="mt-2 rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium" style={{ borderColor: 'var(--border-strong)' }}>
                   Add amendment
                 </button>
               </form>
@@ -131,7 +131,7 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
         <div className="space-y-4">
           <Card>
             <h2 className="mb-2 font-semibold">Signatures</h2>
-            <ul className="space-y-2 text-[13px]">
+            <ul className="space-y-2 text-body">
               <li className="flex items-center justify-between gap-2">
                 <span>{note.author.name}</span>
                 {note.signedAt ? <Badge tone="success" glyph="✓">{localDateOf(note.signedAt)}</Badge> : <Badge>unsigned</Badge>}
@@ -146,7 +146,7 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
               )}
             </ul>
             {note.status === 'signed' && author.supervisorId && (
-              <p className="mt-3 text-[12.5px] text-muted">
+              <p className="mt-3 text-caption text-muted">
                 This note was written under supervision, so the record is not complete until
                 the supervisor countersigns it.
               </p>
@@ -155,7 +155,7 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
               <form action={coSignNote} className="mt-3">
                 <input type="hidden" name="noteId" value={note.id} />
                 <button
-                  className="w-full rounded-[var(--radius)] px-3 py-2 text-[13px] font-medium"
+                  className="w-full rounded-[var(--radius)] px-3 py-2 text-body font-medium"
                   style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}
                 >
                   Co-sign this note
@@ -166,7 +166,7 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
 
           <Card>
             <h2 className="mb-1 font-semibold">Process notes</h2>
-            <p className="text-[12.5px] text-muted">
+            <p className="text-caption text-muted">
               The author&rsquo;s private working notes for this client are a separate record with
               a separate rule: author only, with no override. They are not linked from here
               for anyone else.

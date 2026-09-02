@@ -50,7 +50,7 @@ export default async function BookPage({
       <div className="mb-4"><TierBanner tier="operational" /></div>
 
       {q.error && (
-        <p className="mb-4 rounded-[var(--radius)] border px-3 py-2 text-[13px]" style={{ borderColor: 'var(--danger)', background: 'var(--danger-soft)' }}>
+        <p className="mb-4 rounded-[var(--radius)] border px-3 py-2 text-body" style={{ borderColor: 'var(--danger)', background: 'var(--danger-soft)' }}>
           {q.error}
         </p>
       )}
@@ -59,13 +59,13 @@ export default async function BookPage({
         <div className="mb-4 rounded-[var(--radius-lg)] border px-4 py-3" style={{ borderColor: 'var(--success)', background: 'var(--success-soft)' }}>
           <p className="font-semibold">Standing session booked — {q.booked} weeks scheduled.</p>
           {skipped.length > 0 && (
-            <p className="mt-1 text-[13px]">
+            <p className="mt-1 text-body">
               {skipped.length} week{skipped.length === 1 ? '' : 's'} could not be honoured
               ({skipped.join(', ')}) — no room was free at that hour. These need a person:
               offer the client a different slot for those weeks.
             </p>
           )}
-          <p className="mt-1 text-[13px]">
+          <p className="mt-1 text-body">
             <Link className="underline" href={`/calendar?date=${date}`}>Open the calendar</Link>
           </p>
         </div>
@@ -82,9 +82,9 @@ export default async function BookPage({
             <Select name="clinicianId" label="Clinician" defaultValue={clinicianId}
               options={clinicians.map((c) => ({ value: c.id, label: c.name }))} />
             <div>
-              <label htmlFor="date" className="block text-[11.5px] font-medium tracking-wide text-subtle uppercase">Date</label>
+              <label htmlFor="date" className="block text-micro font-medium tracking-wide text-subtle uppercase">Date</label>
               <input id="date" name="date" type="date" defaultValue={date}
-                className="mt-1 w-full rounded-[var(--radius)] border px-2 py-1.5 text-[13px]"
+                className="mt-1 w-full rounded-[var(--radius)] border px-2 py-1.5 text-body"
                 style={{ borderColor: 'var(--border)', background: 'var(--surface)' }} />
             </div>
             <Select name="type" label="Session type" defaultValue={type}
@@ -96,7 +96,7 @@ export default async function BookPage({
                 { value: 'in_person', label: 'In person — needs a room' },
                 { value: 'telehealth', label: 'Telehealth — no room needed' },
               ]} />
-            <button className="w-full rounded-[var(--radius)] px-3 py-2 text-[13px] font-medium" style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}>
+            <button className="w-full rounded-[var(--radius)] px-3 py-2 text-body font-medium" style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}>
               Show times
             </button>
           </form>
@@ -113,7 +113,7 @@ export default async function BookPage({
           </div>
 
           {slots.length === 0 ? (
-            <p className="text-[13px] text-muted">
+            <p className="text-body text-muted">
               Nothing free that day. {modality === 'in_person'
                 ? 'Every room may be taken at this clinician’s open hours — a telehealth session would not need one.'
                 : 'This clinician is not working, or is fully booked.'}
@@ -127,14 +127,14 @@ export default async function BookPage({
               <input type="hidden" name="modality" value={modality} />
 
               <fieldset>
-                <legend className="mb-2 text-[12px] font-medium tracking-wide text-subtle uppercase">
+                <legend className="mb-2 text-caption font-medium tracking-wide text-subtle uppercase">
                   Start time
                 </legend>
                 <div className="flex flex-wrap gap-1.5">
                   {slots.map((m, i) => (
                     <label
                       key={m}
-                      className="cursor-pointer rounded-[var(--radius)] border px-2.5 py-1.5 font-mono text-[13px] has-checked:border-[var(--accent)] has-checked:bg-[var(--accent-soft)]"
+                      className="cursor-pointer rounded-[var(--radius)] border px-2.5 py-1.5 font-mono text-body has-checked:border-[var(--accent)] has-checked:bg-[var(--accent-soft)]"
                       style={{ borderColor: 'var(--border)' }}
                     >
                       <input type="radio" name="startMinute" value={m} defaultChecked={i === 0} className="sr-only" />
@@ -145,7 +145,7 @@ export default async function BookPage({
               </fieldset>
 
               <fieldset className="mt-5">
-                <legend className="mb-2 text-[12px] font-medium tracking-wide text-subtle uppercase">
+                <legend className="mb-2 text-caption font-medium tracking-wide text-subtle uppercase">
                   Repeats
                 </legend>
                 <div className="flex flex-wrap gap-1.5">
@@ -156,7 +156,7 @@ export default async function BookPage({
                   ].map(([value, label], i) => (
                     <label
                       key={value}
-                      className="cursor-pointer rounded-[var(--radius)] border px-3 py-1.5 text-[13px] has-checked:border-[var(--accent)] has-checked:bg-[var(--accent-soft)]"
+                      className="cursor-pointer rounded-[var(--radius)] border px-3 py-1.5 text-body has-checked:border-[var(--accent)] has-checked:bg-[var(--accent-soft)]"
                       style={{ borderColor: 'var(--border)' }}
                     >
                       <input type="radio" name="recurrence" value={value} defaultChecked={i === 0} className="sr-only" />
@@ -164,13 +164,13 @@ export default async function BookPage({
                     </label>
                   ))}
                 </div>
-                <p className="mt-2 text-[12px] text-subtle">
+                <p className="mt-2 text-caption text-subtle">
                   A standing session books out to the practice horizon straight away. Moving
                   one week later detaches that week and leaves the rest of the series alone.
                 </p>
               </fieldset>
 
-              <button className="mt-5 rounded-[var(--radius)] px-4 py-2 text-[13px] font-medium" style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}>
+              <button className="mt-5 rounded-[var(--radius)] px-4 py-2 text-body font-medium" style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}>
                 Book
               </button>
             </form>
@@ -189,10 +189,10 @@ function Select({
 }) {
   return (
     <div>
-      <label htmlFor={name} className="block text-[11.5px] font-medium tracking-wide text-subtle uppercase">{label}</label>
+      <label htmlFor={name} className="block text-micro font-medium tracking-wide text-subtle uppercase">{label}</label>
       <select
         id={name} name={name} defaultValue={defaultValue}
-        className="mt-1 w-full rounded-[var(--radius)] border px-2 py-1.5 text-[13px]"
+        className="mt-1 w-full rounded-[var(--radius)] border px-2 py-1.5 text-body"
         style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
       >
         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}

@@ -21,11 +21,11 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
             <label htmlFor="q" className="sr-only">Search clients</label>
             <input
               id="q" name="q" defaultValue={q ?? ''} placeholder="Name or code"
-              className="rounded-[var(--radius)] border px-2.5 py-1.5 text-[13px]"
+              className="rounded-[var(--radius)] border px-2.5 py-1.5 text-body"
               style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
             />
             <button
-              className="rounded-[var(--radius)] px-3 py-1.5 text-[13px] font-medium"
+              className="rounded-[var(--radius)] px-3 py-1.5 text-body font-medium"
               style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}
             >
               Search
@@ -42,7 +42,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
         <EmptyState title="No clients match">Try a different name or code.</EmptyState>
       ) : (
         <div className="scroll-x rounded-[var(--radius-lg)] border" style={{ borderColor: 'var(--border)' }}>
-          <table className="w-full min-w-[720px] border-collapse text-[13px]">
+          <table className="w-full min-w-[720px] border-collapse text-body">
             <thead>
               <tr style={{ background: 'var(--surface-sunken)' }}>
                 {['Client', 'Code', 'Treating clinician', 'Fee', 'Reminders', 'Status'].map((h) => (
@@ -60,7 +60,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
                       {c.lastName}, {c.firstName}
                     </Link>
                   </td>
-                  <td className="border-b px-3 py-2 font-mono text-[12px] text-muted" style={{ borderColor: 'var(--border)' }}>{c.code}</td>
+                  <td className="border-b px-3 py-2 font-mono text-caption text-muted" style={{ borderColor: 'var(--border)' }}>{c.code}</td>
                   <td className="border-b px-3 py-2 text-muted" style={{ borderColor: 'var(--border)' }}>{c.treatingClinician.name}</td>
                   <td className="border-b px-3 py-2" style={{ borderColor: 'var(--border)' }}>
                     {c.feeCents === null ? <span className="text-subtle">Standard</span> : (

@@ -32,6 +32,24 @@
   --color-tier-private: var(--tier-private);
   --color-tier-private-soft: var(--tier-private-soft);
 
+  --color-on-solid: var(--on-solid);
+
+  /* The type scale, as utilities: text-body, text-micro, text-title. */
+  --text-nano: var(--type-nano);
+  --text-nano--line-height: 1.35;
+  --text-micro: var(--type-micro);
+  --text-micro--line-height: 1.4;
+  --text-caption: var(--type-caption);
+  --text-caption--line-height: 1.45;
+  --text-body: var(--type-body);
+  --text-body--line-height: 1.5;
+  --text-lead: var(--type-lead);
+  --text-lead--line-height: 1.5;
+  --text-subhead: var(--type-subhead);
+  --text-subhead--line-height: 1.45;
+  --text-title: var(--type-title);
+  --text-title--line-height: 1.25;
+
   --font-sans: var(--font-ui);
   --font-serif: var(--font-reading);
   --font-mono: var(--font-mono);

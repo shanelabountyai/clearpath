@@ -41,8 +41,8 @@ export default async function WorkListsPage() {
 
       <div className="space-y-6">
         <section>
-          <h2 className="mb-2 text-[15px] font-semibold">Reschedules from clinician absence</h2>
-          <p className="mb-3 max-w-prose text-[13px] text-muted">
+          <h2 className="mb-2 text-subhead font-semibold">Reschedules from clinician absence</h2>
+          <p className="mb-3 max-w-prose text-body text-muted">
             A week off against standing weekly clients is not one gap, it is a set of
             conversations. Each of these needs a person, not an algorithm.
           </p>
@@ -61,12 +61,12 @@ export default async function WorkListsPage() {
                     {d.sessions.map((s) => {
                       const when = utcToZoned(s.startAt);
                       return (
-                        <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-[13px]">
+                        <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-body">
                           <span>
                             <Link href={`/appointments/${s.id}`} className="font-medium text-accent hover:underline">
                               {s.client.lastName}, {s.client.firstName}
                             </Link>{' '}
-                            <span className="font-mono text-[12px] text-subtle">{s.client.code}</span>
+                            <span className="font-mono text-caption text-subtle">{s.client.code}</span>
                           </span>
                           <span className="flex items-center gap-2 text-muted">
                             {WEEKDAYS[when.weekday]} {when.date} {minutesToHHMM(when.minutes)}
@@ -83,8 +83,8 @@ export default async function WorkListsPage() {
         </section>
 
         <section>
-          <h2 className="mb-2 text-[15px] font-semibold">Continuity of care</h2>
-          <p className="mb-3 max-w-prose text-[13px] text-muted">
+          <h2 className="mb-2 text-subhead font-semibold">Continuity of care</h2>
+          <p className="mb-3 max-w-prose text-body text-muted">
             Clients whose last session completed and who have nothing booked. People leave
             therapy quietly; this is the list that says so out loud.
           </p>
@@ -94,12 +94,12 @@ export default async function WorkListsPage() {
             <Card className="p-0">
               <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
                 {continuity.map((c) => (
-                  <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-[13px]">
+                  <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-body">
                     <span>
                       <Link href={`/clients/${c.id}`} className="font-medium text-accent hover:underline">
                         {c.lastName}, {c.firstName}
                       </Link>{' '}
-                      <span className="font-mono text-[12px] text-subtle">{c.code}</span>
+                      <span className="font-mono text-caption text-subtle">{c.code}</span>
                       <span className="ml-2 text-muted">{c.treatingClinician.name}</span>
                     </span>
                     <span className="flex items-center gap-2">
@@ -116,8 +116,8 @@ export default async function WorkListsPage() {
         </section>
 
         <section>
-          <h2 className="mb-2 text-[15px] font-semibold">Waitlist</h2>
-          <p className="mb-3 max-w-prose text-[13px] text-muted">
+          <h2 className="mb-2 text-subhead font-semibold">Waitlist</h2>
+          <p className="mb-3 max-w-prose text-body text-muted">
             Who to offer a freed slot to. Clearpath surfaces candidates; a person rings them.
             Nothing here books itself.
           </p>
@@ -127,7 +127,7 @@ export default async function WorkListsPage() {
             <Card className="p-0">
               <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
                 {waiting.map((w) => (
-                  <li key={w.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-[13px]">
+                  <li key={w.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-body">
                     <Link href={`/clients/${w.client.id}`} className="font-medium text-accent hover:underline">
                       {w.client.lastName}, {w.client.firstName}
                     </Link>

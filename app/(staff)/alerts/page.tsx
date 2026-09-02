@@ -50,23 +50,23 @@ export default async function AlertsPage() {
                       <Link href={`/clients/${a.clientId}`} className="font-medium text-accent hover:underline">
                         {a.client.lastName}, {a.client.firstName}
                       </Link>
-                      <span className="font-mono text-[12px] text-subtle">{a.client.code}</span>
+                      <span className="font-mono text-caption text-subtle">{a.client.code}</span>
                       {a.kind === 'screener_critical_item'
                         ? <Badge tone="danger" glyph="◆">Critical item</Badge>
                         : <Badge tone="warning" glyph="▲">Threshold</Badge>}
                     </div>
-                    <ul className="mt-1.5 space-y-0.5 text-[13px] text-muted">
+                    <ul className="mt-1.5 space-y-0.5 text-body text-muted">
                       {a.reasons.map((r) => (
                         <li key={r}>{REASON_TEXT[r] ?? r}</li>
                       ))}
                     </ul>
-                    <p className="mt-1 text-[12px] text-subtle">{localDateOf(a.createdAt)}</p>
+                    <p className="mt-1 text-caption text-subtle">{localDateOf(a.createdAt)}</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
                     {a.submissionId && (
                       <Link
                         href={`/submissions/${a.submissionId}`}
-                        className="rounded-[var(--radius)] px-3 py-1.5 text-[12.5px] font-medium"
+                        className="rounded-[var(--radius)] px-3 py-1.5 text-caption font-medium"
                         style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}
                       >
                         Read the response
@@ -74,13 +74,13 @@ export default async function AlertsPage() {
                     )}
                     <form action={acknowledge}>
                       <input type="hidden" name="alertId" value={a.id} />
-                      <button className="rounded-[var(--radius)] border px-3 py-1.5 text-[12.5px]" style={{ borderColor: 'var(--border-strong)' }}>
+                      <button className="rounded-[var(--radius)] border px-3 py-1.5 text-caption" style={{ borderColor: 'var(--border-strong)' }}>
                         Acknowledge
                       </button>
                     </form>
                   </div>
                 </div>
-                <p className="mt-3 border-t pt-2 text-[12px] text-subtle" style={{ borderColor: 'var(--border)' }}>
+                <p className="mt-3 border-t pt-2 text-caption text-subtle" style={{ borderColor: 'var(--border)' }}>
                   A flag is a prompt to follow up with the client yourself. Clearpath does not
                   contact anyone on your behalf and does not escalate.
                 </p>
@@ -92,10 +92,10 @@ export default async function AlertsPage() {
 
       {done.length > 0 && (
         <details className="mt-6">
-          <summary className="cursor-pointer text-[13px] text-muted">
+          <summary className="cursor-pointer text-body text-muted">
             {done.length} acknowledged
           </summary>
-          <ul className="mt-2 space-y-1 text-[13px] text-muted">
+          <ul className="mt-2 space-y-1 text-body text-muted">
             {done.map((a) => (
               <li key={a.id}>
                 {localDateOf(a.createdAt)} · {a.client.code} · {a.reasons.join(', ')}

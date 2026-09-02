@@ -15,6 +15,7 @@ import {
 import { addProcessNote, saveFee, sendForm } from '../actions';
 import { BreakGlassPrompt } from '../../break-glass';
 import { systemClock } from '@/src/clock';
+import { Button } from '@/src/ui/primitives';
 
 export const dynamic = 'force-dynamic';
 
@@ -96,7 +97,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
             <span aria-hidden>⚠ </span>
             {client.consents.neverSent ? 'No consent has been sent' : 'Consent outstanding'}
           </p>
-          <p className="mt-0.5 text-[13px]">
+          <p className="mt-0.5 text-body">
             {client.consents.neverSent
               ? 'This client has never been sent a consent form.'
               : `Waiting on: ${client.consents.outstanding.map((c) => c.name).join(', ')}.`}{' '}
@@ -106,7 +107,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
             <input type="hidden" name="clientId" value={client.id} />
             <input type="hidden" name="templateKey" value="consent-to-treat" />
             <button
-              className="rounded-[var(--radius)] px-2.5 py-1 text-[12.5px] font-medium"
+              className="rounded-[var(--radius)] px-2.5 py-1 text-caption font-medium"
               style={{ background: 'var(--warning)', color: 'var(--surface-raised)' }}
             >
               Send consent form
@@ -146,17 +147,17 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
               <form action={saveFee} className="mt-4 flex items-end gap-2 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
                 <input type="hidden" name="clientId" value={client.id} />
                 <div>
-                  <label htmlFor="feeDollars" className="block text-[11.5px] font-medium tracking-wide text-subtle uppercase">
+                  <label htmlFor="feeDollars" className="block text-micro font-medium tracking-wide text-subtle uppercase">
                     Sliding-scale fee (blank for standard)
                   </label>
                   <input
                     id="feeDollars" name="feeDollars" inputMode="decimal"
                     defaultValue={client.feeCents === null ? '' : (client.feeCents / 100).toFixed(2)}
-                    className="mt-1 w-32 rounded-[var(--radius)] border px-2 py-1 text-[13px]"
+                    className="mt-1 w-32 rounded-[var(--radius)] border px-2 py-1 text-body"
                     style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
                   />
                 </div>
-                <button className="rounded-[var(--radius)] border px-2.5 py-1.5 text-[12.5px] font-medium" style={{ borderColor: 'var(--border-strong)' }}>
+                <button className="rounded-[var(--radius)] border px-2.5 py-1.5 text-caption font-medium" style={{ borderColor: 'var(--border-strong)' }}>
                   Save fee
                 </button>
               </form>
@@ -172,7 +173,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
               </div>
               <h2 className="mb-2 font-semibold">Progress notes</h2>
               {progressNotes.length === 0 ? (
-                <p className="text-[13px] text-muted">No progress notes yet.</p>
+                <p className="text-body text-muted">No progress notes yet.</p>
               ) : (
                 <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
                   {progressNotes.map((n) => (
@@ -181,7 +182,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
                         <Link href={`/notes/${n.id}`} className="font-medium text-accent hover:underline">
                           {n.appointment ? localDateOf(n.appointment.startAt) : localDateOf(n.createdAt)} session
                         </Link>
-                        <p className="text-[12px] text-subtle">
+                        <p className="text-caption text-subtle">
                           {n.author.name}
                           {n._count.amendments > 0 && ` · ${n._count.amendments} amendment${n._count.amendments === 1 ? '' : 's'}`}
                         </p>
@@ -203,7 +204,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
               </div>
               <h2 className="mb-2 font-semibold">My process notes</h2>
               {myProcessNotes.length === 0 ? (
-                <p className="text-[13px] text-muted">Nothing here yet.</p>
+                <p className="text-body text-muted">Nothing here yet.</p>
               ) : (
                 <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
                   {myProcessNotes.map((n) => (
@@ -223,12 +224,12 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
                   <textarea
                     id="content" name="content" rows={3}
                     placeholder="Your own working note about this session…"
-                    className="w-full rounded-[var(--radius)] border p-2.5 font-serif text-[14px] leading-relaxed"
+                    className="w-full rounded-[var(--radius)] border p-2.5 font-serif text-lead leading-relaxed"
                     style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
                   />
-                  <button className="mt-2 rounded-[var(--radius)] px-3 py-1.5 text-[12.5px] font-medium" style={{ background: 'var(--tier-private)', color: '#fff' }}>
+                  <Button variant="private" className="mt-2">
                     Save private note
-                  </button>
+                  </Button>
                 </form>
               )}
             </Card>
@@ -253,9 +254,9 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
           <Card>
             <h2 className="mb-2 font-semibold">Next sessions</h2>
             {upcoming.length === 0 ? (
-              <p className="text-[13px] text-muted">Nothing booked. This client will appear in the continuity queue.</p>
+              <p className="text-body text-muted">Nothing booked. This client will appear in the continuity queue.</p>
             ) : (
-              <ul className="space-y-1.5 text-[13px]">
+              <ul className="space-y-1.5 text-body">
                 {upcoming.map((a) => {
                   const when = utcToZoned(a.startAt);
                   return (
@@ -263,7 +264,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
                       <Link href={`/appointments/${a.id}`} className="text-accent hover:underline">
                         {when.date} {minutesToHHMM(when.minutes)}
                       </Link>
-                      <span className="text-[12px] text-subtle">
+                      <span className="text-caption text-subtle">
                         {a.room?.name ?? 'Telehealth'}
                       </span>
                     </li>
@@ -276,10 +277,10 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
           {forms && (
             <Card>
               <h2 className="mb-2 font-semibold">Forms</h2>
-              <p className="mb-2 text-[12px] text-subtle">
+              <p className="mb-2 text-caption text-subtle">
                 Status only. Answers are clinical and live on the clinician&rsquo;s side.
               </p>
-              <ul className="space-y-1.5 text-[13px]">
+              <ul className="space-y-1.5 text-body">
                 {forms.map((f) => (
                   <li key={f.id} className="flex items-center justify-between gap-2">
                     <span>{f.template.name} <span className="text-subtle">v{f.template.version}</span></span>
@@ -292,12 +293,12 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
               </ul>
               <form action={sendForm} className="mt-3 flex items-center gap-2">
                 <input type="hidden" name="clientId" value={client.id} />
-                <select name="templateKey" className="rounded-[var(--radius)] border px-2 py-1 text-[12.5px]" style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}>
+                <select name="templateKey" className="rounded-[var(--radius)] border px-2 py-1 text-caption" style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}>
                   <option value="intake">New Client Intake</option>
                   <option value="consent-to-treat">Consent to Treatment</option>
                   <option value="wellbeing-check-in">Wellbeing Check-In</option>
                 </select>
-                <button className="rounded-[var(--radius)] border px-2.5 py-1 text-[12.5px] font-medium" style={{ borderColor: 'var(--border-strong)' }}>
+                <button className="rounded-[var(--radius)] border px-2.5 py-1 text-caption font-medium" style={{ borderColor: 'var(--border-strong)' }}>
                   Send
                 </button>
               </form>
@@ -308,16 +309,16 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
             <Card>
               <h2 className="mb-2 font-semibold">Screeners</h2>
               {submissions.length === 0 ? (
-                <p className="text-[13px] text-muted">No responses yet.</p>
+                <p className="text-body text-muted">No responses yet.</p>
               ) : (
-                <ul className="space-y-2 text-[13px]">
+                <ul className="space-y-2 text-body">
                   {submissions.map((s) => (
                     <li key={s.id} className="flex items-center justify-between gap-2">
                       <Link href={`/submissions/${s.id}`} className="text-accent hover:underline">
                         {localDateOf(s.createdAt)}
                       </Link>
                       <span className="flex items-center gap-1.5">
-                        {s.totalScore !== null && <span className="font-mono text-[12px] text-muted">{s.totalScore}</span>}
+                        {s.totalScore !== null && <span className="font-mono text-caption text-muted">{s.totalScore}</span>}
                         {s.needsReview && <Badge tone="danger" glyph="◆">Review</Badge>}
                       </span>
                     </li>
@@ -330,14 +331,14 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
           {attendance && (
             <Card>
               <h2 className="mb-2 font-semibold">Attendance</h2>
-              <dl className="grid grid-cols-2 gap-2 text-[13px]">
+              <dl className="grid grid-cols-2 gap-2 text-body">
                 <Field label="Completed">{attendance.completed}</Field>
                 <Field label="Cancelled">{attendance.cancelled}</Field>
                 <Field label="Late cancels">{attendance.lateCancelled}</Field>
                 <Field label="No shows">{attendance.noShow}</Field>
                 <Field label="Chargeable">{money(attendance.chargeableFeeCents)}</Field>
               </dl>
-              <p className="mt-2 text-[11.5px] text-subtle">
+              <p className="mt-2 text-micro text-subtle">
                 Visible to this client&rsquo;s clinician and the practice manager. Not to front desk.
               </p>
             </Card>
