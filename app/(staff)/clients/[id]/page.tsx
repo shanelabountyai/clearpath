@@ -12,7 +12,7 @@ import { localDateOf, minutesToHHMM, utcToZoned } from '../../../../src/time';
 import {
   Badge, Card, EmptyState, Field, LockedPanel, PageHeader, StatusChip, TierBanner, money,
 } from '../../../../src/ui/primitives';
-import { addProcessNote, saveFee, sendForm } from '../actions';
+import { addProcessNote, saveFee, sendForm, sendPortalLink } from '../actions';
 import { BreakGlassPrompt } from '../../break-glass';
 import { systemClock } from '@/src/clock';
 import { Button } from '@/src/ui/primitives';
@@ -160,6 +160,18 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
                 <button className="rounded-[var(--radius)] border px-2.5 py-1.5 text-caption font-medium" style={{ borderColor: 'var(--border-strong)' }}>
                   Save fee
                 </button>
+              </form>
+            )}
+
+            {can.edit && (
+              <form action={sendPortalLink} className="mt-3 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
+                <input type="hidden" name="clientId" value={client.id} />
+                <button className="rounded-[var(--radius)] border px-2.5 py-1.5 text-caption font-medium" style={{ borderColor: 'var(--border-strong)' }}>
+                  Send their appointments link
+                </button>
+                <span className="ml-2 text-caption text-subtle">
+                  Their own schedule only. No notes, no forms, no fees.
+                </span>
               </form>
             )}
 

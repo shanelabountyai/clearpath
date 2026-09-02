@@ -26,6 +26,7 @@ export type Resource =
   | 'form_request' // "sent / submitted ✓" status, no content
   | 'form_submission' // answers + scores; clinical data
   | 'alert' // private risk notifications, addressed to one clinician
+  | 'portal_link' // a client's own tokenized door into their schedule
   | 'audit_log'
   | 'user'; // accounts, roles, supervision relationships
 
@@ -37,7 +38,7 @@ export const ROLES: readonly Role[] = [
 export const RESOURCES: readonly Resource[] = [
   'client', 'fee', 'appointment', 'attendance_history', 'progress_note',
   'process_note', 'form_template', 'form_request', 'form_submission',
-  'alert', 'audit_log', 'user',
+  'alert', 'portal_link', 'audit_log', 'user',
 ];
 export const ACTIONS: readonly Action[] = ['read', 'create', 'update', 'sign', 'cosign'];
 
@@ -127,6 +128,10 @@ const CLINICIAN: RoleMatrix = {
   form_request: { read: 'always', create: 'always' },
   form_submission: { read: 'treatingOrSupervising' },
   alert: { read: 'recipient', update: 'recipient' },
+  // Issuing a client their own door is operational, so a clinician may do it
+  // for a client they treat. It grants nothing the client does not already
+  // know: when they are coming in, and with whom.
+  portal_link: { read: 'treatingOrSupervising', create: 'treating' },
 };
 
 /**
@@ -139,6 +144,7 @@ export const MATRIX: Record<Role, RoleMatrix> = {
     fee: { read: 'always' },
     appointment: { read: 'always', create: 'always', update: 'always' },
     form_request: { read: 'always', create: 'always' },
+    portal_link: { read: 'always', create: 'always' },
   },
 
   therapist: CLINICIAN,
@@ -161,6 +167,7 @@ export const MATRIX: Record<Role, RoleMatrix> = {
     // process_note: no entry. Break-glass does not reach it.
     form_template: { read: 'always', create: 'always', update: 'always' },
     form_request: { read: 'always' },
+    portal_link: { read: 'always', create: 'always' },
     user: { read: 'always', create: 'always', update: 'always' },
   },
 
@@ -207,6 +214,28 @@ export function includesSuperviseeCaseloads(actor: Actor): boolean {
  */
 export function requiresCoSignature(authorRole: Role): boolean {
   return authorRole === 'associate';
+}
+
+/**
+ * Roles a second factor would be required for, if this project had auth.
+ *
+ * It does not, on purpose — authentication is its own project, and a
+ * half-built version of it here would make the authorization work harder to
+ * read rather than easier. What lives here is the *policy*, because deciding
+ * which roles need a second factor is a role-derived rule and this file is
+ * where every role-derived rule lives. When a real identity provider is
+ * attached, it reads this; it does not re-decide it.
+ *
+ * The line is drawn by capability, not by job title. Front desk runs the
+ * calendar and never reaches clinical content, so their account is worth
+ * little to an attacker beyond a list of names and times. The three clinical
+ * roles reach notes. The practice manager reaches them too, through
+ * break-glass, which makes theirs the single most valuable credential in the
+ * building — a stolen admin session is one typed reason away from a client's
+ * record, and the audit log would faithfully record that "they" opened it.
+ */
+export function requiresSecondFactor(role: Role): boolean {
+  return role === 'therapist' || role === 'associate' || role === 'supervisor' || role === 'admin';
 }
 
 export interface Decision {

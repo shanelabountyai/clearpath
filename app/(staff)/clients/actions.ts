@@ -5,6 +5,7 @@ import { requireSession } from '../../../src/session';
 import { setFee, updateClient } from '../../../src/clients/repository';
 import { issueForm } from '../../../src/forms/service';
 import { createProcessNote } from '../../../src/notes/service';
+import { issuePortalLink } from '../../../src/portal/service';
 
 export async function saveClient(formData: FormData) {
   const { actor } = await requireSession();
@@ -41,5 +42,13 @@ export async function addProcessNote(formData: FormData) {
   const clientId = String(formData.get('clientId'));
   const content = String(formData.get('content') ?? '').trim();
   if (content) await createProcessNote(actor, { clientId, content });
+  revalidatePath(`/clients/${clientId}`);
+}
+
+/** Send the client their own link to their schedule. */
+export async function sendPortalLink(formData: FormData) {
+  const { actor } = await requireSession();
+  const clientId = String(formData.get('clientId'));
+  await issuePortalLink(actor, { clientId });
   revalidatePath(`/clients/${clientId}`);
 }

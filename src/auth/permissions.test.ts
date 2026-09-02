@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   ACTIONS, RESOURCES, ROLES,
-  can, ownCaseloadOnly,
+  can, ownCaseloadOnly, requiresSecondFactor,
   type Action, type Actor, type Resource, type Role, type Target,
 } from './permissions';
 
@@ -26,6 +26,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     fee: 'read',
     appointment: 'read create update',
     form_request: 'read create',
+    portal_link: 'read create',
   }),
   therapist: spec({
     client: 'read update',
@@ -38,6 +39,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     form_request: 'read create',
     form_submission: 'read',
     alert: 'read update',
+    portal_link: 'read create',
   }),
   associate: spec({
     client: 'read update',
@@ -50,6 +52,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     form_request: 'read create',
     form_submission: 'read',
     alert: 'read update',
+    portal_link: 'read create',
   }),
   supervisor: spec({
     client: 'read update',
@@ -62,6 +65,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     form_request: 'read create',
     form_submission: 'read',
     alert: 'read update',
+    portal_link: 'read create',
   }),
   admin: spec({
     client: 'read update', // break-glass only
@@ -71,6 +75,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     progress_note: 'read', // break-glass only
     form_template: 'read create update',
     form_request: 'read',
+    portal_link: 'read create',
     user: 'read create update',
   }),
   auditor: spec({ audit_log: 'read' }),
@@ -101,6 +106,7 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
     attendance_history: 'read',
     form_template: 'read create update',
     form_request: 'read',
+    portal_link: 'read create',
     user: 'read create update',
   }),
   auditor: ALLOWED.auditor,
@@ -131,7 +137,7 @@ describe('permission matrix — every cell', () => {
     RESOURCES.flatMap((res) => ACTIONS.map((a) => [role, res, a] as [Role, Resource, Action])),
   );
 
-  it('covers 420 cells', () => expect(cells).toHaveLength(420));
+  it('covers 455 cells', () => expect(cells).toHaveLength(ROLES.length * RESOURCES.length * ACTIONS.length));
 
   it.each(cells)('%s / %s / %s', (role, resource, action) => {
     const key = `${resource}:${action}`;
@@ -346,5 +352,29 @@ describe("a supervisor's reach over a supervisee's caseload", () => {
     // The rule checks the role as well as the relationship, so a data error
     // that points a client at a non-supervisor grants nothing.
     expect(can({ id: ME, role: 'therapist' }, 'read', 'client', superviseesClient).allowed).toBe(false);
+  });
+});
+
+describe('the second-factor seam', () => {
+  it('covers every role a stolen session would reach a record through', () => {
+    for (const role of ['therapist', 'associate', 'supervisor'] as Role[]) {
+      expect(requiresSecondFactor(role), role).toBe(true);
+    }
+    // Not a clinical title, but the most valuable credential in the building:
+    // break-glass is one typed reason away from a record, and the audit log
+    // would record it faithfully as them.
+    expect(requiresSecondFactor('admin')).toBe(true);
+  });
+
+  it('leaves the roles that never reach clinical content alone', () => {
+    expect(requiresSecondFactor('front_desk')).toBe(false);
+    expect(requiresSecondFactor('auditor')).toBe(false);
+    expect(requiresSecondFactor('client')).toBe(false);
+  });
+
+  it('decides it from the role alone, so an identity provider reads it rather than restating it', () => {
+    for (const role of ROLES) {
+      expect(typeof requiresSecondFactor(role)).toBe('boolean');
+    }
   });
 });

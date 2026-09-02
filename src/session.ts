@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import type { Actor } from './auth/permissions';
+import { requiresSecondFactor, type Actor } from './auth/permissions';
 import { prisma } from './db';
 
 /**
@@ -20,6 +20,17 @@ export const BREAK_GLASS_COOKIE = 'clearpath_break_glass';
 export interface Session {
   actor: Actor;
   user: { id: string; name: string; role: Actor['role']; supervisorId: string | null };
+  /**
+   * Where the second factor would be checked.
+   *
+   * `required` is real policy, read from the permission module. `satisfied` is
+   * a lie this build tells on purpose: there is no authentication here, so
+   * there is nothing to satisfy, and pretending otherwise by writing a check
+   * that always passes would look like a feature. It is surfaced in the person
+   * picker instead, so the gap is visible in the product rather than buried in
+   * a comment — see WRITEUP.md, "Where authentication would attach".
+   */
+  secondFactor: { required: boolean; satisfied: boolean };
 }
 
 export async function currentSession(): Promise<Session | null> {
@@ -36,6 +47,7 @@ export async function currentSession(): Promise<Session | null> {
   const reason = jar.get(BREAK_GLASS_COOKIE)?.value;
   return {
     user,
+    secondFactor: { required: requiresSecondFactor(user.role), satisfied: false },
     actor: {
       id: user.id,
       role: user.role,

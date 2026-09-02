@@ -48,7 +48,8 @@ model User {
   amendments    NoteAmendment[]
   alerts        Alert[]
 
-  createdAt DateTime @default(now())
+  createdAt                 DateTime            @default(now())
+  rescheduleRequestsHandled RescheduleRequest[]
 }
 
 enum ReminderPreference {
@@ -97,7 +98,9 @@ model Client {
   outbox        OutboxMessage[]
   waitlist      WaitlistEntry[]
 
-  createdAt DateTime @default(now())
+  createdAt          DateTime            @default(now())
+  portalLinks        PortalLink[]
+  rescheduleRequests RescheduleRequest[]
 
   @@index([treatingClinicianId])
 }
@@ -262,8 +265,9 @@ model Appointment {
   /// Idempotency key for recurrence materialisation: series + occurrence date.
   occurrenceKey String? @unique
 
-  progressNote ProgressNote?
-  processNotes ProcessNote[]
+  progressNote       ProgressNote?
+  processNotes       ProcessNote[]
+  rescheduleRequests RescheduleRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -565,4 +569,62 @@ model AuditEvent {
   @@index([actorId, at])
   @@index([breakGlass, at])
   @@index([at])
+}
+
+// ──────────────────────────── the client portal ────────────────────────────
+
+/// A client's own door. Opaque, expiring, and carrying no PHI — the same shape
+/// as a form link, for the same reason: a link that leaks discloses that this
+/// person has appointments somewhere, and stops there.
+model PortalLink {
+  id       String @id @default(cuid())
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id])
+
+  token     String   @unique
+  expiresAt DateTime
+
+  createdAt    DateTime  @default(now())
+  lastOpenedAt DateTime?
+
+  @@index([clientId])
+}
+
+/// Why a client wants a different time, as a code rather than a message.
+///
+/// A free-text box here would be a channel by which a client can write clinical
+/// content to the one desk that must never see it. Front desk phones them back;
+/// that conversation is not this system's to hold.
+enum RescheduleReason {
+  cannot_make_it
+  need_a_different_time
+  prefer_earlier
+  prefer_later
+}
+
+enum RescheduleRequestStatus {
+  open
+  handled
+  declined
+}
+
+/// A request, never a booking. The client asks; front desk decides and rebooks
+/// by hand — the same rule as the waitlist, and for the same reason.
+model RescheduleRequest {
+  id            String      @id @default(cuid())
+  appointmentId String
+  appointment   Appointment @relation(fields: [appointmentId], references: [id])
+  clientId      String
+  client        Client      @relation(fields: [clientId], references: [id])
+
+  reason RescheduleReason
+  status RescheduleRequestStatus @default(open)
+
+  createdAt   DateTime  @default(now())
+  handledById String?
+  handledBy   User?     @relation(fields: [handledById], references: [id])
+  handledAt   DateTime?
+
+  @@index([status, createdAt])
+  @@index([clientId])
 }

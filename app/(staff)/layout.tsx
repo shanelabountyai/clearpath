@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { currentSession, switchableUsers } from '../../src/session';
 import { NavLinks, ROLE_LABEL } from '../../src/ui/shell';
+import { requiresSecondFactor, type Role } from '../../src/auth/permissions';
 import { endBreakGlass, switchUser } from '../actions';
 import { Wordmark } from '@/src/ui/logo';
 import { BreakGlassBar } from '@/src/ui/primitives';
@@ -47,7 +48,7 @@ export default async function StaffLayout({ children }: { children: React.ReactN
   );
 }
 
-type SwitchUser = { id: string; name: string; role: string; supervisor: { name: string } | null };
+type SwitchUser = { id: string; name: string; role: Role; supervisor: { name: string } | null };
 
 function SignInPanel({ users }: { users: SwitchUser[] }) {
   return (
@@ -71,6 +72,14 @@ function SignInPanel({ users }: { users: SwitchUser[] }) {
         matrix a signed-in user would meet.
       </p>
 
+      <p className="mt-2 text-caption text-subtle">
+        The roles marked <span className="tracking-wide uppercase">2FA seam</span> are the
+        ones a real deployment would put behind a second factor — they reach clinical
+        records, the practice manager through break-glass. The policy that decides that is
+        written and tested in <code>permissions.ts</code>; the check it would gate is not
+        built, because a login that always succeeds looks like a feature.
+      </p>
+
       <ul className="mt-4 space-y-1.5">
         {users.map((u) => (
           <li key={u.id}>
@@ -81,7 +90,17 @@ function SignInPanel({ users }: { users: SwitchUser[] }) {
                 className="flex w-full items-center justify-between rounded-[var(--radius)] border px-3 py-2 text-left transition-colors hover:bg-[var(--surface-inset)]"
                 style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
               >
-                <span className="font-medium">{u.name}</span>
+                <span className="font-medium">
+                  {u.name}
+                  {requiresSecondFactor(u.role) && (
+                    <span
+                      className="ml-2 align-middle text-micro font-normal tracking-wide text-subtle uppercase"
+                      title="This role reaches clinical records, so a real deployment would require a second factor here. There is no authentication in this project — see WRITEUP.md."
+                    >
+                      2FA seam
+                    </span>
+                  )}
+                </span>
                 <span className="text-caption text-muted">
                   {ROLE_LABEL[u.role]}
                   {u.supervisor ? ` · supervised by ${u.supervisor.name}` : ''}

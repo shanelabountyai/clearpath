@@ -16,6 +16,9 @@ Kept as the work happens, not reconstructed afterwards.
 6. **Screener trends** — the feature whose design is mostly refusals.
 7. **Group sessions** — a plural booking of a singular appointment, paid for
    with two exclusion constraints instead of a rewrite.
+8. **The client portal** — a door sized to what a leaked link would disclose.
+9. **Where authentication would attach** — the one feature whose right build
+   was not building it.
 
 ---
 
@@ -363,6 +366,88 @@ each naming its own client, in the same transaction as the appointments.
 
 ---
 
+## 8. The client portal
+
+A client gets a link to their own schedule. The design question is not what to
+show them — it is what a forwarded link discloses.
+
+Because there is no login, holding the link *is* the authentication, which is
+exactly as strong as the email it arrived in. That is not a reason to refuse to
+build it; the form door already made this trade and made it well. It is a reason
+to size what is behind it to what you would accept leaking. So the portal shows
+when you are coming in, with whom, and whether it is video or a room. Not a
+note, not a score, not a fee, not a form, not their record, and not the
+appointment *type* — "intake" versus "extended" is a clinical shape, and it is
+on the messaging deny-list for the same reason it is absent here.
+
+**The reschedule request carries a reason code, not a message.** This is the
+decision I would defend hardest. A free-text box on a client-facing page is a
+channel by which a client can write clinical content — "I can't come, the panic
+attacks are back" — to the one desk in the practice that must never see it.
+Nothing in the code would be wrong; the front-desk work list would faithfully
+display exactly what the client typed. So there is no box. Four codes, and front
+desk phones them. The conversation that needs to happen is not this system's to
+hold, and building somewhere to put it would have quietly made front desk a
+clinical surface.
+
+**It requests; it never books.** Same rule as the waitlist, and the same reason:
+a client silently moving their own session means nobody notices the client who
+moves it every week, and that pattern is clinical information the practice needs
+to see.
+
+**A request is idempotent while it is open.** Pressing the button twice is one
+request, not two, because the second one is a person who is not sure the first
+worked — not new information.
+
+**The token names nothing.** Twenty-four random bytes, no client id, no name, no
+readable structure. An unknown token and another client's appointment id both
+produce the same not-found, so the door cannot be used to learn whether somebody
+is a client here.
+
+Opening it is audit-logged with the client as the actor and `token` as the rule,
+exactly like a form submission. The `client` role that P0-1 put in the matrix
+"empty on purpose, so a submission has an honest actor" now has a second use it
+was not built for, which is usually the sign a boundary was drawn in the right
+place.
+
+---
+
+## 9. Where authentication would attach
+
+The last P2 item is two-factor auth for clinical roles, and the right build was
+not to build it.
+
+There is no authentication in Clearpath. Adding a login that always succeeds,
+or a TOTP field seeded with a fixed secret, would not have taught anything about
+access control — it would have added a thing that *looks* like a security
+control to a project whose entire argument is that its access control is real.
+A check that cannot fail is worse than an absent one, because it reads as
+present.
+
+What did get built is the part that is genuinely this project's business: the
+**policy**. `requiresSecondFactor(role)` sits in `permissions.ts` beside
+`requiresCoSignature`, because which roles need a second factor is a
+role-derived rule and that file is where every role-derived rule lives. An
+identity provider attached later reads it; it does not restate it, and there is
+no second place for the two answers to disagree.
+
+The line is drawn by capability rather than job title. The three clinical roles
+reach notes. Front desk does not, and their credential is worth a list of names
+and times. The practice manager is on the list despite not being a clinical
+role at all, because break-glass makes theirs the most valuable credential in
+the building: a stolen admin session is one typed reason away from a client's
+record, and the audit log would record that access faithfully, as them. The
+break-glass design that makes admin access *visible* is exactly what makes
+admin credentials *worth stealing*, and those are the same sentence.
+
+`Session` carries `secondFactor: { required, satisfied }` where `satisfied` is
+always false and nothing reads it — the seam, named, in the type. And the person
+picker marks those roles "2FA seam" with the reason, so the gap is visible in
+the product to anyone who opens it, rather than in a comment in a file nobody
+opens.
+
+---
+
 ## Decisions log
 
 | Decision | Why |
@@ -391,6 +476,10 @@ each naming its own client, in the same transaction as the appointments.
 | A group session is N appointments sharing a key, not one appointment with N clients | Notes, fees, attendance, audit rows and the superbill are all about a person rather than an hour. Keeping the appointment singular meant none of them changed, and attendance-level notes needed no work at all |
 | The group key enters the exclusion constraints as `COALESCE(groupSessionId, id)` | A bare `groupSessionId WITH <>` compares NULL to NULL for every pair of ordinary appointments, which is NULL rather than true, so the constraint would stop rejecting anything and every existing test would still pass. Falling back to the row's own id keeps individual bookings conflicting |
 | Rescheduling an attendee clears their group key | The exemption that lets co-attendees share a clinician has to end where the shared hour does, or two rescheduled attendees can land on each other |
+| The portal's reschedule request is a reason code, with no free-text field | A message box on a client-facing page is a channel for clinical content to arrive at the one desk that must never see it. Front desk phones them; that conversation is not this system's to hold |
+| The portal shows no appointment type | "Intake" and "extended" describe a clinical shape. It is on the messaging deny-list for the same reason, and a leaked link should disclose times, not care |
+| 2FA is a tested policy function and a named seam, not an implementation | A login that always succeeds is worse than no login, because it reads as a control. What belongs here is which roles need one, and that is a role-derived rule, so it lives beside every other role-derived rule |
+| The practice manager needs a second factor despite not being a clinical role | Break-glass is one typed reason from a record, and the log would record it faithfully as them. The design that makes their access visible is what makes their credential worth stealing |
 | Producing a superbill needs both the fee and the demographics permission | It is both records at once. Guarding it twice meant no new matrix row and no new question: whoever may already see both halves may produce it, and the practice manager still has to break glass, because billing is not a carve-out from the rule that their clinical reach is logged |
 
 ## What this project deliberately is not
@@ -398,7 +487,14 @@ each naming its own client, in the same transaction as the appointments.
 It is a learning project on synthetic data. It applies HIPAA-inspired principles
 because they are good engineering discipline, and it is not HIPAA-compliant
 software. There is no authentication — the dev switcher is the seam where it
-would go, and *authorization* is the part built for real. There is no billing,
-no video, no group sessions, and no longitudinal screener analytics, the last of
-which is a deliberate omission rather than a missing feature: a trend line on
-somebody's depression score is a design problem before it is an engineering one.
+would go, and *authorization* is the part built for real. There is no insurance
+billing beyond the superbill the client claims with themselves, no video, no
+diagnosis coding, and no clinician logs in from anywhere it can verify.
+
+Screener trends and the client portal were the two things this write-up
+originally listed as deliberate omissions, on the grounds that both are design
+problems before they are engineering ones. They still are — which turned out to
+be the argument for building them carefully rather than the argument for leaving
+them out. The trend refuses to draw a line across a scoring revision or to call
+a falling number recovery; the portal has no text box. Neither restraint would
+have been discovered by continuing not to build them.

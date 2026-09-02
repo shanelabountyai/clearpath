@@ -40,15 +40,23 @@ and a test greps the rest of `src/` to prove no endpoint re-implements a role ch
 ## Known limitations (deliberate)
 
 - **No real auth.** A dev-mode user switcher stands in for login. Two-factor and
-  session management are their own project; the seam is marked.
-- **No insurance billing.** A session records "completed + fee"; CPT/superbill
-  export hangs off that hook later. Sliding-scale fee per client *is* modelled.
+  session management are their own project. The *policy* — which roles would sit
+  behind a second factor — is written and tested in `permissions.ts`, and the
+  person picker marks those roles, so the seam is visible rather than implied.
+  Nothing enforces it, because a check that always passes reads as a control.
+- **No insurance billing.** The superbill exports completed sessions with their
+  CPT codes and the fee recorded at the time of service, which is what a client
+  needs to claim reimbursement themselves. It carries no diagnosis code —
+  Clearpath does not model diagnoses — and says so on the export.
 - **No telehealth video.** An appointment carries a modality flag and a join-link
   field; the *scheduling* consequences of modality are the lesson.
-- **One treating clinician per client.** Couples work (two clinicians, or one
-  appointment with several clients) needs group sessions, deferred on purpose so
-  v1's data model stays clean.
-- **Clients never log in.** Forms and confirmations arrive by tokenized link.
+- **One treating clinician per client.** Group sessions exist (one hour, one
+  clinician, N attendees, each with their own note and fee), but couples work
+  with two clinicians on one record does not.
+- **Clients never log in.** Forms, confirmations and their own schedule arrive by
+  tokenized link. The portal shows appointment times and nothing clinical, and a
+  reschedule request is a reason code rather than a message — there is no
+  free-text channel from a client to the front desk.
 - **All outbound messages are outbox stubs.** Nothing is actually sent.
 
 ## Stack

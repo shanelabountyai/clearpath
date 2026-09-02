@@ -81,6 +81,10 @@ export const CLIENT_TEMPLATES: Record<string, (c: ClientMessageContext) => { sub
     subject: 'A form to complete before your visit',
     body: `${practice} has sent you a form to complete before your visit: ${link}. The link is personal to you — please do not forward it.`,
   }),
+  portal_link: ({ practice, link }) => ({
+    subject: 'Your upcoming appointments',
+    body: `You can see your upcoming appointments with ${practice} here: ${link}. The link is personal to you — please do not forward it.`,
+  }),
   appointment_cancelled: ({ practice }) => ({
     subject: 'Appointment cancelled',
     body: `Your appointment with ${practice} has been cancelled. Reply to this message to rebook.`,

@@ -132,8 +132,8 @@ All outbox-stubbed client communications use neutral templates: "Appointment rem
 - [x] Superbill/CPT export hanging off the fee record
 - [x] Group sessions (one appointment, N clients — requires attendance-level notes)
 - [x] Longitudinal screener trends per client (clinician-only view; note the ethics in WRITEUP.md)
-- Client portal (view schedule, reschedule requests) via tokenized links
-- Two-factor auth for clinical roles (auth remains its own project; note the seam)
+- [x] Client portal (view schedule, reschedule requests) via tokenized links
+- [x] Two-factor auth for clinical roles (auth remains its own project; note the seam)
 
 ## Success Metrics (evaluated against synthetic seeded data)
 

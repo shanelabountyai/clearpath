@@ -2,6 +2,8 @@ import Link from 'next/link';
 import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
 import { continuityQueue, vacationImpact, waitlistMatches } from '../../../src/scheduling/worklists';
+import { openRescheduleRequests } from '../../../src/portal/service';
+import { handleRescheduleRequest } from './actions';
 import { addDays, localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
 import { Badge, Card, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
@@ -33,6 +35,7 @@ export default async function WorkListsPage() {
   );
 
   const waiting = await waitlistMatches(actor, { date: addDays(today, 1), startMinute: 15 * 60 }).catch(() => []);
+  const rescheduleAsks = await openRescheduleRequests(actor).catch(() => []);
 
   return (
     <>
@@ -40,6 +43,61 @@ export default async function WorkListsPage() {
       <div className="mb-4"><TierBanner tier="operational" /></div>
 
       <div className="space-y-6">
+        <section>
+          <h2 className="mb-2 text-subhead font-semibold">Clients asking to move a session</h2>
+          <p className="mb-3 max-w-prose text-body text-muted">
+            Raised by clients through their own link. A reason code and a time, never a
+            message — the conversation happens on the phone, not in a text box that
+            reaches this desk.
+          </p>
+          {rescheduleAsks.length === 0 ? (
+            <EmptyState title="Nothing waiting">
+              Requests appear here as clients raise them. Nothing is ever moved automatically.
+            </EmptyState>
+          ) : (
+            <Card className="p-0">
+              <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                {rescheduleAsks.map((r) => {
+                  const when = utcToZoned(r.appointment.startAt);
+                  return (
+                    <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+                      <span className="text-body">
+                        <Link href={`/clients/${r.clientId}`} className="text-accent hover:underline">
+                          {r.client.firstName} {r.client.lastName}
+                        </Link>
+                        <span className="ml-1.5 font-mono text-caption text-subtle">{r.client.code}</span>
+                        <span className="ml-2 text-muted">
+                          {WEEKDAYS[when.weekday]} {when.date} {minutesToHHMM(when.minutes)} · {r.appointment.clinician.name}
+                        </span>
+                      </span>
+                      <span className="flex items-center gap-2">
+                        <Badge tone="info">{r.reason.replace(/_/g, ' ')}</Badge>
+                        <form action={handleRescheduleRequest} className="flex gap-1.5">
+                          <input type="hidden" name="requestId" value={r.id} />
+                          <button
+                            name="status" value="handled"
+                            className="rounded-[var(--radius)] border px-2 py-1 text-caption font-medium"
+                            style={{ borderColor: 'var(--border-strong)' }}
+                          >
+                            Handled
+                          </button>
+                          <button
+                            name="status" value="declined"
+                            className="rounded-[var(--radius)] border px-2 py-1 text-caption"
+                            style={{ borderColor: 'var(--border)' }}
+                          >
+                            Declined
+                          </button>
+                        </form>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
+          )}
+        </section>
+
         <section>
           <h2 className="mb-2 text-subhead font-semibold">Reschedules from clinician absence</h2>
           <p className="mb-3 max-w-prose text-body text-muted">
