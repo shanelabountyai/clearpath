@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev -p 3700",
     "build": "next build",
+    "postinstall": "prisma generate",
     "start": "next start -p 3700",
     "e2e:server": "npm run build:e2e && npm run start:e2e",
     "pretest": "npm run typecheck",
@@ -25,6 +26,8 @@
     "build:e2e": "dotenv -e .env.e2e -- next build",
     "start:e2e": "dotenv -e .env.e2e -- next start -p 3700",
     "db:migrate:e2e": "dotenv -e .env.e2e -- prisma migrate deploy",
+    "db:migrate:prod": "CLEARPATH_ALLOW_CLOUD_DB=1 dotenv -e .env.production -- prisma migrate deploy",
+    "db:seed:prod": "CLEARPATH_ALLOW_CLOUD_DB=1 dotenv -e .env.production -- tsx prisma/seed.ts",
     "db:seed:e2e": "dotenv -e .env.e2e -- tsx prisma/seed.ts"
   },
   "devDependencies": {

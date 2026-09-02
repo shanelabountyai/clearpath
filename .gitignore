@@ -12,3 +12,4 @@ src/generated/
 
 # tsc incremental cache — regenerated on every typecheck
 *.tsbuildinfo
+.vercel
