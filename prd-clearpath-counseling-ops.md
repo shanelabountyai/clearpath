@@ -129,7 +129,7 @@ All outbox-stubbed client communications use neutral templates: "Appointment rem
 
 ### Future Considerations (P2)
 
-- Superbill/CPT export hanging off the fee record
+- [x] Superbill/CPT export hanging off the fee record
 - Group sessions (one appointment, N clients — requires attendance-level notes)
 - Longitudinal screener trends per client (clinician-only view; note the ethics in WRITEUP.md)
 - Client portal (view schedule, reschedule requests) via tokenized links

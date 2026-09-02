@@ -1,6 +1,7 @@
 import { guarded } from '../auth/guard';
 import type { Actor } from '../auth/permissions';
 import type { Tx } from '../db';
+import { toCsv as csv } from '../csv';
 
 /**
  * The auditor's surface. Read-only, and pointedly the only role that has it:
@@ -59,23 +60,8 @@ const CSV_COLUMNS = [
   'clientId', 'allowed', 'rule', 'breakGlass', 'reason',
 ] as const;
 
-const escape = (v: unknown): string => {
-  if (v === null || v === undefined) return '';
-  const s = v instanceof Date ? v.toISOString() : String(v);
-  // Prefixing a formula character defuses spreadsheet injection: an audit
-  // export is opened in Excel by exactly the sort of person who should not be
-  // running whatever a compromised `reason` field asked for.
-  const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
-  return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
-};
-
 /** CSV of an audit result. Ids only, exactly like the rows themselves. */
-export function toCsv(rows: Record<string, unknown>[]): string {
-  return [
-    CSV_COLUMNS.join(','),
-    ...rows.map((r) => CSV_COLUMNS.map((c) => escape(r[c])).join(',')),
-  ].join('\n');
-}
+export const toCsv = (rows: Record<string, unknown>[]): string => csv(CSV_COLUMNS, rows);
 
 /** "Who touched this client, and what did they do." The question the log exists for. */
 export async function clientAccessTrail(actor: Actor, clientId: string, limit = 200) {

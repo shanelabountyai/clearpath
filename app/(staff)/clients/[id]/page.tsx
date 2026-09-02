@@ -162,6 +162,13 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
                 </button>
               </form>
             )}
+
+            <p className="mt-3 border-t pt-3 text-caption text-subtle" style={{ borderColor: 'var(--border)' }}>
+              <a href={`/clients/${client.id}/superbill`} className="font-medium underline">
+                Superbill, year to date (CSV)
+              </a>
+              {' — completed sessions only, for the client to claim themselves. Carries no diagnosis code.'}
+            </p>
           </Card>
 
           {progressNotes && (

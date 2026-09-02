@@ -11,6 +11,8 @@ Kept as the work happens, not reconstructed afterwards.
 3. **Scored dynamic forms with risk thresholds** — versioned templates, scoring
    rules that version with them, critical items that alert regardless of total.
 4. **Two-tier notes with supervisory co-signature.**
+5. **The superbill** — a claim document assembled entirely from records that
+   already existed, and honest about the one it cannot supply.
 
 ---
 
@@ -213,6 +215,46 @@ that is never theirs. That is the design's whole argument in a single screen.
 
 ---
 
+## 5. The superbill
+
+A superbill is the receipt a client hands their own insurer when the practice
+does not bill insurance directly. It needs dates of service, a CPT code per
+session, the fee paid, and who rendered it.
+
+The interesting part was how little of it was new. `chargeFeeCents` was already
+written onto the appointment when the session completed, for the late-cancel
+fee logic — which means the fee *at the time of service* was already on the
+record, and the export never has to ask what the client's fee is today. A
+superbill built from today's fee would quietly misstate a session from six
+months ago, and nothing in the document would show it.
+
+The CPT code is derived, not entered. `90791` for an intake, `90834` for a
+fifty-minute hour, `90837` for an extended one, `95` and place-of-service `02`
+when it was delivered over video. The two ways to get that wrong — upcoding a
+short session, or billing an office code for a telehealth one — are both fraud,
+and neither should be reachable by a dropdown on an export screen.
+
+Missed sessions are excluded in the pure function rather than the query. A
+no-show carries a fee and belongs on the client's *statement*, but no insurer
+reimburses one, and a superbill that lists one is a conversation with a payer.
+
+**Two guards, not one.** The document is a fee record and a set of demographics
+at the same time, so `buildSuperbill` passes through the matrix twice and logs
+both reads. That was not extra ceremony — it made the access question answer
+itself. Front desk may produce one, because they already hold both. The
+treating clinician may, for their own client. The practice manager may not,
+without break-glass, because their demographics access *is* break-glass and
+billing is not an exception carved out of it.
+
+**What it deliberately does not do.** There is no diagnosis code, because
+Clearpath does not model diagnoses, and a superbill without one is not
+claimable. The export says so on itself rather than looking complete and being
+rejected at the payer. Inventing an ICD-10 field to fill the hole would have
+been the worst available outcome: a document that looks submittable, produced
+by software with no clinical vocabulary behind it.
+
+---
+
 ## Decisions log
 
 | Decision | Why |
@@ -234,6 +276,8 @@ that is never theirs. That is the design's whole argument in a single screen.
 | The style guide imports the components rather than redrawing them | A guide that redraws its specimens starts lying in week one. `/design` renders the real primitives reading the real tokens, so it is wrong only when the app is wrong |
 | The integration suite runs on a 20s test timeout, not vitest's 5s | The per-test `TRUNCATE` and the ten-racer booking test are both dominated by WAL fsync, which moves with whatever else the machine is doing: the race asserted correctly on every run and still timed out on one run in four. An alarm that fires on disk latency instead of on a broken invariant trains you to rerun it, which is how a real failure gets waved through |
 | The author-only rule gets a structural lint, not just behavioural tests | The suite proved the helpers that exist refuse the wrong reader. It could not say anything about the helper written next month: a `processNote` query that filters by client and forgets the author passes every existing test, because none of them call it. The lint reads the shape of the call instead — `authorId` must appear inside the query, which is the difference between filtering in SQL and filtering in JS. Two read-backs that had leaned on a preceding author-filtered `updateMany` now filter for themselves, so the rule has no exceptions to remember |
+| The superbill reads the fee stored on the appointment, not the client's fee today | The completion transition already recorded what the session cost, for the late-cancel logic. Billing a March session at September's sliding-scale rate is wrong in a way no reader of the document could detect |
+| Producing a superbill needs both the fee and the demographics permission | It is both records at once. Guarding it twice meant no new matrix row and no new question: whoever may already see both halves may produce it, and the practice manager still has to break glass, because billing is not a carve-out from the rule that their clinical reach is logged |
 
 ## What this project deliberately is not
 
