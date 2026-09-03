@@ -7,13 +7,14 @@ import { Badge, Card, PageHeader, TierBanner } from '../../../../src/ui/primitiv
 import { bookGroup } from '../../groups/actions';
 import { Button } from '@/src/ui/primitives';
 import { systemClock } from '@/src/clock';
+import { withDenial } from '@/src/ui/denied';
 
 export const dynamic = 'force-dynamic';
 
 /** Half-hour starts across the working day. The database arbitrates the rest. */
 const STARTS = Array.from({ length: 20 }, (_, i) => 8 * 60 + i * 30);
 
-export default async function BookGroupPage({
+async function BookGroupPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -122,3 +123,9 @@ export default async function BookGroupPage({
     </>
   );
 }
+
+export default withDenial(BookGroupPage, {
+  title: 'Group booking',
+  children:
+    'Booking a group writes to several clients’ schedules at once. Reading the log and changing the schedule are deliberately different jobs.',
+});

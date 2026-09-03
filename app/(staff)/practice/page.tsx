@@ -3,10 +3,11 @@ import { requireSession } from '../../../src/session';
 import { guarded } from '../../../src/auth/guard';
 import { Badge, Card, Field, PageHeader, money } from '../../../src/ui/primitives';
 import { ROLE_LABEL } from '../../../src/ui/shell';
+import { withDenial } from '@/src/ui/denied';
 
 export const dynamic = 'force-dynamic';
 
-export default async function PracticePage() {
+async function PracticePage() {
   const { actor } = await requireSession();
 
   const data = await guarded(
@@ -131,3 +132,9 @@ export default async function PracticePage() {
     </>
   );
 }
+
+export default withDenial(PracticePage, {
+  title: 'Practice settings',
+  children:
+    'Clinicians, rooms, supervision relationships and the fee schedule are the practice manager’s to change.',
+});

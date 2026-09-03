@@ -3,10 +3,11 @@ import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
 import { Badge, Card, EmptyState, PageHeader } from '../../../src/ui/primitives';
 import { ROLE_LABEL } from '../../../src/ui/shell';
+import { withDenial } from '@/src/ui/denied';
 
 export const dynamic = 'force-dynamic';
 
-export default async function AuditPage({
+async function AuditPage({
   searchParams,
 }: {
   searchParams: Promise<{ clientId?: string; actorId?: string; resource?: string; flagged?: string; denied?: string; cursor?: string }>;
@@ -134,3 +135,9 @@ export default async function AuditPage({
     </>
   );
 }
+
+export default withDenial(AuditPage, {
+  title: 'The audit log is the auditor’s',
+  children:
+    'Who read what, and who was refused, is reviewed by someone who cannot open the records themselves. That separation is the point of the log, so it is not readable from inside the practice.',
+});

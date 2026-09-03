@@ -4,6 +4,7 @@ import { requireSession } from '../../../src/session';
 import { localDateOf } from '../../../src/time';
 import { Badge, Card, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { acknowledge } from './actions';
+import { withDenial } from '@/src/ui/denied';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,7 +20,7 @@ const REASON_TEXT: Record<string, string> = {
   'threshold:severe': 'The total score reached the severe band.',
 };
 
-export default async function AlertsPage() {
+async function AlertsPage() {
   const { actor } = await requireSession();
   const [open, all] = await Promise.all([myAlerts(actor), myAlerts(actor, { includeAcknowledged: true })]);
   const done = all.filter((a) => a.acknowledgedAt);
@@ -107,3 +108,9 @@ export default async function AlertsPage() {
     </>
   );
 }
+
+export default withDenial(AlertsPage, {
+  title: 'Alerts route to the treating clinician',
+  children:
+    'A screener crossing a threshold reaches one person: the clinician responsible for that client’s care. There is no shared queue to read.',
+});

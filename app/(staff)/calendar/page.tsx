@@ -4,6 +4,7 @@ import { daySchedule, type DaySession } from '../../../src/scheduling/calendar';
 import { addDays, localDateOf, minutesToHHMM, WEEKDAYS, weekdayOf } from '../../../src/time';
 import { AppointmentChip, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
+import { withDenial } from '@/src/ui/denied';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,7 +12,7 @@ const DAY_START = 8 * 60;
 const DAY_END = 19 * 60;
 const PX_PER_MIN = 1.15;
 
-export default async function CalendarPage({
+async function CalendarPage({
   searchParams,
 }: {
   searchParams: Promise<{ date?: string }>;
@@ -188,3 +189,9 @@ function collapseGroups(sessions: DaySession[]) {
   }
   return out;
 }
+
+export default withDenial(CalendarPage, {
+  title: 'The schedule',
+  children:
+    'Who is booked, when and in which room is operational rather than clinical — but it is still the practice’s, and the audit role reads the log instead.',
+});

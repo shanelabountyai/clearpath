@@ -3,10 +3,11 @@ import { listClients } from '../../../src/clients/repository';
 import { requireSession } from '../../../src/session';
 import { ownCaseloadOnly } from '../../../src/auth/permissions';
 import { Badge, EmptyState, PageHeader, TierBanner, money } from '../../../src/ui/primitives';
+import { withDenial } from '@/src/ui/denied';
 
 export const dynamic = 'force-dynamic';
 
-export default async function ClientsPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
+async function ClientsPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
   const { actor } = await requireSession();
   const { q } = await searchParams;
   const clients = await listClients(actor, { search: q?.trim() || undefined });
@@ -82,3 +83,9 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
     </>
   );
 }
+
+export default withDenial(ClientsPage, {
+  title: 'Client records',
+  children:
+    'The client list is clinical. It is visible to the people delivering or administering care, and the audit role is deliberately not one of them.',
+});

@@ -8,10 +8,11 @@ import { addDays, localDateOf, minutesToHHMM, WEEKDAYS, weekdayOf } from '../../
 import { Badge, Card, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { book } from './actions';
 import { systemClock } from '@/src/clock';
+import { withDenial } from '@/src/ui/denied';
 
 export const dynamic = 'force-dynamic';
 
-export default async function BookPage({
+async function BookPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
@@ -200,3 +201,9 @@ function Select({
     </div>
   );
 }
+
+export default withDenial(BookPage, {
+  title: 'Booking',
+  children:
+    'Making an appointment writes to the schedule. Reading the log and changing the schedule are deliberately different jobs.',
+});

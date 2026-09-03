@@ -7,10 +7,11 @@ import { handleRescheduleRequest } from './actions';
 import { addDays, localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
 import { Badge, Card, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
+import { withDenial } from '@/src/ui/denied';
 
 export const dynamic = 'force-dynamic';
 
-export default async function WorkListsPage() {
+async function WorkListsPage() {
   const { actor } = await requireSession();
   const today = localDateOf(systemClock.now());
 
@@ -204,3 +205,9 @@ export default async function WorkListsPage() {
     </>
   );
 }
+
+export default withDenial(WorkListsPage, {
+  title: 'Front-desk work lists',
+  children:
+    'Continuity gaps, vacation reschedules and waitlist matches are scheduling work. They belong to front desk and the practice manager.',
+});

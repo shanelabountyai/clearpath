@@ -3,12 +3,13 @@ import { utilizationReport, weeklyVolume } from '../../../src/reports/utilizatio
 import { addDays, localDateOf } from '../../../src/time';
 import { Card, PageHeader } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
+import { withDenial } from '@/src/ui/denied';
 
 export const dynamic = 'force-dynamic';
 
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
 
-export default async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
+async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: string; to?: string }> }) {
   const { actor } = await requireSession();
   const q = await searchParams;
   const to = q.to ?? localDateOf(systemClock.now());
@@ -138,3 +139,9 @@ function Stat({ label, value, tone }: { label: string; value: string | number; t
     </Card>
   );
 }
+
+export default withDenial(ReportsPage, {
+  title: 'Practice reporting',
+  children:
+    'Utilisation, no-shows and late cancellations are aggregate clinical operations. They belong to the practice manager.',
+});
