@@ -1,0 +1,13 @@
+# `vercel deploy` uploads the working directory, and it does not read .gitignore.
+# Without this the local .env files ride along into the deployment source — and
+# .env.production would then hand the running app the direct Neon endpoint
+# instead of the pooled one it is configured with. Environment belongs in the
+# project's environment variables, nowhere else.
+.env
+.env.*
+!.env.example
+
+e2e/
+test-results/
+playwright-report/
+docs/
