@@ -63,7 +63,7 @@ co-signature requirement is a workflow gate in the note state machine, not a
 permission — and modelling it as a permission would have been the intuitive
 wrong answer.
 
-**Test approach.** All 330 cells are enumerated and asserted, but the expected
+**Test approach.** All 455 cells are enumerated and asserted, but the expected
 policy is hand-written from the PRD rather than read back off the matrix, so the
 suite cannot agree with a wrong edit. Each cell is probed three ways: an actor
 holding every relationship *and* break-glass, an actor who supervises the author
