@@ -110,8 +110,15 @@ async function main() {
   // Clients are dealt round-robin across the clinicians rather than filling one
   // caseload at a time, so every clinician -- including the associate whose
   // co-signature queue the demo depends on -- ends up with a real caseload.
-  outer: for (const weekday of [1, 2, 3, 4, 5]) {
-    for (const hour of [10, 14, 16]) {
+  //
+  // Hour is the outermost loop, so the 70 run out of an afternoon rather than
+  // out of a weekday: with weekday outermost they filled Monday to Thursday and
+  // left Friday empty, which made every Friday demo an empty calendar. Clinician
+  // stays innermost, which keeps each (weekday, hour) cell filled in index
+  // order -- so in-person demand there is still exactly the four non-telehealth
+  // clinicians, and TC-006 is still the associate's.
+  outer: for (const hour of [10, 14, 16]) {
+    for (const weekday of [1, 2, 3, 4, 5]) {
       for (const [i, clinician] of clinicians.entries()) {
         if (clientNo >= 70) break outer;
         // Two of the six run mostly telehealth, which keeps in-person demand at
