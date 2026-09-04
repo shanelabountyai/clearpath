@@ -113,7 +113,7 @@ person — see **Known limitations**. Authorization is real either way.
 4. Act as **Owen Delacroix** (auditor) → **Audit log** → both events are there,
    the co-signature and the refusal.
 
-   ![The audit log filtered to denials of process notes, showing one row: a supervisor's read, denied. Ids only — no names, no note content, no answers.](docs/screenshots/audit-log.png)
+   ![The audit log filtered to denials of process notes, showing one row: a supervisor's read, denied. Ids only — no names, no note content, no answers. The When cell is boxed out in the capture: the audit table stamps `at` from the database clock, so it is the one value that moves between seed runs.](docs/screenshots/audit-log.png)
 
 `e2e/confidentiality.spec.ts` is that walkthrough as a test.
 

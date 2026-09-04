@@ -43,6 +43,14 @@ test.describe('README screenshots', () => {
     await actAs(page, USERS.auditor);
     await page.goto('/audit?denied=1&resource=process_note');
     await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible();
-    await page.screenshot({ path: `${shot}/audit-log.png` });
+    // Every other pixel here is deterministic — the seed is date-pinned. The
+    // audit row's stamp is not, because `at` defaults to the database clock
+    // rather than the app's, which is the one timestamp the app should not get
+    // to choose. Masked, so a diff on this picture means the product moved.
+    await page.screenshot({
+      path: `${shot}/audit-log.png`,
+      mask: [page.locator('tbody td:first-child')],
+      maskColor: '#a8a29a',
+    });
   });
 });
