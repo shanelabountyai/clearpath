@@ -1,4 +1,15 @@
 import { actAs, expect, test, USERS } from './fixtures';
+import { addDays, localDateOf, weekdayOf } from '../src/time';
+
+/**
+ * The seeded practice books Monday–Thursday, so "today" is an empty calendar on
+ * a Friday or a weekend. A test that needs a cancellable session asks for the
+ * next Monday, whose sessions are all still ahead of the clock.
+ */
+function nextMonday(): string {
+  const today = localDateOf(new Date());
+  return addDays(today, (8 - weekdayOf(today)) % 7 || 7);
+}
 
 test.describe('the calendar', () => {
   test('shows rooms as columns and telehealth in a lane of its own', async ({ page }) => {
@@ -14,7 +25,7 @@ test.describe('the calendar', () => {
 
   test('a cancellation states its consequence before the click', async ({ page }) => {
     await actAs(page, USERS.frontDesk);
-    await page.goto('/calendar');
+    await page.goto(`/calendar?date=${nextMonday()}`);
     await page.locator('a[href^="/appointments/"]').first().click();
 
     await expect(page.getByRole('heading', { name: /Cancel/ })).toBeVisible();
