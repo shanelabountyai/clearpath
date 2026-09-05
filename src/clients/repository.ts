@@ -2,6 +2,7 @@ import { guarded, may } from '../auth/guard';
 import { includesSuperviseeCaseloads, ownCaseloadOnly, type Actor } from '../auth/permissions';
 import { prisma } from '../db';
 import { NotFound } from '../errors';
+import type { ReminderCadence } from '../scheduling/confirmation';
 
 /**
  * The relationship facts a check needs about a client: who treats them, and who
@@ -37,7 +38,7 @@ const DEMOGRAPHICS = {
   id: true, code: true, firstName: true, lastName: true, dateOfBirth: true,
   email: true, phone: true,
   emergencyContactName: true, emergencyContactPhone: true, emergencyContactRelation: true,
-  treatingClinicianId: true, feeCents: true, reminderPreference: true, status: true,
+  treatingClinicianId: true, feeCents: true, reminderPreference: true, reminderCadence: true, status: true,
   createdAt: true,
 } as const;
 
@@ -123,6 +124,7 @@ type ClientEdit = Partial<{
   emergencyContactName: string | null; emergencyContactPhone: string | null;
   emergencyContactRelation: string | null;
   reminderPreference: 'email' | 'sms' | 'none';
+  reminderCadence: ReminderCadence;
   status: 'active' | 'inactive';
   treatingClinicianId: string;
 }>;

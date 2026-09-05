@@ -159,6 +159,13 @@ async function main() {
             // A third of the practice is on a sliding scale, which is normal.
             feeCents: chance(0.3) ? pick([6_000, 9_000, 12_000, 15_000]) : null,
             reminderPreference: chance(0.1) ? 'none' : chance(0.4) ? 'sms' : 'email',
+            // P2-3. A minority have told the practice how many of the three
+            // messages they want, and most people never touch a setting — so
+            // the great majority stay on `full`, which is the point of it being
+            // the default rather than a value anybody chose. The day-of-only
+            // clients are the interesting slice: one message, three hours out,
+            // and still fee-eligible like everybody else.
+            reminderCadence: chance(0.12) ? 'day_of' : chance(0.1) ? 'day_before' : 'full',
           },
         });
         clients.push({ id: client.id, code, clinicianId: clinician.id });
@@ -829,7 +836,17 @@ async function main() {
   // constructed explicitly.
   const demoClient = clients.find((c) => c.clinicianId === priya.id);
   if (demoClient) {
-    const demoAppt = await prisma.appointment.findFirst({
+    // Only if the dice have not already produced one. This block guarantees the
+    // demo pairing *exists*; it is not meant to add a second copy when the
+    // quarter already dealt one, and a client sitting in the co-signature queue
+    // twice makes the sixty-second story read like a bug. Adding the cadence
+    // setting moved the seed's random stream, the dice landed on a note here
+    // for the first time, and the e2e spec that co-signs one and expects the
+    // queue to empty found the other one still there.
+    const alreadyWaiting = await prisma.progressNote.count({
+      where: { clientId: demoClient.id, signedAt: { not: null }, coSignedAt: null },
+    });
+    const demoAppt = alreadyWaiting > 0 ? null : await prisma.appointment.findFirst({
       // Their own clinician's session, not one they merely sat in: a group
       // attendee's hour belongs to whoever ran the group, and only the
       // treating clinician writes into a record.
@@ -852,7 +869,8 @@ async function main() {
       content:
         'Mine only. I think the Sunday thing is about the job, not the sleep — but naming it too early last time made them retreat. Wait for them to say it.',
     });
-    log(`demo client ${demoClient.code}: a note awaiting co-signature and a process note`);
+    log(`demo client ${demoClient.code}: a note awaiting co-signature and a process note`
+      + (alreadyWaiting > 0 ? ' (the quarter already dealt the note)' : ''));
   }
 
   // ── three break-glass events, for the auditor to find ─────────────────

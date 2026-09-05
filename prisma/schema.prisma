@@ -58,6 +58,22 @@ enum ReminderPreference {
   none
 }
 
+/// P2-3. The cadence a client asked for, as opposed to the one they earned.
+///
+/// There is deliberately no value meaning "no messages". That is
+/// `ReminderPreference.none`, which is a safety setting and carries an
+/// exemption from the non-response fee — a volume control must not become a
+/// second route to it.
+enum ReminderCadence {
+  /// Five days out, the day before, and the day of. The default, and the only
+  /// value nobody chose.
+  full
+  /// The day-before message alone — the same one the streak cap produces.
+  day_before
+  /// The day-of nudge alone.
+  day_of
+}
+
 enum ClientStatus {
   active
   inactive
@@ -86,6 +102,9 @@ model Client {
   feeCents Int?
 
   reminderPreference ReminderPreference @default(email)
+  /// P2-3. How many of the three confirmation stages this client wants. A
+  /// stated preference; the streak cap narrows `full` and nothing else.
+  reminderCadence    ReminderCadence    @default(full)
   status             ClientStatus       @default(active)
 
   appointments  Appointment[]
@@ -138,6 +157,15 @@ model PracticeSettings {
   /// every client gets all three stages, forever, which is the volume problem
   /// this field exists to bound.
   confirmationStreakCap  Int     @default(4)
+  /// P2-3. How long before the start a message must have *arrived* for silence
+  /// after it to count as an answer. `graceMinutes` says there was time to ask;
+  /// this says there was time to answer, and until per-client cadences existed
+  /// nothing needed to ask it — a five-day-out message always had time.
+  ///
+  /// Two hours is a judgement, not a derivation: shorter than a working
+  /// morning, longer than a meeting. 0 turns the check off, which puts the fee
+  /// back on messages that arrived with minutes to spare.
+  answerWindowMinutes    Int     @default(120)
   /// The number front desk answers. It reaches exactly one client-facing body:
   /// the auto-reply to a message this system cannot read, which has to end
   /// somewhere a person picks up.

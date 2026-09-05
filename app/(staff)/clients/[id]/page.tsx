@@ -12,10 +12,11 @@ import { localDateOf, minutesToHHMM, utcToZoned } from '../../../../src/time';
 import {
   Badge, Card, EmptyState, Field, LockedPanel, PageHeader, StatusChip, TierBanner, money,
 } from '../../../../src/ui/primitives';
-import { addProcessNote, saveFee, sendForm, sendPortalLink } from '../actions';
+import { addProcessNote, saveFee, sendForm, sendPortalLink, saveReminderCadence } from '../actions';
 import { BreakGlassPrompt } from '../../break-glass';
 import { systemClock } from '@/src/clock';
-import { Button } from '@/src/ui/primitives';
+import { Button, CADENCE_LABELS } from '@/src/ui/primitives';
+import { CADENCES } from '@/src/scheduling/confirmation';
 
 export const dynamic = 'force-dynamic';
 
@@ -139,9 +140,52 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
               <Field label="Reminders">
                 {client.reminderPreference === 'none'
                   ? <Badge tone="warning">None — do not message</Badge>
-                  : client.reminderPreference}
+                  : <>
+                      {client.reminderPreference}
+                      {' · '}
+                      <span className="text-muted">{CADENCE_LABELS[client.reminderCadence]}</span>
+                    </>}
               </Field>
             </dl>
+
+            {/* P2-3. The cadence the client asked for, which is a different
+                thing from the one they earn by confirming — the streak cap
+                narrows `full` and nothing else, so a choice made here is not
+                quietly overridden by their own good behaviour. It is a volume
+                control and not a safety one: there is no option here meaning
+                "no messages", because that is the channel setting above and it
+                carries an exemption from the fee that this control must never
+                be able to reach. */}
+            {can.edit && client.reminderPreference !== 'none' && (
+              <form action={saveReminderCadence} className="mt-4 flex flex-wrap items-end gap-2 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
+                <input type="hidden" name="clientId" value={client.id} />
+                <div>
+                  <label htmlFor="reminderCadence" className="block text-micro font-medium tracking-wide text-subtle uppercase">
+                    Confirmation messages
+                  </label>
+                  <select
+                    id="reminderCadence" name="reminderCadence"
+                    defaultValue={client.reminderCadence}
+                    className="mt-1 rounded-[var(--radius)] border px-2 py-1 text-body"
+                    style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
+                  >
+                    {CADENCES.map((c) => (
+                      <option key={c} value={c}>{CADENCE_LABELS[c]}</option>
+                    ))}
+                  </select>
+                </div>
+                <button className="rounded-[var(--radius)] border px-2.5 py-1.5 text-caption font-medium" style={{ borderColor: 'var(--border-strong)' }}>
+                  Save
+                </button>
+                <p className="w-full text-caption text-subtle">
+                  Fewer messages, not fewer obligations: a client who is asked once and
+                  says nothing can still be charged for the silence, exactly as one asked
+                  three times can. To stop messaging entirely, change the channel to
+                  &ldquo;none&rdquo; — that is a different setting, and it means the practice
+                  never asks and so can never charge.
+                </p>
+              </form>
+            )}
 
             {can.setFee && (
               <form action={saveFee} className="mt-4 flex items-end gap-2 border-t pt-3" style={{ borderColor: 'var(--border)' }}>

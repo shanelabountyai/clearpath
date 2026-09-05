@@ -176,6 +176,22 @@ export const CONFIRMATION_META: Record<string, { label: string; glyph: string; t
   no_response: { label: 'No reply', glyph: '⊝', tone: 'danger' },
 };
 
+/**
+ * P2-3. How many of the three confirmation messages a client wants, in words
+ * rather than in enum values.
+ *
+ * Each label names the messages, not a quantity: "the day before, only" is
+ * something a person at a desk can read back down a phone, where "day_before"
+ * or "1 message" is not. There is no label for "no messages" because there is
+ * no such cadence — that is the channel setting, and it carries a consequence
+ * for the fee that a volume control must not be able to reach.
+ */
+export const CADENCE_LABELS: Record<string, string> = {
+  full: 'Five days, the day before, and the day of',
+  day_before: 'The day before, only',
+  day_of: 'The day of, only',
+};
+
 export function ConfirmationChip({ confirmation }: { confirmation: string }) {
   const meta = CONFIRMATION_META[confirmation];
   if (!meta) return null;

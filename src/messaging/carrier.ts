@@ -226,6 +226,39 @@ export function deliveryProven(states: readonly DeliveryState[]): boolean {
 }
 
 /**
+ * P2-3. Did the client have a real chance to answer before the hour arrived?
+ *
+ * The second half of a question this system had only ever asked one half of.
+ * `graceMinutes` checks there was time to **ask** — measured at booking, before
+ * anything is sent. Nothing checked there was time to **answer**, and for five
+ * phases nothing needed to: a full cadence puts the first message five days
+ * out, so the answer to this was always obviously yes.
+ *
+ * A per-client cadence made it not obviously yes. A client on the day-of nudge
+ * alone is asked once, a few hours before, and if the send or the carrier eats
+ * most of that they are charged for not answering a message that arrived with
+ * minutes to spare. That is the same untruth the delivery precondition was
+ * built to stop, one step further along: the practice reached them, but not in
+ * time for reaching them to mean anything.
+ *
+ * The seeded quarter is what turned this from a worry into a number. It caught
+ * the fee rate crossing the PRD's own 5% over-firing line, and the cause was a
+ * cohort whose median gap between "delivered" and "start" was **one hour**.
+ *
+ * The earliest delivery is what counts, not the latest: a client reached five
+ * days out had five days, whatever happened to the day-of nudge afterwards.
+ */
+export function answerable(
+  deliveredAt: readonly (Date | null | undefined)[],
+  startAt: Date,
+  windowMinutes: number,
+): boolean {
+  if (windowMinutes <= 0) return true;
+  const cutoff = startAt.getTime() - windowMinutes * 60_000;
+  return deliveredAt.some((at) => !!at && at.getTime() <= cutoff);
+}
+
+/**
  * A message the practice should stop trying to send.
  *
  * A reminder is a message about an hour, and it is worthless once the hour has

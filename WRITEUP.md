@@ -1120,6 +1120,163 @@ answer it.
 
 ---
 
+## 14. The cadence a client chose, and the question nobody had asked
+
+The cap in §11 was the practice guessing. Four confirmations running and a
+client drops to the day-before message alone — a good guess, derived from
+behaviour, and still a guess. This is the same shape of thing arrived at from
+the other direction: a client says which messages they want, and the system
+believes them.
+
+Three values, and the interesting part is which three. `full` is all three
+stages and stays the default — it is the only value nobody chose, and that is
+what makes it a default rather than a setting. `day_before` is the single
+message the cap already produces, spelled the same way on purpose: an earned
+cadence and a chosen one that send the same message should not be two
+vocabularies, or a report ends up with a row nobody can explain. `day_of` is the
+case the PRD names.
+
+There is deliberately no value meaning "nothing". That is
+`reminderPreference: 'none'`, it is a safety setting rather than a volume one,
+and it carries a consequence this field must never acquire — a client on `none`
+is never asked and so can never be charged for silence. A second way to spell
+it would be a second route to that exemption, reachable from a control that
+reads like a taste in messages. The screen says so where the choice is made,
+because that is the one mistake a person at a desk can actually make here.
+
+### A stated preference is not overridden by an inferred one
+
+The cap and the choice collide, and `stagesFor` is where that is settled: the
+cap narrows `full` and nothing else. A client who has *told* the practice which
+message they want has already solved the volume problem the cap exists for, and
+solved it better than the inference can.
+
+The alternative — fewest messages wins — reads safer and is not implementable.
+A client who chose `day_of` and earned the day-before cap has no stage in
+common, so the rule needs a tie-break that nobody asked for and that neither
+setting predicts. The version that survives contact is the simple one.
+
+One consequence worth naming: such a client is not *reported* as capped either.
+The cap did nothing to them, and a count that mixed "earned the shorter cadence"
+with "asked for one" would mean two things and measure neither.
+
+### The seed caught the feature over-firing
+
+The plan was: ship the setting, note that a lighter cadence is still
+fee-eligible, done. One delivered message is still asking — the same rule the
+cap already lives under — and the alternative is worse than it looks, because if
+a lighter cadence meant "not chargeable" the setting becomes a way to opt out of
+the policy and every client finds it eventually.
+
+Then the seeded quarter refused to finish:
+
+```
+✗ at most 5% of the sessions it could ask about end in a fee — 35 of 696 (5.03%)
+```
+
+The PRD does not treat that line as a target to aim near. It says: *"If the
+number charged exceeds 5% of eligible, the rule is over-firing and the spec
+fails."* So the first question was whether this was dice — adding one `chance()`
+call per client moves the whole random stream, and every number in the quarter
+with it — or whether the feature had actually done something.
+
+It had. Broken down by cadence, against a scripted baseline of about 20%
+silence:
+
+| cadence | median gap, delivered → start | no reply | n |
+|---|---|---|---|
+| `full` | 119 hours | 19.7% | 578 |
+| `day_before` | 23 hours | 5.0% | 40 |
+| `day_of` | **1.0 hour** | **23.6%** | 110 |
+
+A day-of client's only message was arriving with an hour to spare, and clients
+who meant to answer were running out of time to. Every one of those becomes a
+fee.
+
+### The half of the question this system had never asked
+
+`graceMinutes` checks there was time to **ask**, measured at booking, before
+anything is sent. Nothing checked there was time to **answer** — and for five
+phases nothing needed to, because a full cadence puts the first message five
+days out and the answer was always obviously yes. A per-client cadence made it
+not obviously yes, and the seed made it a number.
+
+So `answerable` joins `confirmationRequired` and `deliveryProven` as a third
+precondition, with a third audit code and a third grep lint. The three read as
+one sentence each: the practice may not ask; the practice asked and it did not
+arrive; the practice asked and it arrived too late to act on. Only the middle
+one is a phone call, which is why only that one has a work-list. This one is a
+*settings* signal — a cadence whose message keeps landing inside the window
+cannot support the fee — so it goes on `/reports` beside the delivery rate and
+the money, as a count rather than as a slow drift in the charge rate.
+
+It is not an exemption for wanting fewer messages, and there is a test saying
+so: a day-of client whose single message arrives with the whole lead ahead of it
+is charged for silence exactly like anybody else.
+
+The default is 120 minutes and that is a judgement, not a derivation — shorter
+than a working morning, longer than a meeting. It is a setting because a
+practice with a different channel mix may have a different honest answer, not
+because there is any doubt about which direction is safer. Zero turns it off,
+and off means the fee goes back on messages that arrived with minutes to spare.
+
+### What it did to the numbers, and what that costs
+
+The charge rate went from 5.03% to **4.57%**, and 17 sessions were exempted for
+arriving too late against 14 exempted for never arriving at all. Day-of clients
+fell from 23.6% no-reply to 9.7% — which is *below* the full-cadence cohort, and
+that is the cost stated plainly rather than the win.
+
+The rule cannot tell "did not answer because there was no time" from "was never
+going to answer". It exempts both, and a day-of client who genuinely no-showed
+may now escape a fee that a full-cadence client would have paid. That is the
+same direction of conservatism the delivery precondition chose, for the same
+reason: the practice can still mark a no-show by hand, and what it may not do is
+charge automatically on evidence this thin.
+
+One number in that table is a simulation artifact and should not be read as a
+finding. The seeded carrier settles receipts on the *next* hourly tick, so a
+day-of message queued at three hours out is delivered at two — which is exactly
+the 2.0-hour median the quarter now shows, sitting right on the threshold. A
+real carrier delivers in seconds, so a real day-of client would have close to
+the full lead and far fewer of them would be exempted. The mechanism is real;
+that particular exemption rate is the seed's clock granularity.
+
+### Two fixtures that had been describing a practice nobody runs
+
+The new precondition failed nine existing sweep tests on first run, and every
+one of them was the fixture rather than the rule. The shared `asked()` helper
+ran the horizon once, two hours before the session — queuing a "five days out"
+message five days late — and stamped every delivery an hour before the start.
+Harmless while nothing asked how long the client had; a compressed timeline
+describing a cadence no practice runs, the moment something did. It now walks
+the real leads. The group-session fixture had the same bug with a sharper edge:
+its delivery was pinned to this suite's 3pm constant while the group sits at
+11am, so it landed an hour before an appointment four hours earlier.
+
+The e2e suite lost one too, and for a third reason. Moving the random stream
+made the dice deal TC-006 a note awaiting co-signature — which the demo block
+then added a second copy of, because it always constructed one instead of
+guaranteeing one existed. The spec that co-signs a note and expects the queue to
+empty found the other one still sitting there. The block now checks first.
+
+### What this deliberately does not do
+
+There is no portal control for it. The portal is a tokenized door with no login
+behind it, and a forwarded link should not be able to change how somebody is
+contacted — so a client says this on the phone or in the room, and it is a staff
+edit on the record, audited like any other. That is the obvious next step and it
+needs a think about what a token may do, not just a form.
+
+And the channel itself — `email` / `sms` / `none` — is still not editable in the
+UI, which is now a visible gap rather than a hidden one: the cadence picker sits
+directly under a channel the same screen can only display. The code has
+anticipated it being editable since P0 (the cadence exempts a live `pending` row
+when a client moves to `none` mid-cadence), so the machinery is there. It is a
+form, and it was not this item.
+
+---
+
 ---
 
 ## Decisions log
@@ -1135,6 +1292,11 @@ answer it.
 | Continuity checked before any preference the client stated | Offering another clinician's hour proposes a stranger, and no stated preference can outrank that |
 | `waitlistMatches` takes a required `clinicianId`, not an optional one | An optional field there is a field a caller can skip, and the thing skipped is the clinical rule |
 | `fillability` bands deliberately miss the late-cancel window | One threshold decides whether a client is charged, the other how a row is sorted; folding them together is the cheapest available mistake |
+| A cadence a client chose beats the cadence they earned | The cap is the practice guessing from behaviour; a client who said it outright has answered better, and "fewest messages wins" needs a tie-break neither setting predicts |
+| No cadence value meaning "no messages" | That is `reminderPreference: 'none'`, a safety setting carrying an exemption from the fee; a volume control must not be a second route to it |
+| A lighter cadence is still fee-eligible | One delivered message is still asking; if it were not, the setting becomes an opt-out from the policy and every client finds it |
+| `answerable` as a third precondition, not a cadence-specific exemption | The system checked there was time to ask and never that there was time to answer; that gap was invisible at five days' notice and load-bearing at one hour |
+| The answering window is a settings row, surfaced on the report, not a work-list | An undelivered message is an address problem with a phone call behind it; a message that arrives too late is a *cadence* problem, and the practice needs to see it as a count |
 | No record that an offer was made, and no "handled" control | What keeps these lists useful is that nothing can be tidied off them; the cost is re-ringing, and the fix for that would be a record of offers, not a dismiss button |
 | List reads logged once, not once per row | Forty audit rows for one page view buries the individual record opens that matter |
 | `may()` is silent | Deciding which buttons to draw is not an access event, and logging it would drown the real ones |

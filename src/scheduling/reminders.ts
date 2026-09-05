@@ -137,7 +137,7 @@ export async function runReminderHorizon(
       startAt: true,
       createdAt: true,
       confirmation: true,
-      client: { select: { reminderPreference: true, email: true, phone: true } },
+      client: { select: { reminderPreference: true, reminderCadence: true, email: true, phone: true } },
       reminders: { select: { stage: true } },
     },
     orderBy: { startAt: 'asc' },
@@ -171,12 +171,20 @@ export async function runReminderHorizon(
     // day-before message and nothing else, until they miss one. Decided per
     // appointment from the client's history at this moment, so it follows them
     // rather than being a mode somebody switched on.
-    const capped = cadenceCapped(answers.get(appt.clientId) ?? [], streakCap);
+    const earned = cadenceCapped(answers.get(appt.clientId) ?? [], streakCap);
+    // P2-3. And it applies only where nobody chose. `stagesFor` is the rule;
+    // this is the same question asked again for the *report*, because a client
+    // who chose `day_of` and also happens to have a streak has not been capped
+    // — the cap did nothing to them, and counting them would make the number
+    // mean two things.
+    const capApplies = appt.client.reminderCadence === 'full' && earned;
 
     const already = new Set(appt.reminders.map((r) => r.stage));
-    const due = dueStages(appt, now, { ...settings, capped }).filter((stage) => !already.has(stage));
+    const due = dueStages(appt, now, {
+      ...settings, capped: earned, cadence: appt.client.reminderCadence,
+    }).filter((stage) => !already.has(stage));
     if (!due.length) continue;
-    if (capped) result.capped.push(appt.id);
+    if (capApplies) result.capped.push(appt.id);
 
     // One transaction for the whole appointment: the messages, their reminder
     // rows, the promotion and the audit row commit together or not at all.

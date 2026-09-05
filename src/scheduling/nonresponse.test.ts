@@ -123,8 +123,17 @@ describe('against the database', () => {
       startMinute: opts.startMinute ?? THREE_PM, type: 'standard', modality: 'in_person',
       clock: fixedClock(new Date(START.getTime() - 30 * DAY)),
     });
-    await runReminderHorizon(fixedClock(new Date(appt.startAt.getTime() - 2 * HOUR)));
-    if (opts.deliver !== false) await deliverOutbox(new Date(appt.startAt.getTime() - HOUR));
+    // The cadence's own timeline rather than a compressed one. This used to run
+    // the horizon once, two hours out, and stamp every delivery an hour before
+    // the session — which queued a "five days out" message five days late and
+    // gave a client an hour to answer it. Harmless until P2-3, when the sweep
+    // started asking how long before the hour the message actually arrived, at
+    // which point the fixture was quietly describing a practice nobody runs.
+    for (const lead of [5 * DAY, DAY, 3 * HOUR]) {
+      const at = new Date(appt.startAt.getTime() - lead);
+      await runReminderHorizon(fixedClock(at));
+      if (opts.deliver !== false) await deliverOutbox(at);
+    }
     return prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } });
   }
 
@@ -195,7 +204,7 @@ describe('against the database', () => {
     await runNonResponseSweep(afterGrace(appt));
 
     const second = await runNonResponseSweep(afterGrace(appt));
-    expect(second).toEqual({ noResponse: [], noShow: [], exempted: [], undelivered: [] });
+    expect(second).toEqual({ noResponse: [], noShow: [], exempted: [], undelivered: [], unanswerable: [] });
     expect(await prisma.appointment.count({ where: { status: 'no_show' } })).toBe(1);
   });
 
@@ -206,7 +215,7 @@ describe('against the database', () => {
     });
 
     const run = await runNonResponseSweep(afterGrace(confirmed));
-    expect(run).toEqual({ noResponse: [], noShow: [], exempted: [], undelivered: [] });
+    expect(run).toEqual({ noResponse: [], noShow: [], exempted: [], undelivered: [], unanswerable: [] });
     expect((await row(confirmed.id)).status).toBe('scheduled');
   });
 
@@ -285,14 +294,18 @@ describe('against the database', () => {
    */
   it('charges where one stage arrived and the rest did not', async () => {
     const appt = await asked({ deliver: false });
-    const clock = fixedClock(new Date(appt.startAt.getTime() - HOUR));
+    // Three hours out rather than thirty minutes: since P2-3 an arrival has to
+    // leave the client time to act on it, and this test is about one stage
+    // arriving where the others failed — not about a message landing too late
+    // to answer, which is its own exemption and has its own specs.
+    const clock = fixedClock(new Date(appt.startAt.getTime() - 3 * HOUR));
     await dispatchOutbox({
       clock,
       carrier: { name: 'accepts', send: async (m) => ({ providerRef: `r_${m.id}`, accepted: true }) },
     });
 
     const [first, ...rest] = await prisma.outboxMessage.findMany({ orderBy: { createdAt: 'asc' } });
-    const occurredAt = new Date(appt.startAt.getTime() - 30 * 60_000);
+    const occurredAt = new Date(appt.startAt.getTime() - 3 * HOUR);
     await recordReceipt({ providerRef: first!.providerRef!, state: 'delivered', occurredAt });
     for (const m of rest) {
       await recordReceipt({ providerRef: m.providerRef!, state: 'failed', failureCode: 'unreachable', occurredAt });
@@ -380,13 +393,129 @@ describe('against the database', () => {
       where: { resourceId: appt.id, actorId: 'system' },
       orderBy: { at: 'asc' },
     });
-    // One from the cadence's promotion, one from the sweep's determination.
-    expect(rows).toHaveLength(2);
+    // Three from the cadence — one per run that queued a stage, on the real
+    // five-day timeline — and one from the sweep's determination.
+    expect(rows).toHaveLength(4);
     expect(rows.at(-1)).toMatchObject({
       action: 'update', resource: 'appointment', actorRole: 'admin',
       allowed: true, clientId: appt.clientId, breakGlass: false,
     });
     expect(await prisma.auditEvent.count({ where: { resourceId: appt.id, actorRole: 'client' } })).toBe(0);
+  });
+
+  /**
+   * P2-3. The delivery precondition's own argument, one step further along. The
+   * practice reached them — but with an hour to spare, which is not a chance to
+   * answer, it is a chance to be charged. Same landing as the undelivered case
+   * and for the same reason: `no_response` is a statement about the client, and
+   * a client who never had time to reply did not do anything.
+   */
+  it('never charges a client reached too late to answer', async () => {
+    const appt = await asked({ deliver: false });
+    const clock = fixedClock(new Date(appt.startAt.getTime() - HOUR));
+    await dispatchOutbox({
+      clock,
+      carrier: { name: 'accepts', send: async (m) => ({ providerRef: `r_${m.id}`, accepted: true }) },
+    });
+    for (const m of await prisma.outboxMessage.findMany()) {
+      await recordReceipt({
+        providerRef: m.providerRef!, state: 'delivered',
+        occurredAt: new Date(appt.startAt.getTime() - HOUR),
+      });
+    }
+
+    const run = await runNonResponseSweep(afterGrace(appt));
+    expect(run.unanswerable).toEqual([appt.id]);
+    expect(run.exempted).toEqual([appt.id]);
+    // Reached, so not the practice's addressing problem — a different exemption.
+    expect(run.undelivered).toEqual([]);
+    expect(run.noResponse).toEqual([]);
+    expect(run.noShow).toEqual([]);
+
+    const after = await row(appt.id);
+    expect(after.confirmation).toBe('not_required');
+    expect(after.status).toBe('scheduled');
+    expect(after.chargeFeeCents).toBeNull();
+  });
+
+  /** Its own code, so the three exemptions never blur into one number. */
+  it('records why it stood down, in a code of its own', async () => {
+    const appt = await asked({ deliver: false });
+    const clock = fixedClock(new Date(appt.startAt.getTime() - HOUR));
+    await dispatchOutbox({
+      clock,
+      carrier: { name: 'accepts', send: async (m) => ({ providerRef: `r_${m.id}`, accepted: true }) },
+    });
+    for (const m of await prisma.outboxMessage.findMany()) {
+      await recordReceipt({
+        providerRef: m.providerRef!, state: 'delivered',
+        occurredAt: new Date(appt.startAt.getTime() - HOUR),
+      });
+    }
+    await runNonResponseSweep(afterGrace(appt));
+
+    const reasons = (await prisma.auditEvent.findMany({
+      where: { resourceId: appt.id, actorId: 'system' }, orderBy: { at: 'asc' },
+    })).map((r) => r.reason);
+    expect(reasons.at(-1)).toBe('confirmation_unanswerable');
+    expect(reasons).not.toContain('confirmation_undelivered');
+  });
+
+  /**
+   * The other half, and the one that keeps this from being an exemption for
+   * anybody who wants fewer messages. A day-of client whose single message
+   * arrived with the whole lead ahead of it had a real chance to answer, and
+   * saying nothing costs them exactly what it costs anybody else.
+   */
+  it('still charges a light cadence that was reached in time', async () => {
+    const client = await makeClient(therapist.id);
+    await prisma.client.update({
+      where: { id: client.id },
+      data: { email: 'tc@example.test', reminderCadence: 'day_of' },
+    });
+    const appt = await bookAppointment(actor(desk), {
+      clientId: client.id, clinicianId: therapist.id, date: TUESDAY,
+      startMinute: THREE_PM, type: 'standard', modality: 'in_person',
+      clock: fixedClock(new Date(START.getTime() - 30 * DAY)),
+    });
+    // Queued and delivered the moment it falls due: the full three-hour lead.
+    const dueAt = new Date(appt.startAt.getTime() - 3 * HOUR);
+    await runReminderHorizon(fixedClock(dueAt));
+    await deliverOutbox(dueAt);
+
+    expect((await row(appt.id)).confirmation).toBe('pending');
+    expect(await prisma.appointmentReminder.count({ where: { appointmentId: appt.id } })).toBe(1);
+
+    const run = await runNonResponseSweep(afterGrace(appt));
+    expect(run.unanswerable).toEqual([]);
+    expect(run.noShow).toEqual([appt.id]);
+    expect((await row(appt.id)).chargeFeeCents).toBe(9000);
+  });
+
+  /**
+   * Zero is off, and off means the fee goes back on messages that arrived with
+   * minutes to spare. It is a setting rather than a constant because a practice
+   * with a different channel mix may have a different honest answer — not
+   * because there is any doubt about which direction is safer.
+   */
+  it('charges on a late arrival where the practice has set no window', async () => {
+    await settings({ answerWindowMinutes: 0 });
+    const appt = await asked({ deliver: false });
+    const clock = fixedClock(new Date(appt.startAt.getTime() - HOUR));
+    await dispatchOutbox({
+      clock,
+      carrier: { name: 'accepts', send: async (m) => ({ providerRef: `r_${m.id}`, accepted: true }) },
+    });
+    for (const m of await prisma.outboxMessage.findMany()) {
+      await recordReceipt({
+        providerRef: m.providerRef!, state: 'delivered',
+        occurredAt: new Date(appt.startAt.getTime() - HOUR),
+      });
+    }
+
+    const run = await runNonResponseSweep(afterGrace(appt));
+    expect(run.unanswerable).toEqual([]);
+    expect(run.noShow).toEqual([appt.id]);
   });
 
   it('carries no client name, phone or email into the trail', async () => {
@@ -415,8 +544,16 @@ describe('against the database', () => {
       clinicianId: therapist.id, clientIds, date: TUESDAY, startMinute: 11 * 60,
       topic: 'Tuesday skills group', clock: fixedClock(new Date(START.getTime() - 30 * DAY)),
     });
-    await runReminderHorizon(fixedClock(new Date(START.getTime() - 6 * HOUR)));
-    await deliverOutbox(new Date(START.getTime() - 5 * HOUR));
+    // The group sits at 11am, four hours before this suite's usual 3pm, so a
+    // delivery pinned to START would land an hour before it — inside the
+    // answering window, and exempt. Leads are measured from the group's own
+    // start for the same reason the fixture above is.
+    const groupStart = new Date(START.getTime() - 4 * HOUR);
+    for (const lead of [5 * DAY, DAY, 3 * HOUR]) {
+      const at = new Date(groupStart.getTime() - lead);
+      await runReminderHorizon(fixedClock(at));
+      await deliverOutbox(at);
+    }
 
     const attendees = await prisma.appointment.findMany({
       where: { groupSessionId: { not: null } }, orderBy: { clientId: 'asc' },
@@ -484,6 +621,22 @@ export function deliveryBlindNoResponseWrites(files: { path: string; source: str
     .map(({ path }) => path);
 }
 
+/**
+ * The third precondition, added in P2-3.
+ *
+ * A file that concludes silence must, in the same file, be seen to have asked
+ * whether the message arrived *in time to be answered*. Same argument as the
+ * delivery lint and the same shape: it greps for `answerable` rather than for a
+ * hand-rolled subtraction, because a second copy of "how long is long enough"
+ * is how a considered window quietly becomes zero.
+ */
+export function windowBlindNoResponseWrites(files: { path: string; source: string }[]): string[] {
+  return files
+    .filter(({ source }) => concludesNoResponse(source))
+    .filter(({ source }) => !source.includes('answerable'))
+    .map(({ path }) => path);
+}
+
 describe('no path to a fee that has not asked whether it may charge', () => {
   const files = () => {
     const out: { path: string; source: string }[] = [];
@@ -534,6 +687,29 @@ describe('no path to a fee that has not asked whether it may charge', () => {
    */
   it('holds for the delivery precondition too', () => {
     expect(deliveryBlindNoResponseWrites(files())).toEqual([]);
+  });
+
+  /**
+   * P2-3. Delivery proves the client was reached; it says nothing about
+   * whether they were reached in time. Without this, the answering window is
+   * one refactor away from being dropped — and the failure is invisible in
+   * exactly the same way, because a message answered too late to matter and a
+   * message ignored produce identical evidence.
+   */
+  it('holds for the answering window too', () => {
+    expect(windowBlindNoResponseWrites(files())).toEqual([]);
+  });
+
+  it('catches a sweep that checks delivery but not the time to answer', () => {
+    const planted = [{
+      path: 'src/scheduling/hasty-sweep.ts',
+      source: `
+        if (!confirmationRequired(client, appt, settings)) return;
+        if (!deliveryProven(states)) return;
+        await tx.appointment.update({ where: { id }, data: { confirmation: 'no_response' } });
+      `,
+    }];
+    expect(windowBlindNoResponseWrites(planted)).toEqual(['src/scheduling/hasty-sweep.ts']);
   });
 
   it('catches a sweep that checks eligibility but not delivery', () => {

@@ -2,7 +2,7 @@ import { guarded } from '../auth/guard';
 import { SYSTEM_ACTOR } from '../auth/permissions';
 import { systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
-import { deliveryProven } from '../messaging/carrier';
+import { answerable, deliveryProven } from '../messaging/carrier';
 import { confirmationRequired, type Confirmation, type ConfirmationSettings } from './confirmation';
 import { setStatus, type Status } from './lifecycle';
 
@@ -86,6 +86,15 @@ export interface SweepResult {
    * not a quietly skipped fee.
    */
   undelivered: string[];
+  /**
+   * P2-3. Of those, the ones the practice reached too late for reaching them to
+   * mean anything. A subset of `exempted`, and its own number because it is a
+   * *settings* problem rather than an address problem: a cadence that keeps
+   * landing inside the answering window is a cadence that cannot support the
+   * fee, and the practice should see that as a count rather than as a slow
+   * drift in the charge rate.
+   */
+  unanswerable: string[];
 }
 
 /**
@@ -103,6 +112,7 @@ export async function runNonResponseSweep(clock: Clock = systemClock): Promise<S
     dayOfLeadHours: s?.dayOfLeadHours ?? 3,
   };
   const autoNoShowOnNoResponse = s?.autoNoShowOnNoResponse ?? true;
+  const answerWindowMinutes = s?.answerWindowMinutes ?? 120;
 
   const candidates = await prisma.appointment.findMany({
     where: {
@@ -123,13 +133,16 @@ export async function runNonResponseSweep(clock: Clock = systemClock): Promise<S
       // a reminder whose message a carrier never delivered.
       reminders: {
         where: { outboxMessageId: { not: null } },
-        select: { outboxMessage: { select: { deliveryState: true } } },
+        // `deliveredAt` as well as the state, because since P2-3 the question
+        // is not only whether a message arrived but whether it arrived in time
+        // to be answered.
+        select: { outboxMessage: { select: { deliveryState: true, deliveredAt: true } } },
       },
     },
     orderBy: { startAt: 'asc' },
   });
 
-  const result: SweepResult = { noResponse: [], noShow: [], exempted: [], undelivered: [] };
+  const result: SweepResult = { noResponse: [], noShow: [], exempted: [], undelivered: [], unanswerable: [] };
 
   for (const appt of candidates) {
     // P0-2, re-checked here rather than trusted from the send. A client who
@@ -164,6 +177,30 @@ export async function runNonResponseSweep(clock: Clock = systemClock): Promise<S
         tx.appointment.update({ where: { id: appt.id }, data: { confirmation: 'not_required' } }));
       result.exempted.push(appt.id);
       result.undelivered.push(appt.id);
+      continue;
+    }
+
+    // P2-3. And the other half of a question this system had only ever asked
+    // one half of. `confirmationRequired` above checks there was time to *ask*,
+    // measured at booking. Nothing checked there was time to *answer* — and for
+    // five phases nothing needed to, because a full cadence puts the first
+    // message five days out.
+    //
+    // A per-client cadence made it a live question, and the seeded quarter made
+    // it a number: a day-of client's median gap between "delivered" and "start"
+    // was one hour, and charging somebody for not answering a message that
+    // arrived with an hour to spare is the delivery precondition's own argument
+    // one step further along. The practice reached them, but not in time for
+    // reaching them to mean anything.
+    //
+    // Its own audit code, so the three exemptions never blur: the practice may
+    // not ask, the practice asked and it did not arrive, the practice asked and
+    // it arrived too late. Only the second one is a phone call.
+    if (!answerable(appt.reminders.map((r) => r.outboxMessage?.deliveredAt), appt.startAt, answerWindowMinutes)) {
+      await guarded(request(appt, 'confirmation_unanswerable'), (tx) =>
+        tx.appointment.update({ where: { id: appt.id }, data: { confirmation: 'not_required' } }));
+      result.exempted.push(appt.id);
+      result.unanswerable.push(appt.id);
       continue;
     }
 

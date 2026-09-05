@@ -85,6 +85,20 @@ and a test greps the rest of `src/` to prove no endpoint re-implements a role ch
   the guarantee rather than a policy about not reading it. An `unparsed` reply
   alerts the treating clinician alone, sends back the practice's number and the
   urgent-help line, and tells front desk to ring the client, with nothing to read.
+- **A client can ask for fewer confirmation messages, not for fewer
+  obligations.** The cadence on a client record is `full`, `day_before` or
+  `day_of`, and a stated choice is not overridden by the streak cap the practice
+  would otherwise infer. It is a volume control and deliberately not a way out of
+  the no-show fee: one delivered message is still asking. What *does* end the fee
+  is the separate channel setting — a client on "no messages" is never asked and
+  so can never be charged. The two are kept apart on purpose, and the screen says
+  which is which.
+- **Nobody is charged for a message that arrived too late to answer.** The
+  no-show fee has three preconditions, not one: the practice was allowed to ask,
+  a carrier said the message arrived, and it arrived with time to act on it. The
+  third exists because the second is not enough — a client reached an hour before
+  their session was reached, but not in time for reaching them to mean anything.
+  The seeded quarter is what found it, by refusing to finish.
 - **A freed hour is offered by a person, never by the system.** A cancellation
   ahead of time becomes an offerable hour with the notice remaining on it,
   matched against the waitlist — but Clearpath surfaces candidates and a human
@@ -198,10 +212,10 @@ means replacing that file's values and nothing else.
 | Scoring, thresholds and critical items | [`src/forms/scoring.ts`](src/forms/scoring.ts) |
 | Two-tier notes and co-signature | [`src/notes/service.ts`](src/notes/service.ts) |
 | The discretion deny-list | [`src/messaging/outbox.ts`](src/messaging/outbox.ts) |
-| Whether the practice may ask, and when | [`src/scheduling/confirmation.ts`](src/scheduling/confirmation.ts) |
+| Whether the practice may ask, when, and which messages | [`src/scheduling/confirmation.ts`](src/scheduling/confirmation.ts) |
 | What silence means, and what it does not | [`src/scheduling/nonresponse.ts`](src/scheduling/nonresponse.ts) |
 | A reply classified and thrown away | [`src/messaging/inbound.ts`](src/messaging/inbound.ts) |
-| The carrier port, and what "delivered" may mean | [`src/messaging/carrier.ts`](src/messaging/carrier.ts) |
+| The carrier port, "delivered", and "in time to answer" | [`src/messaging/carrier.ts`](src/messaging/carrier.ts) |
 | The freed hour, and who may be offered it | [`src/scheduling/openings.ts`](src/scheduling/openings.ts) |
 | The seed's own success metrics | [`prisma/metrics.ts`](prisma/metrics.ts) |
 | Why any of it is shaped this way | [`WRITEUP.md`](WRITEUP.md) |

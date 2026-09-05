@@ -332,3 +332,156 @@ describe('the reminder body', () => {
     for (const body of bodies) expect(body).toContain(`/p/${link.token}`);
   });
 });
+
+/**
+ * P2-3 against the database. The pure rule lives in `confirmation.test.ts`;
+ * what these prove is that the horizon reads the client's own stated cadence,
+ * that a stated one is not overridden by an earned one, and — the part with
+ * money attached — that choosing fewer messages does not buy an exemption from
+ * the fee.
+ */
+describe('the cadence a client chose', () => {
+  const setCadence = (clientId: string, reminderCadence: 'full' | 'day_before' | 'day_of') =>
+    prisma.client.update({ where: { id: clientId }, data: { reminderCadence } });
+
+  /** Past sessions carrying answers, newest last — enough to earn the cap. */
+  async function confirmedRun(clientId: string, n: number) {
+    for (let i = 0; i < n; i++) {
+      const at = new Date(START.getTime() - (n + 1 - i) * 7 * DAY);
+      await prisma.appointment.create({
+        data: {
+          clientId, clinicianId: therapist.id,
+          startAt: at, endAt: new Date(at.getTime() + 50 * 60_000),
+          modality: 'telehealth', status: 'completed', confirmation: 'confirmed',
+          createdAt: new Date(START.getTime() - 120 * DAY),
+        },
+      });
+    }
+  }
+
+  it('sends a day-of client one message, on the day', async () => {
+    const appt = await appointmentBooked(30 * DAY);
+    await setCadence(appt.clientId, 'day_of');
+
+    // Five days out and a day out, where a full-cadence client would have had two.
+    await runReminderHorizon(fixedClock(new Date(START.getTime() - 5 * DAY)));
+    await runReminderHorizon(fixedClock(new Date(START.getTime() - DAY)));
+    expect(await stagesFor(appt.id)).toEqual([]);
+    expect((await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } })).confirmation)
+      .toBe('not_required');
+
+    await runReminderHorizon(fixedClock(new Date(START.getTime() - HOUR)));
+    expect(await stagesFor(appt.id)).toEqual(['d0']);
+    expect((await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } })).confirmation)
+      .toBe('pending');
+  });
+
+  it('sends a day-before client one message, the day before', async () => {
+    const appt = await appointmentBooked(30 * DAY);
+    await setCadence(appt.clientId, 'day_before');
+
+    await runReminderHorizon(fixedClock(new Date(START.getTime() - 5 * DAY)));
+    expect(await stagesFor(appt.id)).toEqual([]);
+
+    await runReminderHorizon(fixedClock(new Date(START.getTime() - HOUR)));
+    expect(await stagesFor(appt.id)).toEqual(['d1']);
+  });
+
+  it('leaves an unchosen cadence on all three stages', async () => {
+    const appt = await appointmentBooked(30 * DAY);
+    await runReminderHorizon(fixedClock(new Date(START.getTime() - HOUR)));
+    expect(await stagesFor(appt.id)).toEqual(['d5', 'd1', 'd0']);
+  });
+
+  /**
+   * The rule the whole item turns on. This client has confirmed four times
+   * running, so the practice's inference says "day before" — and they have said
+   * "day of". What they said wins.
+   */
+  it('does not let the earned cap override a cadence the client chose', async () => {
+    const appt = await appointmentBooked(30 * DAY);
+    await confirmedRun(appt.clientId, 4);
+    await setCadence(appt.clientId, 'day_of');
+
+    await runReminderHorizon(fixedClock(new Date(START.getTime() - HOUR)));
+    expect(await stagesFor(appt.id)).toEqual(['d0']);
+  });
+
+  /**
+   * And they are not reported as capped, because the cap did nothing to them.
+   * A count that mixed "earned the shorter cadence" with "asked for one" would
+   * mean two things and measure neither.
+   */
+  it('does not count a client who chose as a client who was capped', async () => {
+    const appt = await appointmentBooked(30 * DAY);
+    await confirmedRun(appt.clientId, 4);
+    await setCadence(appt.clientId, 'day_of');
+
+    const run = await runReminderHorizon(fixedClock(new Date(START.getTime() - HOUR)));
+    expect(run.capped).toEqual([]);
+    expect(run.queued.map((q) => q.stage)).toEqual(['d0']);
+  });
+
+  it('still caps a client who earned it and chose nothing', async () => {
+    const appt = await appointmentBooked(30 * DAY);
+    await confirmedRun(appt.clientId, 4);
+
+    const run = await runReminderHorizon(fixedClock(new Date(START.getTime() - HOUR)));
+    expect(run.capped).toEqual([appt.id]);
+    expect(await stagesFor(appt.id)).toEqual(['d1']);
+  });
+
+  /**
+   * The money. One delivered message is still asking, so a lighter cadence is
+   * still fee-eligible — if it were not, the setting would be a way to opt out
+   * of the policy and every client would find it.
+   */
+  it('leaves a lighter cadence fee-eligible: one message is still asking', async () => {
+    const appt = await appointmentBooked(30 * DAY);
+    await setCadence(appt.clientId, 'day_of');
+
+    await runReminderHorizon(fixedClock(new Date(START.getTime() - HOUR)));
+    expect((await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } })).confirmation)
+      .toBe('pending');
+  });
+
+  /**
+   * And the invariant that keeps the fee honest, re-checked for a cadence with
+   * one stage instead of three: booked closer in than their only message,
+   * nothing queues, `pending` is never written, and the sweep can never reach
+   * them. A lighter cadence narrows the window in which the practice may ask —
+   * it does not create a way to charge for a message that was never sendable.
+   */
+  it('queues nothing, and promotes nothing, for a day-of client booked too late', async () => {
+    const appt = await appointmentBooked(HOUR);
+    await setCadence(appt.clientId, 'day_of');
+
+    const run = await runReminderHorizon(fixedClock(new Date(START.getTime() - 30 * 60_000)));
+    expect(run.queued).toEqual([]);
+    expect(run.promoted).toEqual([]);
+    expect(await stagesFor(appt.id)).toEqual([]);
+    expect((await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } })).confirmation)
+      .toBe('not_required');
+  });
+
+  /** `none` still wins over any cadence: it is a safety setting, not a volume one. */
+  it('sends a day-of client on reminderPreference none nothing at all', async () => {
+    const appt = await appointmentBooked(30 * DAY, { reminderPreference: 'none' });
+    await setCadence(appt.clientId, 'day_of');
+
+    const run = await runReminderHorizon(fixedClock(new Date(START.getTime() - HOUR)));
+    expect(run.queued).toEqual([]);
+    expect(await stagesFor(appt.id)).toEqual([]);
+  });
+
+  it('is idempotent for a one-stage cadence too', async () => {
+    const appt = await appointmentBooked(30 * DAY);
+    await setCadence(appt.clientId, 'day_of');
+    const clock = fixedClock(new Date(START.getTime() - HOUR));
+
+    await runReminderHorizon(clock);
+    expect((await runReminderHorizon(clock)).queued).toEqual([]);
+    expect(await prisma.appointmentReminder.count({ where: { appointmentId: appt.id } })).toBe(1);
+    expect(await prisma.outboxMessage.count({ where: { templateKey: 'appointment_reminder' } })).toBe(1);
+  });
+});

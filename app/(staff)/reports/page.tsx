@@ -150,14 +150,23 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
                 value={String(confirmation.messages.failed)}
                 tone={confirmation.messages.deliveredRate < 0.9 ? 'danger' : undefined}
               />
+              {/* P2-3. Reached, but not in time to answer. A settings signal
+                  rather than an addressing one: a cadence whose only message
+                  keeps landing inside the answering window cannot support the
+                  fee, and this is where that shows up as a number. It sits with
+                  the other two preconditions rather than replacing either —
+                  three ways a fee can fail to apply, three counts. */}
+              <Stat label="Reached too late" value={String(confirmation.reachedTooLate)} />
               <Stat label="Awaiting receipt" value={String(confirmation.messages.awaiting)} />
               <Stat label="Not yet sent" value={String(confirmation.messages.queued)} />
             </div>
             <p className="mt-2 max-w-prose text-caption text-muted">
               A session is only charged for silence where a carrier confirmed the client
-              was actually reached. Undelivered reminders charge nobody — the practice
-              failed to ask — and the clients behind them are on the{' '}
-              <Link href="/worklists" className="text-accent hover:underline">work lists</Link>.
+              was actually reached, and reached with time to answer. Undelivered reminders
+              charge nobody — the practice failed to ask — and the clients behind them are
+              on the <Link href="/worklists" className="text-accent hover:underline">work lists</Link>.
+              Sessions reached too late charge nobody either; a lot of them means a cadence
+              that is asking too close to the hour.
             </p>
           </div>
 

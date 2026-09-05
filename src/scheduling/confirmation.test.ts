@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { DAY, HOUR } from '../clock';
 import {
   cadenceCapped,
+  CADENCES,
   confirmationRequired,
   dueStages,
   stageDueAt,
+  stagesFor,
   STAGES,
   type Confirmation,
   type ConfirmationSettings,
+  type ReminderCadence,
   type ReminderStage,
 } from './confirmation';
 
@@ -202,5 +205,103 @@ describe('dueStages — what a horizon run at `now` should have queued', () => {
       // charge with no message behind it.
       expect(dueStages(appt(12 * HOUR), START, capped)).toEqual([]);
     });
+  });
+});
+
+describe('stagesFor — what a client chose, and what they earned', () => {
+  it('gives an unchosen cadence all three stages', () => {
+    expect(stagesFor()).toEqual(STAGES);
+    expect(stagesFor('full', false)).toEqual(STAGES);
+  });
+
+  it('narrows a full cadence when the cap is earned', () => {
+    expect(stagesFor('full', true)).toEqual(['d1']);
+  });
+
+  /**
+   * The rule this function exists for. A stated preference is not overridden by
+   * an inferred one: the cap is the practice guessing at what a client wants
+   * from how they have behaved, and a client who said it outright has already
+   * answered the question better.
+   */
+  it.each(['day_before', 'day_of'] as const)('leaves a chosen %s cadence alone, capped or not', (cadence) => {
+    expect(stagesFor(cadence, false)).toEqual(stagesFor(cadence, true));
+  });
+
+  it('sends the chosen day-of client exactly the day-of message', () => {
+    expect(stagesFor('day_of', false)).toEqual(['d0']);
+    expect(stagesFor('day_of', true)).toEqual(['d0']);
+  });
+
+  /**
+   * An earned cap and a chosen day-before cadence send the same message, so
+   * they had better be the same list. Two vocabularies for one outcome is how a
+   * report ends up with a row nobody can explain.
+   */
+  it('spells the earned cap and the chosen day-before cadence identically', () => {
+    expect(stagesFor('full', true)).toEqual(stagesFor('day_before', false));
+  });
+
+  /**
+   * There is no cadence meaning "nothing". That is `reminderPreference: 'none'`,
+   * which carries an exemption from the fee — and a volume control must never
+   * become a second route to it.
+   */
+  it('never yields an empty cadence', () => {
+    for (const cadence of CADENCES) {
+      for (const capped of [true, false]) {
+        expect(stagesFor(cadence, capped).length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('only ever yields real stages, in the canonical order', () => {
+    for (const cadence of CADENCES) {
+      const stages = stagesFor(cadence, false);
+      expect(stages.every((s) => STAGES.includes(s))).toBe(true);
+      expect([...stages]).toEqual(STAGES.filter((s) => stages.includes(s)));
+    }
+  });
+});
+
+describe('dueStages — the cadence a client chose', () => {
+  const withCadence = (cadence: ReminderCadence): ConfirmationSettings => ({ ...SETTINGS, cadence });
+
+  it('queues only the day-of message for a day-of client', () => {
+    // Booked a month out, asked at the moment the day-of stage falls due.
+    const at = new Date(START.getTime() - SETTINGS.dayOfLeadHours * HOUR);
+    expect(dueStages(appt(), at, withCadence('day_of'))).toEqual(['d0']);
+    // And nothing at all five days out, where a full-cadence client gets d5.
+    const fiveDaysOut = new Date(START.getTime() - 5 * DAY);
+    expect(dueStages(appt(), fiveDaysOut, withCadence('day_of'))).toEqual([]);
+    expect(dueStages(appt(), fiveDaysOut, SETTINGS)).toEqual(['d5']);
+  });
+
+  it('queues only the day-before message for a day-before client', () => {
+    const at = new Date(START.getTime() - DAY);
+    expect(dueStages(appt(), at, withCadence('day_before'))).toEqual(['d1']);
+  });
+
+  /**
+   * The invariant the whole fee rests on, re-checked for a cadence that has one
+   * stage instead of three: booked closer in than that client's only message,
+   * nothing is ever queued — so `pending` is never written, and `no_response`
+   * stays unreachable with no outbox row behind it.
+   */
+  it('queues nothing for a day-of client booked inside their own lead', () => {
+    const bookedLate = { startAt: START, createdAt: new Date(START.getTime() - HOUR) };
+    expect(dueStages(bookedLate, new Date(START.getTime() - 30 * 60_000), withCadence('day_of'))).toEqual([]);
+  });
+
+  it('does not change when a stage falls due, only which ones exist', () => {
+    const justBeforeD1 = new Date(START.getTime() - DAY - 1);
+    expect(dueStages(appt(), justBeforeD1, withCadence('day_before'))).toEqual([]);
+    expect(dueStages(appt(), new Date(START.getTime() - DAY), withCadence('day_before'))).toEqual(['d1']);
+  });
+
+  /** A chosen cadence beats the earned cap, at the layer that queues. */
+  it('gives a capped day-of client the day-of message, not the day-before one', () => {
+    const at = new Date(START.getTime() - SETTINGS.dayOfLeadHours * HOUR);
+    expect(dueStages(appt(), at, { ...withCadence('day_of'), capped: true })).toEqual(['d0']);
   });
 });

@@ -251,6 +251,102 @@ export async function seedMetrics(): Promise<Metric[]> {
   check('the cadence cap is reached by real clients in the quarter', capped.length >= 1,
     `${capped.length} of ${asked.length} sessions got the day-before message alone`);
 
+  // ── the cadence a client chose ───────────────────────────────────────
+  //
+  // P2-3. Three claims about a per-client cadence, and the third is the one
+  // with money on it.
+  const cadences = await prisma.client.groupBy({ by: ['reminderCadence'], _count: true });
+  const chose = cadences.filter((c) => c.reminderCadence !== 'full').reduce((n, c) => n + c._count, 0);
+  check('some clients chose a cadence, and most never touched it', chose >= 5,
+    cadences.map((c) => `${c.reminderCadence}=${c._count}`).join(' '));
+
+  // Exactly the stages they asked for, over a whole quarter of horizon runs.
+  const byCadence = await prisma.appointment.findMany({
+    where: { reminders: { some: {} } },
+    select: { client: { select: { reminderCadence: true } }, reminders: { select: { stage: true } } },
+  });
+  const WANTED: Record<string, string[]> = { full: ['d5', 'd1', 'd0'], day_before: ['d1'], day_of: ['d0'] };
+  const wrongStage = byCadence.filter((a) => {
+    const got = new Set(a.reminders.map((r) => r.stage));
+    return [...got].some((st) => !WANTED[a.client.reminderCadence]!.includes(st));
+  });
+  check('nobody is sent a stage their cadence does not include', wrongStage.length === 0,
+    `${wrongStage.length} of ${byCadence.length} sessions got an off-cadence message`);
+
+  // And the volume the setting exists for, as a number rather than a promise.
+  const perSession = (cadence: string) => {
+    const rows = byCadence.filter((a) => a.client.reminderCadence === cadence);
+    return rows.length ? rows.reduce((n, a) => n + a.reminders.length, 0) / rows.length : 0;
+  };
+  const lightest = Math.max(perSession('day_before'), perSession('day_of'));
+  check('a chosen cadence actually means fewer messages', lightest < perSession('full'),
+    `full ${perSession('full').toFixed(2)} per session, day_before ${perSession('day_before').toFixed(2)}, `
+    + `day_of ${perSession('day_of').toFixed(2)}`);
+
+  // ── time to answer, not just time to ask ─────────────────────────────
+  //
+  // The metric that changed the phase. `graceMinutes` had always checked there
+  // was time to *ask*; nothing checked there was time to *answer*, and nothing
+  // needed to until a client could choose one message a few hours out. Adding
+  // the cadence pushed the charge rate to 5.03% — past the PRD's own
+  // over-firing line — and the cause was a cohort reached with an hour to
+  // spare. These three are what stop that coming back.
+  const window = (await prisma.practiceSettings.findUnique({ where: { id: 1 } }))?.answerWindowMinutes ?? 120;
+
+  const unanswerable = await prisma.auditEvent.count({ where: { reason: 'confirmation_unanswerable' } });
+  check('the quarter reaches some clients too late to answer', unanswerable >= 5,
+    `${unanswerable} sessions exempted for arriving inside the ${window}-minute window`);
+
+  // The invariant, stated over every fee in the quarter rather than over a
+  // fixture: nobody is charged for silence unless something reached them with
+  // time to do something about it.
+  const feesForSilence = await prisma.appointment.findMany({
+    where: { confirmation: 'no_response', chargeFeeCents: { not: null } },
+    select: {
+      id: true, startAt: true,
+      reminders: { select: { outboxMessage: { select: { deliveredAt: true } } } },
+    },
+  });
+  const chargedTooLate = feesForSilence.filter((a) =>
+    !a.reminders.some((r) => {
+      const at = r.outboxMessage?.deliveredAt;
+      return !!at && a.startAt.getTime() - at.getTime() >= window * 60_000;
+    }));
+  check('no fee rests on a message that arrived too late to answer', chargedTooLate.length === 0,
+    `${chargedTooLate.length} of ${feesForSilence.length} fees`);
+
+  // And the exemption is an exemption, not a deferral.
+  const standDowns = (await prisma.auditEvent.findMany({
+    where: { reason: 'confirmation_unanswerable' }, select: { resourceId: true },
+  })).map((r) => r.resourceId).filter((id): id is string => !!id);
+  // The exemption is an exemption, not a deferral: none of these rows comes
+  // back as silence, and none carries a no-show fee.
+  //
+  // It deliberately does not say "and none of them was charged anything". Most
+  // of them are `completed` and paying the ordinary session fee, which is the
+  // correct outcome and the same one the attended-but-silent metric above
+  // asserts: the practice stood down on charging them for *not answering*, and
+  // then they turned up and paid for their hour like everybody else. A metric
+  // that counted those as a failure would be reading "exempt from the silence
+  // fee" as "free session".
+  const stoodDown = await prisma.appointment.findMany({
+    where: { id: { in: standDowns } },
+    select: { confirmation: true, status: true, chargeFeeCents: true },
+  });
+  const cameBackAsSilence = stoodDown.filter((a) => a.confirmation === 'no_response');
+  check('and nothing exempted for arriving late comes back as silence',
+    cameBackAsSilence.length === 0,
+    `${cameBackAsSilence.length} of ${stoodDown.length} reverted to no_response`);
+
+  const noShowFee = (await prisma.practiceSettings.findUnique({ where: { id: 1 } }))?.noShowFeeCents ?? 9000;
+  const chargedForAbsence = stoodDown.filter(
+    (a) => (a.status === 'no_show' || a.status === 'late_cancelled') && a.chargeFeeCents === noShowFee,
+  );
+  check('and none of them was charged a no-show fee by this policy',
+    chargedForAbsence.length === 0,
+    `${chargedForAbsence.length} charged the absence fee; `
+    + `${stoodDown.filter((a) => a.status === 'completed').length} attended and paid the session fee`);
+
   // ── the freed hour ───────────────────────────────────────────────────
   //
   // P2-2, and the first thing in this feature whose number is worth something

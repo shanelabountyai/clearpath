@@ -14,6 +14,7 @@ import {
   type DeliveryFailure,
   type DeliveryRecord,
   type RetryPolicy,
+  answerable,
 } from './carrier';
 
 const AT = new Date('2026-09-01T12:00:00Z');
@@ -305,5 +306,55 @@ describe('simulatedCarrier — deterministic, offline, and honest about being a 
     expect(permanent).toBeLessThan(DEFAULT_MIX.permanent * 2);
     // On the second attempt the transient band has cleared, by construction.
     expect(settled.some((s) => s.failureCode === 'carrier_unavailable')).toBe(false);
+  });
+});
+
+describe('answerable — was there time to answer, not just time to ask', () => {
+  const START = new Date('2026-09-01T19:00:00Z');
+  const before = (ms: number) => new Date(START.getTime() - ms);
+
+  it('accepts a message that arrived a comfortable margin ahead', () => {
+    expect(answerable([before(5 * 24 * HOUR)], START, 120)).toBe(true);
+    expect(answerable([before(3 * HOUR)], START, 120)).toBe(true);
+  });
+
+  it('is inclusive exactly at the window', () => {
+    expect(answerable([before(2 * HOUR)], START, 120)).toBe(true);
+    expect(answerable([before(2 * HOUR - 1)], START, 120)).toBe(false);
+  });
+
+  /** The case the seeded quarter found: delivered with an hour to spare. */
+  it('refuses a message that arrived an hour before the session', () => {
+    expect(answerable([before(HOUR)], START, 120)).toBe(false);
+  });
+
+  it('refuses one that arrived after the session started', () => {
+    expect(answerable([new Date(START.getTime() + HOUR)], START, 120)).toBe(false);
+  });
+
+  /**
+   * The earliest arrival is what counts. A client reached five days out had
+   * five days, whatever became of the day-of nudge afterwards — the practice
+   * does not lose proof it already had because a later message was late.
+   */
+  it('reads the earliest arrival, not the latest', () => {
+    expect(answerable([before(5 * 24 * HOUR), before(30 * 60_000)], START, 120)).toBe(true);
+    expect(answerable([before(30 * 60_000), before(5 * 24 * HOUR)], START, 120)).toBe(true);
+  });
+
+  it('ignores stages that never arrived', () => {
+    expect(answerable([null, undefined], START, 120)).toBe(false);
+    expect(answerable([null, before(3 * HOUR)], START, 120)).toBe(true);
+    expect(answerable([], START, 120)).toBe(false);
+  });
+
+  /**
+   * Zero turns the check off, and that is the setting reading exactly as it is
+   * written rather than a special case: a practice that sets no window is a
+   * practice charging on messages that arrived with minutes to spare.
+   */
+  it('is off at zero, and off means off', () => {
+    expect(answerable([before(60_000)], START, 0)).toBe(true);
+    expect(answerable([], START, 0)).toBe(true);
   });
 });

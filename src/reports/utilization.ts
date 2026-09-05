@@ -204,7 +204,27 @@ export async function confirmationReport(
       };
       const handed = messages.delivered + messages.failed + messages.awaiting;
 
+      // P2-3. Sessions the practice reached, but too late for reaching them to
+      // count. Beside the delivery rate rather than on a page of its own, and
+      // for the same reason: both are preconditions of the charge, so a manager
+      // reading "we charged 31" needs "and stood down on 17 more" without
+      // changing page.
+      //
+      // It reads differently from the undelivered count, though, and that is
+      // why it is its own number. An undelivered message is an address problem
+      // with a phone call behind it. This one is a *settings* problem: a cadence
+      // whose only message keeps landing inside the answering window is a
+      // cadence that cannot support the fee, and the practice should see that
+      // as a count rather than as a slow drift in the charge rate.
+      const reachedTooLate = await tx.auditEvent.count({
+        where: {
+          reason: 'confirmation_unanswerable',
+          at: { gte: zonedToUtc(range.from, 0), lt: zonedToUtc(addDays(range.to, 1), 0) },
+        },
+      });
+
       return {
+        reachedTooLate,
         range,
         totals,
         asked,
