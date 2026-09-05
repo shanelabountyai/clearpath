@@ -136,6 +136,8 @@ describe('the waitlist', () => {
     const wants = await makeClient(therapist.id, { code: 'TC-WANTS' });
     const wrongDay = await makeClient(therapist.id, { code: 'TC-WRONGDAY' });
     const wrongTime = await makeClient(therapist.id, { code: 'TC-WRONGTIME' });
+    const tooEarly = await makeClient(therapist.id, { code: 'TC-TOOEARLY' });
+    const onTheDot = await makeClient(therapist.id, { code: 'TC-ONTHEDOT' });
     const anyTime = await makeClient(therapist.id, { code: 'TC-ANY' });
 
     await prisma.waitlistEntry.createMany({
@@ -143,12 +145,19 @@ describe('the waitlist', () => {
         { clientId: wants.id, weekdays: [2], earliestMinute: 840, latestMinute: 1020 },
         { clientId: wrongDay.id, weekdays: [4] },
         { clientId: wrongTime.id, weekdays: [2], earliestMinute: 540, latestMinute: 660 },
+        // Nothing before 5pm. Every other entry here is excluded by the *upper*
+        // bound or the weekday, so without this one the "not before" half of the
+        // window was never what decided a match.
+        { clientId: tooEarly.id, weekdays: [2], earliestMinute: 1020 },
+        // Free from 3pm, and the slot is 3pm: the bound includes its own edge,
+        // the same way the late-cancel window does.
+        { clientId: onTheDot.id, weekdays: [2], earliestMinute: 900 },
         { clientId: anyTime.id },
       ],
     });
 
     const matches = await waitlistMatches(actor(desk), { date: '2026-09-01', startMinute: 900 });
-    expect(matches.map((m) => m.client.code).sort()).toEqual(['TC-ANY', 'TC-WANTS']);
+    expect(matches.map((m) => m.client.code).sort()).toEqual(['TC-ANY', 'TC-ONTHEDOT', 'TC-WANTS']);
     expect(await prisma.appointment.count()).toBe(0);
   });
 });
@@ -189,6 +198,42 @@ describe('the auditor', () => {
     const { rows } = await queryAuditLog(actor(auditorUser), { clientId: c.id });
     expect(rows.every((r) => r.clientId === c.id)).toBe(true);
     expect(new Set(rows.map((r) => r.actorId))).toEqual(new Set([desk.id, admin.id]));
+  });
+
+  it('pages through the log in the same order as reading it whole', async () => {
+    // Scoped to one client, because reading the audit log is itself an audited
+    // event: an unfiltered comparison grows a row between the two queries it is
+    // comparing. Log reads carry no clientId, so this set holds still.
+    const c = await someActivity();
+    const forClient = { clientId: c.id };
+    const all = await queryAuditLog(actor(auditorUser), forClient);
+    expect(all.total).toBeGreaterThan(2);
+    expect(all.nextCursor).toBeNull();
+
+    const paged: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await queryAuditLog(actor(auditorUser), { ...forClient, limit: 2, ...(cursor ? { cursor } : {}) });
+      paged.push(...page.rows.map((r) => r.id));
+      cursor = page.nextCursor;
+    } while (cursor);
+
+    // Same rows, same order, none seen twice and none skipped at a boundary.
+    expect(paged).toEqual(all.rows.map((r) => r.id));
+
+    // A page that exactly exhausts the rows is the last page. Offering a cursor
+    // here sends the reader to an empty one.
+    const exact = await queryAuditLog(actor(auditorUser), { ...forClient, limit: all.total });
+    expect(exact.rows).toHaveLength(all.total);
+    expect(exact.nextCursor).toBeNull();
+  });
+
+  it('filters on a date range with only one end given', async () => {
+    await someActivity();
+    const since = await queryAuditLog(actor(auditorUser), { from: new Date('2099-01-01') });
+    expect(since.rows).toHaveLength(0);
+    const until = await queryAuditLog(actor(auditorUser), { to: new Date('2099-01-01') });
+    expect(until.rows.length).toBe(until.total);
   });
 
   it('cannot read a client record', async () => {
@@ -268,6 +313,62 @@ describe('the utilization report', () => {
     const used = report.rooms.filter((r) => r.bookedMinutes > 0);
     expect(used.length).toBeGreaterThan(0);
     expect(used[0]!.utilization).toBeGreaterThan(0);
+  });
+
+  it('counts every ending against the clinician who had it, not only the good ones', async () => {
+    // The case above asserts `completed` and `telehealth` on the clinician row
+    // and leaves the other three counters unexamined, so each could have been
+    // counting the wrong status entirely.
+    await quarter();
+    const report = await utilizationReport(actor(admin), { from: '2026-09-01', to: '2026-09-04' });
+    expect(report.totals).toMatchObject({ cancelled: 0 });
+    expect(report.clinicians[0]).toMatchObject({
+      id: therapist.id, booked: 4, completed: 1, noShow: 1, lateCancelled: 1, cancelled: 0, telehealth: 1,
+      minutes: 50, // one completed standard session, and only completed ones count
+    });
+  });
+
+  it("measures a room against the practice's working day", async () => {
+    // Tuesday to Friday is four weekdays at eight hours: 1,920 minutes. Two
+    // 50-minute in-person sessions were held in the room — the late cancel gave
+    // its hour back and the telehealth session never needed one. Asserting only
+    // that utilization is above zero would hold for any capacity at all, which
+    // is what a percentage against midnight-to-midnight would quietly become.
+    await quarter();
+    const report = await utilizationReport(actor(admin), { from: '2026-09-01', to: '2026-09-04' });
+    const room = report.rooms.find((r) => r.bookedMinutes > 0)!;
+    expect(room.capacityMinutes).toBe(4 * 8 * 60);
+    expect(room.bookedMinutes).toBe(100);
+    expect(room.utilization).toBe(0.0521);
+
+    // And the three rooms nobody used read as empty rather than nearly empty.
+    const idle = report.rooms.filter((r) => r.id !== room.id);
+    expect(idle).toHaveLength(3);
+    expect(idle.every((r) => r.bookedMinutes === 0 && r.utilization === 0)).toBe(true);
+  });
+
+  it('gives a room capacity for weekdays only, however the range falls', async () => {
+    // Monday 31 August to Saturday 5 September: six days, five of them working.
+    // A range that stops on a Friday cannot tell an off-by-one in the weekday
+    // test from a correct one, because it contains no weekend to get wrong.
+    await quarter();
+    const report = await utilizationReport(actor(admin), { from: '2026-08-31', to: '2026-09-05' });
+    expect(report.rooms[0]!.capacityMinutes).toBe(5 * 8 * 60);
+  });
+
+  it('reports rates of zero for a range with nothing in it', async () => {
+    // Every rate divides by the number booked. Nothing had ever asked what the
+    // report does when that is zero.
+    const report = await utilizationReport(actor(admin), { from: '2026-10-05', to: '2026-10-09' });
+    expect(report.totals.booked).toBe(0);
+    expect(report.rates).toEqual({ noShow: 0, lateCancel: 0, telehealth: 0 });
+  });
+
+  it('shows no capacity, and no utilization, for a range with no working days', async () => {
+    // Saturday and Sunday. Dividing by a capacity of zero has to yield nothing,
+    // not every room reported as fully booked.
+    const report = await utilizationReport(actor(admin), { from: '2026-09-05', to: '2026-09-06' });
+    expect(report.rooms[0]).toMatchObject({ capacityMinutes: 0, utilization: 0 });
   });
 
   it('does not name a single client', async () => {
