@@ -6,7 +6,7 @@ import { Forbidden } from '../../../../src/errors';
 import { requireSession } from '../../../../src/session';
 import { may } from '../../../../src/auth/guard';
 import { localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../../src/time';
-import { Badge, Card, Field, PageHeader, STATUS_META, StatusChip, money } from '../../../../src/ui/primitives';
+import { Badge, Card, ConfirmationChip, Field, PageHeader, STATUS_META, StatusChip, money } from '../../../../src/ui/primitives';
 import { BreakGlassPrompt } from '../../break-glass';
 import { advanceStatus, cancelSession, moveSession, startProgressNote, waiveSessionFee } from '../actions';
 import { systemClock } from '@/src/clock';
@@ -85,6 +85,12 @@ export default async function AppointmentPage({
                     ? <Badge tone="warning">Moved out of the series</Badge>
                     : <Badge tone="info" glyph="↻">{appt.series.frequency}, {WEEKDAYS[appt.series.weekday]}</Badge>
                   : <span className="text-subtle">One-off</span>}
+              </Field>
+              <Field label="Confirmation">
+                {/* Beside the status, never merged into it. A client who never
+                    answered and then walked in reads `Completed` + `No reply`,
+                    which is the pair the whole feature exists to keep apart. */}
+                <ConfirmationChip confirmation={appt.confirmation} />
               </Field>
               <Field label="Charge">
                 {appt.feeWaivedAt ? (

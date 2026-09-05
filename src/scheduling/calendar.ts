@@ -26,6 +26,10 @@ export async function daySchedule(actor: Actor, date: LocalDate) {
           },
           select: {
             id: true, startAt: true, endAt: true, status: true, modality: true, type: true,
+            // The other axis, for the chip's border treatment. Operational: it
+            // says whether the practice is still waiting on an answer, and
+            // nothing about why the hour was booked.
+            confirmation: true,
             roomId: true, clinicianId: true, seriesId: true, detached: true,
             groupSessionId: true,
             groupSession: { select: { topic: true } },

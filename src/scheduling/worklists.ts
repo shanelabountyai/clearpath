@@ -108,6 +108,67 @@ export async function continuityQueue(
 }
 
 /**
+ * P1-1. Unconfirmed and starting soon — the list a person works before the
+ * policy does.
+ *
+ * This is the half of the confirmation feature that is not the money, and the
+ * order matters: a practice that ships the fee without this one has automated
+ * a penalty and nothing else. What front desk needs here is the phone number,
+ * because the whole point of the list is to ring the client — which is also
+ * why the list carries a number and a time and no reason for the appointment.
+ *
+ * `not_required` rows are in it too, and deliberately. A client on
+ * `reminderPreference: 'none'` is never asked and can never be charged, which
+ * makes them exactly the client somebody should be phoning (Q4). They are
+ * flagged as never-asked rather than hidden, so the list does not quietly
+ * reproduce the exemption as an absence.
+ */
+export async function unconfirmedSoon(
+  actor: Actor,
+  opts: { clock?: Clock; withinHours?: number } = {},
+) {
+  const now = (opts.clock ?? systemClock).now();
+  const until = new Date(now.getTime() + (opts.withinHours ?? 48) * 3_600_000);
+
+  return guarded(
+    { actor, action: 'read', resource: 'appointment' },
+    async (tx) => {
+      const rows = await tx.appointment.findMany({
+        where: {
+          startAt: { gte: now, lte: until },
+          status: { in: ['scheduled', 'confirmed'] },
+          // Answered either way is off the list; a decline already cancelled
+          // the hour, and `no_response` is behind us by definition.
+          confirmation: { in: ['pending', 'not_required'] },
+          ...(ownCaseloadOnly(actor) ? { clinicianId: actor.id } : {}),
+        },
+        select: {
+          id: true, startAt: true, modality: true, status: true, confirmation: true,
+          client: {
+            select: {
+              id: true, code: true, firstName: true, lastName: true,
+              // The number is the feature. Nothing clinical rides with it.
+              phone: true, reminderPreference: true,
+            },
+          },
+          clinician: { select: { id: true, name: true } },
+          reminders: { select: { stage: true }, orderBy: { dueAt: 'asc' } },
+        },
+        // Oldest start first: the session about to happen is the call to make.
+        orderBy: { startAt: 'asc' },
+      });
+
+      return rows.map((r) => ({
+        ...r,
+        stagesSent: r.reminders.map((x) => x.stage),
+        /** True where the practice never asked, and so may never charge. */
+        neverAsked: r.confirmation === 'not_required',
+      }));
+    },
+  );
+}
+
+/**
  * Who to offer a freed slot to. Surfaces candidates for a human to ring; it
  * never books. An automatic rebooking would put a client in a room with a
  * clinician neither of them chose for that hour.

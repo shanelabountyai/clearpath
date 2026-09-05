@@ -5,7 +5,7 @@ import { prisma } from '../db';
 import { Forbidden } from '../errors';
 import { bookAppointment } from '../scheduling/booking';
 import { cancelAppointment, setStatus } from '../scheduling/lifecycle';
-import { continuityQueue, vacationImpact, waitlistMatches } from '../scheduling/worklists';
+import { continuityQueue, unconfirmedSoon, vacationImpact, waitlistMatches } from '../scheduling/worklists';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { confirmationTrail, noResponseFees, queryAuditLog, toCsv } from './audit';
 import { runReminderHorizon } from '../scheduling/reminders';
@@ -239,6 +239,80 @@ describe('the auditor', () => {
       const csv = toCsv([{ reason: '=HYPERLINK("http://evil","click")' }]);
       expect(csv).toContain(`"'=HYPERLINK`);
     });
+  });
+});
+
+/**
+ * P1-1. The half of the confirmation feature that is not the money, and the
+ * half a practice should ship first. A list somebody works with a phone.
+ */
+describe('the unconfirmed work-list', () => {
+  const START = new Date('2026-09-01T19:00:00Z');
+  const DAY_BEFORE = () => fixedClock(new Date(START.getTime() - DAY));
+
+  async function booked(startMinute: number, opts: { reminderPreference?: 'email' | 'none' } = {}) {
+    const client = await makeClient(therapist.id);
+    await prisma.client.update({
+      where: { id: client.id },
+      data: { email: 'tc@example.test', phone: '555-0100', ...opts },
+    });
+    return bookAppointment(actor(desk), {
+      clientId: client.id, clinicianId: therapist.id, date: '2026-09-01', startMinute,
+      type: 'standard', modality: 'in_person',
+      clock: fixedClock(new Date(START.getTime() - 30 * DAY)),
+    });
+  }
+
+  it('lists sessions starting soon that nobody has answered for, oldest start first', async () => {
+    const late = await booked(16 * 60);
+    const early = await booked(10 * 60);
+    await runReminderHorizon(DAY_BEFORE());
+
+    const list = await unconfirmedSoon(actor(desk), { clock: DAY_BEFORE(), withinHours: 48 });
+    expect(list.map((r) => r.id)).toEqual([early.id, late.id]);
+    expect(list[0]!.client.phone).toBe('555-0100');
+    expect(list[0]!.stagesSent).toEqual(['d5', 'd1']);
+  });
+
+  it('drops a session the moment the client answers', async () => {
+    const appt = await booked(15 * 60);
+    await runReminderHorizon(DAY_BEFORE());
+    expect(await unconfirmedSoon(actor(desk), { clock: DAY_BEFORE() })).toHaveLength(1);
+
+    const link = await prisma.portalLink.findFirstOrThrow({ where: { clientId: appt.clientId } });
+    await confirmAppointment(link.token, appt.id, { clock: DAY_BEFORE() });
+
+    expect(await unconfirmedSoon(actor(desk), { clock: DAY_BEFORE() })).toEqual([]);
+  });
+
+  it('keeps the client nobody may charge, and says so', async () => {
+    // Q4: the exemption is structural in code, and the operational answer is a
+    // phone call. Hiding these rows would turn a safety setting into a client
+    // nobody rings.
+    const quiet = await booked(15 * 60, { reminderPreference: 'none' });
+    await runReminderHorizon(DAY_BEFORE());
+
+    const list = await unconfirmedSoon(actor(desk), { clock: DAY_BEFORE() });
+    expect(list.map((r) => r.id)).toEqual([quiet.id]);
+    expect(list[0]).toMatchObject({ neverAsked: true, stagesSent: [] });
+  });
+
+  it('respects the window rather than listing the whole quarter', async () => {
+    await booked(15 * 60);
+    await runReminderHorizon(DAY_BEFORE());
+    expect(await unconfirmedSoon(actor(desk), { clock: DAY_BEFORE(), withinHours: 2 })).toEqual([]);
+  });
+
+  it('narrows a clinician to their own caseload and denies the auditor', async () => {
+    await booked(15 * 60);
+    await runReminderHorizon(DAY_BEFORE());
+
+    const other = await makeUser('therapist');
+    await prisma.availability.create({ data: { userId: other.id, weekday: 2, startMinute: 540, endMinute: 1020 } });
+    expect(await unconfirmedSoon(actor(other), { clock: DAY_BEFORE() })).toEqual([]);
+    expect(await unconfirmedSoon(actor(therapist), { clock: DAY_BEFORE() })).toHaveLength(1);
+
+    await expect(unconfirmedSoon(actor(auditorUser), { clock: DAY_BEFORE() })).rejects.toBeInstanceOf(Forbidden);
   });
 });
 

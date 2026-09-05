@@ -160,6 +160,28 @@ export const STATUS_META: Record<string, { label: string; glyph: string; tone: T
  * fill plus a currency mark, and WHICH statuses get it comes from the state
  * machine's own CHARGEABLE list, never a copy kept here.
  */
+/**
+ * The other axis. `confirmation` answers "did the client tell us", `status`
+ * answers "were they in the room", and this project's central claim is that
+ * those are two facts — so they get two vocabularies rather than one merged
+ * chip. Q7: on the calendar the answer is a border treatment, never a second
+ * colour token, because a status colour used dynamically is exactly the
+ * incident the write-up records.
+ */
+export const CONFIRMATION_META: Record<string, { label: string; glyph: string; tone: Tone }> = {
+  not_required: { label: 'Not asked', glyph: '–', tone: 'neutral' },
+  pending: { label: 'Awaiting reply', glyph: '⋯', tone: 'warning' },
+  confirmed: { label: 'Client confirmed', glyph: '✓', tone: 'success' },
+  declined: { label: 'Client declined', glyph: '✗', tone: 'danger' },
+  no_response: { label: 'No reply', glyph: '⊝', tone: 'danger' },
+};
+
+export function ConfirmationChip({ confirmation }: { confirmation: string }) {
+  const meta = CONFIRMATION_META[confirmation];
+  if (!meta) return null;
+  return <Badge tone={meta.tone} glyph={meta.glyph}>{meta.label}</Badge>;
+}
+
 export function StatusChip({ status }: { status: string }) {
   const meta = STATUS_META[status] ?? { label: status, glyph: '·', tone: 'neutral' as Tone };
   const chargeable = (CHARGEABLE as readonly string[]).includes(status);
@@ -292,6 +314,12 @@ export function AppointmentChip({
   const chargeable = (CHARGEABLE as readonly string[]).includes(session.status);
   const telehealth = session.modality === 'telehealth';
   const background = cancelled ? 'var(--surface-sunken)' : 'var(--surface-raised)';
+  // Q7. The confirmation axis is a border *treatment*, not a colour: a dashed
+  // edge for a question still open, and nothing at all otherwise. Adding a
+  // sixth hue here would put two independent facts on one channel, and the
+  // dynamic-token incident in the write-up is the reason not to reach for a
+  // status colour by name.
+  const awaitingReply = session.confirmation === 'pending';
   return (
     <Link
       href={group ? `/groups/${group.id}` : `/appointments/${session.id}`}
@@ -300,6 +328,7 @@ export function AppointmentChip({
         top,
         height,
         borderColor: statusVar,
+        borderStyle: awaitingReply ? 'dashed' : 'solid',
         // Cancelled sessions stay visible but recede — the hour is free, and
         // the record of who was meant to be in it still matters.
         background: chargeable ? `${HATCH}, ${background}` : background,
@@ -315,6 +344,12 @@ export function AppointmentChip({
           {group ? (group.topic ?? 'Group session') : session.client.lastName}
         </span>
         {group && <span className="shrink-0 text-micro text-subtle">×{group.count}</span>}
+        {awaitingReply && (
+          <>
+            <span aria-hidden className="shrink-0 text-subtle">⋯</span>
+            <span className="sr-only">awaiting the client&rsquo;s reply</span>
+          </>
+        )}
         {chargeable && (
           <>
             <span aria-hidden style={{ color: 'var(--danger)' }}>$</span>

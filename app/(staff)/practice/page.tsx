@@ -116,6 +116,10 @@ async function PracticePage() {
                 <Field label="Standard fee">{money(data.settings.standardFeeCents)}</Field>
                 <Field label="Late-cancel window">{data.settings.lateCancelWindowHours} hours</Field>
                 <Field label="Late-cancel fee">{money(data.settings.lateCancelFeeCents)}</Field>
+                {/* Its own field, because a cancellation with some notice and
+                    an empty room are not the same event. Ships at the same
+                    figure, so the split changed nothing on the day it landed. */}
+                <Field label="No-show fee">{money(data.settings.noShowFeeCents)}</Field>
                 <Field label="Booking horizon">{data.settings.recurrenceHorizonDays} days</Field>
                 <Field label="Continuity gap">{data.settings.continuityGapDays} days</Field>
                 <Field label="Name used in messages">{data.settings.messagingName}</Field>
@@ -124,6 +128,28 @@ async function PracticePage() {
                 Messages to clients use &ldquo;{data.settings.messagingName}&rdquo;, not
                 &ldquo;{data.settings.name}&rdquo;. A lock-screen preview should not say why
                 somebody is coming in.
+              </p>
+            </Card>
+          )}
+
+          {data.settings && (
+            <Card>
+              <h2 className="mb-2 font-semibold">Confirmation</h2>
+              <dl className="space-y-2.5">
+                <Field label="Reminder stages">5 days, 1 day, day-of</Field>
+                <Field label="Day-of lead">{data.settings.dayOfLeadHours} hours before the start</Field>
+                <Field label="Grace period">{data.settings.graceMinutes} minutes</Field>
+                <Field label="Mark no-show automatically">
+                  {data.settings.autoNoShowOnNoResponse
+                    ? <Badge tone="warning" glyph="●">On</Badge>
+                    : <Badge glyph="○">Off — recorded, not charged</Badge>}
+                </Field>
+              </dl>
+              <p className="mt-3 text-caption text-subtle">
+                The grace period is both ends of the same number: below that much notice
+                there was no time to ask, and that far past the start, silence is an
+                answer. Turning the transition off keeps every record of who did not
+                reply and stops the charge — the evidence is never the optional part.
               </p>
             </Card>
           )}

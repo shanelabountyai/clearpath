@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
-import { continuityQueue, vacationImpact, waitlistMatches } from '../../../src/scheduling/worklists';
+import { continuityQueue, unconfirmedSoon, vacationImpact, waitlistMatches } from '../../../src/scheduling/worklists';
 import { openRescheduleRequests } from '../../../src/portal/service';
 import { handleRescheduleRequest } from './actions';
 import { addDays, localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
@@ -15,7 +15,8 @@ async function WorkListsPage() {
   const { actor } = await requireSession();
   const today = localDateOf(systemClock.now());
 
-  const [continuity, absences] = await Promise.all([
+  const [unconfirmed, continuity, absences] = await Promise.all([
+    unconfirmedSoon(actor, { clock: systemClock, withinHours: 48 }),
     continuityQueue(actor),
     prisma.availabilityOverride.findMany({
       where: { kind: 'unavailable', toDate: { gte: systemClock.now() } },
@@ -44,6 +45,50 @@ async function WorkListsPage() {
       <div className="mb-4"><TierBanner tier="operational" /></div>
 
       <div className="space-y-6">
+        {/* P1-1. First on the page, because it is the list with a deadline on
+            it: every row is a session starting inside two days that nobody has
+            answered for, and the work is a phone call. */}
+        <section>
+          <h2 className="mb-2 text-subhead font-semibold">Unconfirmed, starting soon</h2>
+          <p className="mb-3 max-w-prose text-body text-muted">
+            Oldest start first. Clients marked <em>never asked</em> get no reminders and
+            can never be charged for silence — which makes them the ones to ring.
+          </p>
+          {unconfirmed.length === 0 ? (
+            <EmptyState title="Everything in the next two days is answered for" />
+          ) : (
+            <Card className="p-0">
+              <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                {unconfirmed.map((u) => {
+                  const when = utcToZoned(u.startAt);
+                  return (
+                    <li key={u.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+                      <span className="text-body">
+                        <Link href={`/appointments/${u.id}`} className="font-medium text-accent hover:underline">
+                          {u.client.lastName}, {u.client.firstName}
+                        </Link>
+                        <span className="ml-1.5 font-mono text-caption text-subtle">{u.client.code}</span>
+                        <span className="ml-2 text-muted">
+                          {WEEKDAYS[when.weekday]} {when.date} {minutesToHHMM(when.minutes)} · {u.clinician.name}
+                        </span>
+                      </span>
+                      <span className="flex flex-wrap items-center gap-2">
+                        {/* The number is the whole point of the list. */}
+                        {u.client.phone
+                          ? <a href={`tel:${u.client.phone}`} className="font-mono text-caption text-accent hover:underline">{u.client.phone}</a>
+                          : <span className="text-caption text-subtle">no number on file</span>}
+                        {u.neverAsked
+                          ? <Badge tone="warning" glyph="✆">never asked</Badge>
+                          : <Badge tone="neutral">{u.stagesSent.length} of 3 sent</Badge>}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
+          )}
+        </section>
+
         <section>
           <h2 className="mb-2 text-subhead font-semibold">Clients asking to move a session</h2>
           <p className="mb-3 max-w-prose text-body text-muted">
@@ -209,5 +254,5 @@ async function WorkListsPage() {
 export default withDenial(WorkListsPage, {
   title: 'Front-desk work lists',
   children:
-    'Continuity gaps, vacation reschedules and waitlist matches are scheduling work. They belong to front desk and the practice manager.',
+    'Unconfirmed sessions, continuity gaps, vacation reschedules and waitlist matches are scheduling work. They belong to front desk and the practice manager.',
 });
