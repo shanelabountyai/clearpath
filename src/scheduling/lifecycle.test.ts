@@ -130,6 +130,19 @@ describe('against the database', () => {
     await expect(book()).rejects.toMatchObject({ code: 'clinician_busy' });
   });
 
+  it('does not stamp a completed session with a cancellation', async () => {
+    // `cancelledAt`, `cancelledById` and `cancelReason` are set on the two
+    // cancelling transitions and must not survive any other one: a completed
+    // session carrying a cancellation stamp reads as both in every report.
+    const appt = await book();
+    await setStatus(actor(desk), appt.id, 'arrived');
+    await setStatus(actor(desk), appt.id, 'in_session');
+    const done = await setStatus(actor(desk), appt.id, 'completed');
+    expect(done.cancelledAt).toBeNull();
+    expect(done.cancelledById).toBeNull();
+    expect(done.cancelReason).toBeNull();
+  });
+
   describe('attendance counts', () => {
     const history = async () => {
       const early = fixedClock(new Date(SESSION_START.getTime() - 48 * HOUR));
@@ -147,6 +160,30 @@ describe('against the database', () => {
       const summary = await attendanceSummary(actor(therapist), client.id);
       expect(summary).toMatchObject({ lateCancelled: 1, cancelled: 1, noShow: 1 });
       expect(summary.chargeableFeeCents).toBe(18000); // one late cancel + one no-show
+    });
+
+    it('counts each status on its own, and not another status\'s rows', async () => {
+      // Every count in the case above is 1 and `completed` is never asserted,
+      // so a lookup that matched the wrong status returned the right number
+      // anyway. Distinct counts are what make the four fields distinguishable.
+      const at = (startMinute: number) =>
+        bookAppointment(actor(desk), {
+          clientId: client.id, clinicianId: therapist.id, date: TUESDAY,
+          startMinute, type: 'standard', modality: 'in_person',
+        });
+      const complete = async (id: string) => {
+        await setStatus(actor(desk), id, 'arrived');
+        await setStatus(actor(desk), id, 'in_session');
+        await setStatus(actor(desk), id, 'completed');
+      };
+      await complete((await at(540)).id);
+      await complete((await at(600)).id);
+      await complete((await at(660)).id);
+      await setStatus(actor(desk), (await at(720)).id, 'no_show');
+
+      expect(await attendanceSummary(actor(therapist), client.id)).toMatchObject({
+        completed: 3, noShow: 1, cancelled: 0, lateCancelled: 0,
+      });
     });
 
     it('are visible to the practice manager', async () => {

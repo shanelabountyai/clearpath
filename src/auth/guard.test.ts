@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../db';
 import { Forbidden } from '../errors';
 import { actor, makeClient, makeUser, resetDb } from '../test/harness';
-import { guarded, may } from './guard';
+import { breakGlassWouldHelp, guarded, may } from './guard';
 
 beforeEach(resetDb);
 afterAll(() => prisma.$disconnect());
@@ -201,6 +201,40 @@ it('carries no PHI — ids only', async () => {
   for (const leak of ['Marguerite', 'Vandersteen', 'marguerite@example.test', 'Dana', 'Okonkwo']) {
     expect(dump).not.toContain(leak);
   }
+});
+
+describe('whether break-glass would change the answer', () => {
+  // This decides which refusal a person is shown. Every existing test asks it
+  // about a door that is shut; none asked about one already open, so inverting
+  // the early return changed nothing the suite could see.
+  it('is false when the actor may already do it — an open door is not offered', async () => {
+    const therapist = await makeUser('therapist');
+    const client = await makeClient(therapist.id);
+    expect(breakGlassWouldHelp({
+      actor: actor(therapist), action: 'read', resource: 'client',
+      target: { clinicianId: therapist.id }, resourceId: client.id, clientId: client.id,
+    })).toBe(false);
+  });
+
+  it('is true for the practice manager, for whom it is the whole difference', async () => {
+    const therapist = await makeUser('therapist');
+    const admin = await makeUser('admin');
+    const client = await makeClient(therapist.id);
+    expect(breakGlassWouldHelp({
+      actor: actor(admin), action: 'read', resource: 'client',
+      resourceId: client.id, clientId: client.id,
+    })).toBe(true);
+  });
+
+  it('is false at a process note, because that door does not open for anyone', async () => {
+    const therapist = await makeUser('therapist');
+    const admin = await makeUser('admin');
+    const client = await makeClient(therapist.id);
+    expect(breakGlassWouldHelp({
+      actor: actor(admin), action: 'read', resource: 'process_note',
+      target: { authorId: therapist.id }, clientId: client.id,
+    })).toBe(false);
+  });
 });
 
 it('may() answers without logging — drawing a button is not an access event', async () => {
