@@ -14,11 +14,19 @@ const { prisma } = await import('../src/db');
 const { actor, resetDb } = await import('../src/test/harness');
 const { TEMPLATES } = await import('../src/forms/fixtures');
 const { publishTemplate, issueForm, submitForm } = await import('../src/forms/service');
-const { materialiseSeries } = await import('../src/scheduling/booking');
+const { bookAppointment, materialiseSeries } = await import('../src/scheduling/booking');
 const { createProgressNote, signProgressNote, coSignProgressNote, createProcessNote } =
   await import('../src/notes/service');
 const { guarded } = await import('../src/auth/guard');
 const { addDays, localDateOf, zonedToUtc } = await import('../src/time');
+const { fixedClock, DAY } = await import('../src/clock');
+const { runReminderHorizon } = await import('../src/scheduling/reminders');
+const { runNonResponseSweep } = await import('../src/scheduling/nonresponse');
+const { confirmationRequired } = await import('../src/scheduling/confirmation');
+const { confirmAppointment, declineAppointment } = await import('../src/portal/service');
+const { waiveFee } = await import('../src/scheduling/lifecycle');
+const { bookGroupSession } = await import('../src/scheduling/groups');
+const { assertSeedMetrics } = await import('./metrics');
 
 /** mulberry32 — small, fast, and identical on every machine. */
 function rng(seed: number) {
@@ -37,6 +45,8 @@ const chance = (p: number) => rand() < p;
 const TODAY = '2026-09-01';
 const QUARTER_START = '2026-06-01';
 const HORIZON_DAYS = 35;
+/** A month before the quarter opened, so every standing session had notice. */
+const BOOKED_AT = new Date(Date.parse(`${QUARTER_START}T12:00:00Z`) - 30 * 86_400_000);
 
 const log = (msg: string) => console.log(`  ${msg}`);
 
@@ -172,67 +182,324 @@ async function main() {
   let created = 0;
   let skipped = 0;
   for (const id of seriesIds) {
-    const run = await materialiseSeries(desk, id, { from: QUARTER_START, horizonDays: 92 + HORIZON_DAYS });
+    const run = await materialiseSeries(desk, id, {
+      from: QUARTER_START, horizonDays: 92 + HORIZON_DAYS,
+      // The practice put the quarter on its books a month before it started,
+      // which is what gives every session in it the five days' notice the
+      // cadence needs. `createdAt` is not decoration here: it decides which
+      // reminder stages were ever sendable, and therefore who can be charged.
+      clock: fixedClock(BOOKED_AT),
+    });
     created += run.created.length;
     skipped += run.skipped.length;
   }
   log(`${created} sessions materialised across the quarter and horizon${skipped ? ` (${skipped} slots unavailable)` : ''}`);
 
-  // ── walk the past into a realistic history ────────────────────────────
+  // ── the awkward rows, booked before the simulation runs over them ─────
   //
-  // Statuses are set directly rather than through the state machine: this is
-  // fixture construction, not a simulation of front desk clicking through a
-  // quarter, and 900 three-step transitions would make the seed unusable.
-  const past = await prisma.appointment.findMany({
-    where: { startAt: { lt: zonedToUtc(TODAY, 0) } },
-    select: { id: true, clientId: true, clinicianId: true, startAt: true },
-    orderBy: { startAt: 'asc' },
+  // Two fixtures the specs would otherwise assert about an empty set. Both are
+  // created here rather than patched in afterwards, so the simulation puts them
+  // through the same cadence, the same door and the same sweep as everything
+  // else — a fixture that skipped the loop would prove nothing about the loop.
+
+  // A group session with one attendee who drops out. The parent design says a
+  // group is N appointments sharing a key, so one decline must cancel one
+  // person and leave the room, the clinician and the co-attendees alone.
+  const groupCandidates = (await prisma.client.findMany({
+    where: { reminderPreference: { not: 'none' } },
+    select: { id: true }, orderBy: { code: 'asc' }, take: 5,
+  })).map((c) => c.id);
+  const groupDate = addDays(TODAY, -7);
+  const skillsGroup = await bookGroupSession(desk, {
+    clinicianId: tom.id, clientIds: groupCandidates, date: groupDate, startMinute: 12 * 60,
+    // Operational label for the staff calendar. It is on the wrong side of the
+    // deny-list to ever leave the building, and no message body carries it.
+    topic: 'Tuesday skills group', clock: fixedClock(BOOKED_AT),
   });
+  const groupDecliner = skillsGroup.appointments[0]!.id;
+
+  // A session booked three days out — inside the five-day window, so the first
+  // stage was never a message anybody could have sent. It gets `d1` and `d0`
+  // and is fee-eligible on two sends rather than three, which is the case the
+  // eligibility rule exists to get right rather than to exclude.
+  const lateBookingDate = addDays(TODAY, -11);
+  const lateBooked = await bookAppointment(desk, {
+    clientId: clients[1]!.id, clinicianId: nour.id, date: lateBookingDate, startMinute: 11 * 60,
+    type: 'standard', modality: 'in_person',
+    clock: fixedClock(new Date(zonedToUtc(lateBookingDate, 11 * 60).getTime() - 3 * DAY)),
+  });
+
+  // ── the quarter, simulated a day at a time ────────────────────────────
+  //
+  // Not a bulk update any more. The confirmation loop is due-date driven, so
+  // the only way to produce data it would actually have produced is to run it:
+  // every day of the quarter gets a horizon run in the morning, the clients who
+  // are going to answer answer through their own door, and the sweep runs at
+  // the end of the day. The reminder rows, the outbox rows, the portal links
+  // and the audit trail are all real consequences rather than fixtures shaped
+  // to look like consequences — which matters, because the success metrics are
+  // queries against them.
+  //
+  // Attendance is still written directly. That is fixture construction, not a
+  // simulation of front desk clicking through a quarter, and 900 three-step
+  // transitions would make the seed unusable.
 
   const settings = await prisma.practiceSettings.findUniqueOrThrow({ where: { id: 1 } });
   const feeByClient = new Map(
     (await prisma.client.findMany({ select: { id: true, feeCents: true } })).map((c) => [c.id, c.feeCents]),
   );
 
-  const completed: typeof past = [];
-  for (const appt of past) {
-    const roll = rand();
-    if (roll < 0.05) {
-      await prisma.appointment.update({
-        where: { id: appt.id },
-        data: { status: 'late_cancelled', cancelledAt: new Date(appt.startAt.getTime() - 3 * 3600_000), chargeFeeCents: settings.lateCancelFeeCents, cancelReason: 'client cancelled' },
-      });
-    } else if (roll < 0.09) {
-      await prisma.appointment.update({
-        where: { id: appt.id },
-        data: { status: 'cancelled', cancelledAt: new Date(appt.startAt.getTime() - 5 * 86_400_000), cancelReason: 'client rescheduled' },
-      });
-    } else if (roll < 0.12) {
-      await prisma.appointment.update({
-        where: { id: appt.id },
-        // The no-show policy, which is its own field — a missed hour and a
-        // cancellation with some notice are not the same event.
-        data: { status: 'no_show', chargeFeeCents: settings.noShowFeeCents },
-      });
-    } else {
-      await prisma.appointment.update({
-        where: { id: appt.id },
-        data: { status: 'completed', chargeFeeCents: feeByClient.get(appt.clientId) ?? settings.standardFeeCents },
-      });
-      completed.push(appt);
-    }
-  }
-  log(`${completed.length} completed, ${past.length - completed.length} cancelled, late-cancelled or missed`);
+  /**
+   * The scripted client-behaviour mix: 70% confirm, 10% decline, 15% silent
+   * but present, 5% silent and absent.
+   *
+   * Dealt from a cycle rather than from the dice, so the proportions are exact
+   * and the fee total is hand-tallyable. A 5% behaviour sampled 1,100 times
+   * lands anywhere between 3.7% and 6.4% often enough that "the rule is
+   * over-firing" and "the seed rolled badly" would be indistinguishable — and
+   * that spec is the one guarding against a policy that charges too many
+   * people.
+   */
+  type Behaviour = 'confirm_early' | 'confirm_late' | 'decline_early' | 'decline_late' | 'silent_present' | 'silent_absent';
+  const BEHAVIOUR_CYCLE: Behaviour[] = [
+    'confirm_early', 'confirm_late', 'confirm_early', 'confirm_late', 'confirm_early',
+    'confirm_late', 'confirm_early', 'silent_present', 'confirm_late', 'confirm_early',
+    'decline_early', 'confirm_late', 'confirm_early', 'silent_present', 'confirm_late',
+    'confirm_early', 'decline_late', 'confirm_late', 'silent_present', 'silent_absent',
+  ];
 
-  // A slice of the near future is confirmed; the rest stays merely scheduled.
+  const eligibleClients = new Map(
+    (await prisma.client.findMany({
+      select: { id: true, reminderPreference: true, email: true, phone: true },
+    })).map((c) => [c.id, c]),
+  );
+
+  const everything = await prisma.appointment.findMany({
+    select: { id: true, clientId: true, clinicianId: true, startAt: true, createdAt: true },
+    orderBy: [{ startAt: 'asc' }, { id: 'asc' }],
+  });
+
+  /** Who does what, decided once, before a single day is simulated. */
+  const behaviour = new Map<string, Behaviour>();
+  let eligibleCount = 0;
+  for (const appt of everything) {
+    const client = eligibleClients.get(appt.clientId)!;
+    if (!confirmationRequired(client, appt, settings)) continue;
+    behaviour.set(appt.id, BEHAVIOUR_CYCLE[eligibleCount % BEHAVIOUR_CYCLE.length]!);
+    eligibleCount++;
+  }
+
+  // The two fixtures get their behaviour assigned rather than dealt, because
+  // "at least one" is the point of them. Everything else takes the cycle.
+  behaviour.set(groupDecliner, 'decline_early');
+  for (const a of skillsGroup.appointments.slice(1)) behaviour.set(a.id, 'confirm_late');
+  behaviour.set(lateBooked.id, 'silent_absent');
+
+  const startsOn = new Map<string, typeof everything>();
+  for (const a of everything) {
+    const d = localDateOf(a.startAt);
+    startsOn.set(d, [...(startsOn.get(d) ?? []), a]);
+  }
+
+  /** The client's live door at that moment, minted by the cadence on a reminder. */
+  const liveTokenFor = async (clientId: string, at: Date) =>
+    (await prisma.portalLink.findFirst({
+      where: { clientId, expiresAt: { gt: at } },
+      orderBy: { expiresAt: 'desc' }, select: { token: true },
+    }))?.token ?? null;
+
+  const answered = { confirmed: 0, declined: 0 };
+  let unanswerable = 0;
+  const attendance = { completed: 0, noShow: 0, cancelled: 0, lateCancelled: 0 };
+  const clock = fixedClock(BOOKED_AT);
+
+  // The loop opens five days before the quarter does, because the first week's
+  // sessions were asked about the week before — starting it on day one would
+  // leave everybody booked into early June unanswered for no reason but the
+  // simulation's own edge, and that lands as silence in a fee count.
+  for (let date = addDays(QUARTER_START, -5); date <= TODAY; date = addDays(date, 1)) {
+    // Morning: the cadence queues whatever came due overnight.
+    clock.set(zonedToUtc(date, 8 * 60));
+    await runReminderHorizon(clock);
+
+    // Just after the morning run: the clients who are going to answer, answer.
+    //
+    // The offsets are four days out and the morning of, and they are not
+    // arbitrary. A stage falls due at the appointment's own hour, so a client
+    // answering "off the five-day message" can only do it the day after that
+    // message went — the first draft had them tapping a link that did not
+    // exist yet, and the seed said so by throwing. Early answers are worth the
+    // trouble for their own sake: an early confirmation is the case where the
+    // two remaining messages never queue at all, and an early decline is the
+    // one that frees the hour with notice and no fee.
+    // 08:30 local, not midday: the practice's earliest session is at 10:00,
+    // and answering "on the day" has to mean before the session, not after it.
+    clock.set(zonedToUtc(date, 8 * 60 + 30));
+    for (const [offset, early] of [[4, true], [0, false]] as const) {
+      for (const appt of startsOn.get(addDays(date, offset)) ?? []) {
+        const b = behaviour.get(appt.id);
+        if (!b) continue;
+        if (early ? !b.endsWith('_early') : !b.endsWith('_late')) continue;
+        // Nobody answers a message they were not sent, and nobody taps a link
+        // that has expired. Both are guards rather than filters: if either
+        // starts firing in bulk, the cadence has stopped reaching people.
+        const asked = await prisma.appointmentReminder.count({ where: { appointmentId: appt.id } });
+        const token = asked ? await liveTokenFor(appt.clientId, clock.now()) : null;
+        if (!token) { unanswerable++; continue; }
+
+        if (b.startsWith('confirm')) {
+          await confirmAppointment(token, appt.id, { clock });
+          answered.confirmed++;
+        } else {
+          // Through the real door, so `classifyCancellation` — not this seed —
+          // decides whether it was late, and the fee follows from the clock.
+          await declineAppointment(token, appt.id, { clock, acknowledgeFee: true });
+          answered.declined++;
+        }
+      }
+    }
+
+    // Late afternoon: what actually happened in the rooms. Written before the
+    // sweep, because a client who turned up must be off `scheduled` by the time
+    // it runs — that ordering *is* the guarantee, not a convenience.
+    if (date < TODAY) {
+      clock.set(zonedToUtc(date, 20 * 60));
+      for (const appt of startsOn.get(date) ?? []) {
+        const b = behaviour.get(appt.id);
+        // The 5% who said nothing and did not come are left exactly as they
+        // are. The sweep is what turns them into a no-show and a fee, and if it
+        // stops doing that this seed stops containing any.
+        if (b === 'silent_absent') continue;
+        if (b?.startsWith('decline')) continue; // already cancelled at the door
+
+        const current = await prisma.appointment.findUniqueOrThrow({
+          where: { id: appt.id }, select: { status: true },
+        });
+        if (current.status === 'cancelled' || current.status === 'late_cancelled') continue;
+
+        // Clients the practice never asked keep the old dice: a practice has
+        // absences that have nothing to do with a text message.
+        const roll = b ? 1 : rand();
+        if (roll < 0.05) {
+          await prisma.appointment.update({
+            where: { id: appt.id },
+            data: { status: 'late_cancelled', cancelledAt: new Date(appt.startAt.getTime() - 3 * 3600_000), chargeFeeCents: settings.lateCancelFeeCents, cancelReason: 'client cancelled' },
+          });
+          attendance.lateCancelled++;
+        } else if (roll < 0.09) {
+          await prisma.appointment.update({
+            where: { id: appt.id },
+            data: { status: 'cancelled', cancelledAt: new Date(appt.startAt.getTime() - 5 * 86_400_000), cancelReason: 'client rescheduled' },
+          });
+          attendance.cancelled++;
+        } else if (roll < 0.12) {
+          await prisma.appointment.update({
+            where: { id: appt.id },
+            // The no-show policy, which is its own field — a missed hour and a
+            // cancellation with some notice are not the same event.
+            data: { status: 'no_show', chargeFeeCents: settings.noShowFeeCents },
+          });
+          attendance.noShow++;
+        } else {
+          await prisma.appointment.update({
+            where: { id: appt.id },
+            data: { status: 'completed', chargeFeeCents: feeByClient.get(appt.clientId) ?? settings.standardFeeCents },
+          });
+          attendance.completed++;
+        }
+      }
+    }
+
+    // End of day: silence becomes an answer, twenty minutes past each start.
+    clock.set(zonedToUtc(addDays(date, 1), 0));
+    await runNonResponseSweep(clock);
+  }
+
+  const swept = await prisma.appointment.count({ where: { confirmation: 'no_response' } });
+  const autoNoShows = await prisma.appointment.count({ where: { confirmation: 'no_response', status: 'no_show' } });
+  log(`${eligibleCount} sessions the practice could ask about; ${answered.confirmed} confirmed, ${answered.declined} declined${unanswerable ? ` (${unanswerable} unreachable at the moment they would have answered)` : ''}`);
+  log(`${await prisma.appointmentReminder.count()} reminders queued across ${await prisma.outboxMessage.count()} outbox rows`);
+  log(`${swept} went unanswered, of which ${autoNoShows} became a no-show and a fee`);
+  log(`${attendance.completed} completed, ${attendance.cancelled + attendance.lateCancelled + attendance.noShow} cancelled, late-cancelled or missed by clients the practice never asked`);
+
+  const completed = await prisma.appointment.findMany({
+    where: { status: 'completed' },
+    select: { id: true, clientId: true, clinicianId: true, startAt: true },
+    orderBy: { startAt: 'asc' },
+  });
+
+  // A slice of the near future is confirmed at the desk; the rest stays merely
+  // scheduled. Staff-side `status`, which is a different fact from whether the
+  // client answered — the demo needs both axes visible at once.
   await prisma.appointment.updateMany({
-    where: { startAt: { gte: zonedToUtc(TODAY, 0), lt: zonedToUtc(addDays(TODAY, 7), 0) } },
+    where: {
+      startAt: { gte: zonedToUtc(TODAY, 0), lt: zonedToUtc(addDays(TODAY, 4), 0) },
+      status: 'scheduled',
+    },
     data: { status: 'confirmed' },
   });
 
+  // ── the rest of the awkward rows ──────────────────────────────────────
+
+  // Three clients the practice may never charge, each with an absence on the
+  // record. Without them, "the exemption holds" is asserted about a set that
+  // happens to be empty, which is the weakest kind of green.
+  const neverAsked = await prisma.client.findMany({
+    where: { reminderPreference: 'none' }, select: { id: true }, orderBy: { code: 'asc' }, take: 3,
+  });
+  let exemptAbsences = 0;
+  for (const c of neverAsked) {
+    const missed = await prisma.appointment.findFirst({
+      where: { clientId: c.id, status: 'completed', startAt: { lt: zonedToUtc(TODAY, 0) } },
+      orderBy: { startAt: 'desc' },
+    });
+    if (!missed) continue;
+    await prisma.appointment.update({
+      where: { id: missed.id },
+      // Front desk marked it. The fee is the practice's ordinary no-show
+      // policy, and `confirmation` stays `not_required` — nobody asked them
+      // anything, so there is nothing they failed to answer.
+      data: { status: 'no_show', chargeFeeCents: settings.noShowFeeCents },
+    });
+    exemptAbsences++;
+  }
+  log(`${exemptAbsences} absences by clients on "no messages" — recorded, never chargeable to this policy`);
+
+  // One waived fee, so the reversal has something to show and the audit trail
+  // has the "was 9000 cents" row an auditor would go looking for.
+  const toWaive = await prisma.appointment.findFirst({
+    where: { confirmation: 'no_response', status: 'no_show', chargeFeeCents: { not: null } },
+    orderBy: { startAt: 'desc' },
+  });
+  if (toWaive) {
+    await waiveFee(admin, toWaive.id, 'practice_error', {
+      clock: fixedClock(new Date(toWaive.startAt.getTime() + 2 * DAY)),
+    });
+    log('1 automatic fee waived by the practice manager, with the original amount on the record');
+  }
+
+  const groupNow = await prisma.appointment.findMany({
+    where: { groupSessionId: skillsGroup.id }, select: { status: true },
+  });
+  log(`1 group session on ${groupDate}: ${groupNow.filter((a) => a.status !== 'cancelled' && a.status !== 'late_cancelled').length} attended, 1 declined through their own link`);
+  log(`1 session booked 3 days out on ${lateBookingDate} — d5 was never sendable, and it is still fee-eligible`);
+
   // ── notes ─────────────────────────────────────────────────────────────
-  const byClinician = new Map<string, typeof past>();
-  for (const a of completed) byClinician.set(a.clinicianId, [...(byClinician.get(a.clinicianId) ?? []), a]);
+  //
+  // Only sessions a clinician ran for a client they actually treat. A group
+  // session is the exception that makes the rule visible: five attendees in
+  // one room with one clinician, four of whom belong to somebody else's
+  // caseload — and `create: 'treating'` refuses a note for a client you do not
+  // treat, which is the matrix being right rather than the seed being awkward.
+  const treatedBy = new Map(
+    (await prisma.client.findMany({ select: { id: true, treatingClinicianId: true } }))
+      .map((c) => [c.id, c.treatingClinicianId]),
+  );
+  const byClinician = new Map<string, typeof completed>();
+  for (const a of completed) {
+    if (treatedBy.get(a.clientId) !== a.clinicianId) continue;
+    byClinician.set(a.clinicianId, [...(byClinician.get(a.clinicianId) ?? []), a]);
+  }
 
   let progressNotes = 0, coSigned = 0, pending = 0, processNotes = 0;
 
@@ -360,7 +627,10 @@ async function main() {
   const demoClient = clients.find((c) => c.clinicianId === priya.id);
   if (demoClient) {
     const demoAppt = await prisma.appointment.findFirst({
-      where: { clientId: demoClient.id, status: 'completed', progressNote: null },
+      // Their own clinician's session, not one they merely sat in: a group
+      // attendee's hour belongs to whoever ran the group, and only the
+      // treating clinician writes into a record.
+      where: { clientId: demoClient.id, clinicianId: priya.id, status: 'completed', progressNote: null },
       orderBy: { startAt: 'desc' },
     });
     if (demoAppt) {
@@ -409,6 +679,16 @@ async function main() {
       async () => null,
     ).catch(() => undefined);
   }
+  // ── the quarter, against its own success metrics ──────────────────────
+  //
+  // Run here rather than left to a spec, because every one of them is a
+  // statement about the whole simulated quarter — and because a seed that can
+  // produce data violating its own eligibility rule will, quietly, on the run
+  // nobody watched. It throws rather than warns.
+  console.log('');
+  await assertSeedMetrics(log);
+  console.log('');
+
   const auditRows = await prisma.auditEvent.count();
   log(`${breakGlassCases.length} break-glass events and 1 logged process-note refusal`);
   log(`${auditRows} audit rows in total`);
