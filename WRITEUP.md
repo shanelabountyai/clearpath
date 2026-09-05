@@ -23,6 +23,9 @@ Kept as the work happens, not reconstructed afterwards.
     things it is not allowed to conclude.
 11. **The reply nobody is allowed to read** — an inbound channel whose defining
     property is that nothing said on it is kept.
+12. **The carrier, and what "we asked" is allowed to mean** — the fee's
+    precondition moves from a message the practice queued to a message a carrier
+    says arrived.
 
 ---
 
@@ -798,6 +801,154 @@ question with different words depending on which button they came in through.
 
 ---
 
+## 12. The carrier, and what "we asked" is allowed to mean
+
+Every phase before this one could be honest about the fee only up to a point,
+and the write-up said so each time: the precondition for charging a client for
+silence was an `OutboxMessage` row. That row proves the practice *intended* to
+ask. It does not prove anybody was asked.
+
+The gap between those two sentences is where a practice charges clients for its
+own failed sends. A disconnected number, a mailbox that bounces, a provider
+that was down for the six hours the cadence happened to run in — every one of
+them produces exactly the same evidence as a client ignoring you. Silence. So
+the practice bills, and never finds out, **because the evidence of the failure
+is the same shape as the evidence of the offence.** That is the property that
+made this the first P2 item rather than the fourth: it is not a missing feature,
+it is a way of being wrong that cannot be noticed from inside.
+
+### The seam, and why the driver is still a stub
+
+`carrier.ts` is a port and a state machine, both pure. `delivery.ts` is the only
+thing that writes a row because of one. The split is the same one
+`confirmation.ts` / `reminders.ts` made, for the same reason: the rule that
+decides whether a client can be charged has to be assertable in a millisecond
+without a database.
+
+The only driver shipped is `simulatedCarrier`, and that is not a shortcut. A
+real credential here would mean real messages to real handsets from a project
+whose first promise is that it holds nothing real. What changed is that the seam
+is now honest — a deployment writes a second `Carrier` and changes no policy
+code at all — and that the *shape* of a provider is now modelled rather than
+assumed away. A provider has two halves: a synchronous accept-or-reject, and
+receipts that arrive later by webhook. A stub with only `send` would have been a
+stub that could not say anything this phase is about.
+
+`sent` and `delivered` are separate states, and the distinction is the whole
+feature. `sent` means a carrier took the message — the old, weaker claim, now
+named as the weak claim it always was. Nothing in this codebase lets it near
+money, and there is a spec that says so, because "accepted" is exactly what a
+future refactor would mistake for "arrived".
+
+### Three rules about receipts, each from a way carriers actually behave
+
+**Receipts are ordered by the carrier's clock, not by ours.** Webhooks arrive out
+of order, retry, and duplicate. Ordering by arrival would let a re-delivered
+`sent` callback overwrite the `delivered` that followed it — and since the fee
+reads that field, somebody else's retry policy would be deciding who gets
+charged.
+
+**On a tie, failure wins — but only against a contradiction.** This one was
+wrong first. Stated as "a tie changes nothing", it also dropped a `delivered`
+receipt stamped in the same second as the acceptance, which is an ordinary thing
+for a provider to do and a *progression* rather than a contradiction. The bug
+did not surface from reasoning about it; it surfaced because a test fixture that
+dispatched and delivered on one frozen clock could not get a message to
+`delivered`, and the sweep then correctly exempted everybody. Two receipts that
+disagree at the same instant mean the practice has no proof, so the no-fee state
+is honest. Two that agree are just the wire being fast.
+
+**A transient failure with attempts left is not `failed`.** It goes back to
+`queued` with a backoff time on it. `failed` here means the practice is done
+trying, because that is the only version of the word the work-list and the
+report can act on. The retryable set is a whitelist of exactly one code: an
+unknown code from a driver written next year is treated as permanent, since a
+retry that eventually succeeds *restores the fee's precondition*, and a provider
+bug should not be able to end in a charge.
+
+### What the sweep does now, and the word it refuses to write
+
+`runNonResponseSweep` asks `deliveryProven` before it asks anything about money.
+One delivered stage is enough — requiring all three would let a hiccup on the
+day-of nudge erase a `d5` message the client demonstrably received, which is
+stricter without being more honest.
+
+Where nothing arrived, the row lands on `not_required`, **not** on
+`no_response`. That is the sentence this phase turns on. `no_response` is a
+statement about the client, and the client did not do anything; the practice
+failed to reach them. Writing the stronger word would put "did not answer" on
+the record of somebody who was never spoken to — the same untruth as the fee,
+minus the money. The audit reason is its own code, `confirmation_undelivered`,
+so the trail never blurs *the practice may not ask* with *the practice asked and
+it did not arrive*. The first is a rule. The second is a fault.
+
+### The exemption had to produce a phone call
+
+The delivery precondition, on its own, makes the system quietly worse at the
+thing it is for. A client with a dead number stops being charged — correct — and
+also stops being noticed. The practice would keep booking them, keep not
+reaching them, and find out at the point they stopped coming.
+
+So `unreachableClients` puts them on the front-desk work list, with the address
+that failed, and a client drops off it the moment anything reaches them again —
+no "mark as handled" button, because a list that has to be tidied is a list that
+gets tidied instead of worked. `expired` is deliberately excluded: a message
+abandoned because its hour started says nothing about the number, and sending
+front desk to ring those people is how a work-list stops being read.
+
+The same argument put the delivery rate on `/reports` next to the fee total
+rather than on a page of its own. A practice reading "we charged 33 people"
+needs "and 23 reminders never arrived" in the same glance, because the second
+number is *why* the first one is what it is.
+
+### What the seeded quarter now says, and two bugs it found
+
+The simulated carrier runs on the same hourly tick as the cadence through the
+whole quarter. The headline is that the honesty upgrade cost almost nothing:
+**33 fees from 685 eligible sessions (4.82%), against 34 from 692 (4.91%)
+before.** Of 1,176 reminders, 1,153 were delivered, 23 never arrived and 38 only
+got there on a retry. Seven sessions were asked about and never reached, and
+none of them was charged. That is the number the phase exists to produce, and it is now a
+seed metric rather than a claim.
+
+Getting there found two things, both of which were my own modelling errors
+rather than defects in the rule:
+
+**Seeded phone numbers were seven digits.** `555-0101` is the reserved fictional
+form written short, and a carrier validating destinations rejects it — so the
+first run failed *every* SMS client, 1,054 messages, a 65% failure rate. The
+check was right and the data was unrealistic; the numbers are now the full
+ten-digit fictional form. Worth recording because the failure was loud and
+therefore cheap. The version of this that ships is the one where a validation
+rule is quietly a little too strict on a slice of real clients, and the only
+symptom is that some people stop getting reminders.
+
+**A dead number is a property of the destination, not of the message.** The
+first cut seeded permanent failures on the message id, which scattered single
+failures across many clients and produced a quarter in which *nobody* was ever
+actually unreachable — three sessions, where the metric wanted five. Which is to
+say the simulation could not produce the population the entire feature exists to
+protect. Permanent failures are now keyed on the address and transient ones on
+the moment, which is what the two things actually are.
+
+A third, smaller: the message id is a cuid, so hashing it made the quarter
+different on every run, and this seed's metrics are hand-checkable statements
+about *one* quarter. Everything the simulation decides now hashes data the
+simulation itself chose. Verified by running the seed twice and diffing, which
+is the only way that property is ever actually held.
+
+### What this deliberately does not do
+
+It does not attach a real carrier, and the README still says nothing sends. It
+does not retro-charge: a receipt arriving after the sweep has exempted a session
+cannot turn the exemption back into a fee, because the practice did not have its
+proof at the moment it made the decision, and re-deciding money on late-arriving
+evidence is a worse property than being slightly conservative. It does not make
+delivery a *setting* — there is no flag to go back to charging on `queued`,
+because that flag would be a knob for turning the honesty off.
+
+---
+
 ## Decisions log
 
 | Decision | Why |
@@ -876,6 +1027,22 @@ question with different words depending on which button they came in through.
 | The inbound webhook refuses everything when its secret is unset | It is the only write endpoint in the application with no session behind it and it can cancel an appointment, so it does not get the dev switcher's latitude. Defaulting to open would mean a webhook that works without its secret, which is a webhook nobody notices is unauthenticated. What it still cannot prove — that the carrier was told the truth about who sent the message — is named in the route rather than implied by its absence |
 | The confirmation report's rates are against what the practice was allowed to ask | A client on "no messages" was never in the denominator of a question nobody put to them, and dividing by them would flatter the confirmation rate by exactly the count of people the policy may not reach. `notRequired` stays a visible column for the same reason: an exemption that disappears from the report disappears from the decision |
 | A decline reuses the reschedule request's four reason codes | Two of them read oddly on a cancellation. The alternative is two places to add a fifth reason, two things for a report to union, and a client answering the same question with different words depending on which button they came in through. Reusing an imperfect vocabulary beats maintaining two |
+| The fee's precondition is a delivery receipt, not a queued message | A queued row proves the practice intended to ask. A dead number, a bouncing mailbox and a provider outage all produce the same evidence as a client ignoring you, so charging on intent means charging clients for the practice's own failed sends — and never finding out, because the failure looks exactly like the offence |
+| `sent` and `delivered` are separate states, and only one is allowed near money | `sent` is a carrier saying it took the message, which is the old precondition wearing a better name. Keeping them as one field would make "accepted" and "arrived" the same claim, which is precisely the conflation a future refactor makes for free |
+| An undelivered session lands on `not_required`, never on `no_response` | `no_response` is a statement about the client, and the client did nothing — the practice failed to reach them. Writing the stronger word would put "did not answer" on the record of somebody who was never spoken to, which is the same untruth as the fee minus the money. Its own audit code, `confirmation_undelivered`, keeps the rule and the fault from blurring |
+| Delivery receipts are ordered by the carrier's clock, not by arrival | Provider webhooks retry, duplicate and arrive out of order. Ordering by arrival lets a re-delivered `sent` callback overwrite the `delivered` after it — and since the fee reads that field, somebody else's retry policy would decide who gets charged |
+| A tie between two receipts goes to failure, but a same-instant progression is applied | The first version of this rule said a tie changes nothing, and it silently dropped a `delivered` stamped in the same second as the acceptance — an ordinary provider behaviour and the fixture that found it. Two receipts that disagree at one instant mean no proof; two that agree are just a fast wire |
+| The retryable failure set is a whitelist of one code | An unknown code from a driver written next year is treated as permanent. The cost of being wrong that way is one undelivered message; the other way is an unbounded retry loop whose eventual success *restores the fee's precondition*, letting a provider bug end in a charge |
+| One delivered stage is enough, not all three | A carrier hiccup on the day-of nudge should not erase a `d5` message the client demonstrably received. Stricter is not the same as more honest, and it would hand somebody a fee-free session for the provider's bad afternoon rather than for anything either party did |
+| Giving up on an expired message is ours, so it gets no receipt row | A receipt is something a provider said, and nobody said this: the practice ran out of time and stopped. "They did not get it" and "we gave up" are different sentences in a defence of a charge, and the work-list excludes `expired` for the same reason |
+| Receipts the state machine ignored are still written | A trail that records only the receipts that won is not a trail. "The carrier contradicted itself" is exactly what somebody defending a fee needs to be able to see |
+| `DeliveryReceipt` has no column for a provider's error string | A carrier's error text routinely quotes the message and the destination back at you, so keeping it is how a body and a phone number land in an operational table nobody thought of as holding either. The route refuses an unrecognised code rather than storing it |
+| The delivery webhook has its own secret, not the inbound one | `/api/inbound` can cancel an appointment. A provider reporting delivery receipts has no business being able to do that, and one shared key would hand it that power. Two endpoints, two capabilities, two keys |
+| The exemption produces a work list, not just a skipped fee | Requiring delivery makes the system quietly worse at its actual job: an unreachable client stops being charged *and* stops being noticed. A client drops off the list the moment something reaches them, because a list that must be tidied gets tidied instead of worked |
+| The delivery rate sits beside the fee total, not on a page of its own | It is now the fee's precondition. A practice reading "we charged 33 people" needs "and 23 reminders never arrived" without changing pages, because the second number is why the first one is what it is |
+| A permanent simulated failure is keyed on the destination; a transient one on the moment | A disconnected number is disconnected for every message sent to it. Keying it on the message id scattered single failures across many clients and produced a quarter in which nobody was ever unreachable — a simulation unable to produce the one population the feature exists to protect |
+| Nothing the simulated carrier decides is hashed from a cuid | Message ids are random per seed run, so hashing one made the quarter different every time, and these metrics are hand-checkable statements about a single quarter. Verified by running the seed twice and diffing it, which is the only way that property is ever actually held |
+| There is no flag to go back to charging on `queued` | Every other policy in this feature has a settings row behind it. This one does not, because that row would be a knob for turning the honesty off |
 | The cadence is a script and a function, with no scheduler dependency | Due times derive from `startAt` and the injected clock, so the job is idempotent and the schedule is an implementation detail of whatever calls it — cron, a timer, a hosted trigger, or a person typing `npm run reminders:run`. A missed hour costs lateness and nothing else, and the whole five-day cadence runs in a test in a millisecond because the clock is an argument |
 
 ## What this project deliberately is not

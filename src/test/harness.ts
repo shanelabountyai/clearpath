@@ -1,5 +1,7 @@
 import { prisma } from '../db';
 import type { Actor, Role } from '../auth/permissions';
+import type { Carrier } from '../messaging/carrier';
+import { dispatchOutbox, recordReceipt } from '../messaging/delivery';
 
 /**
  * Empties every table. TRUNCATE is deliberately still permitted on the audit
@@ -60,3 +62,34 @@ export const actor = (u: { id: string; role: Role }, breakGlassReason?: string):
   role: u.role,
   ...(breakGlassReason ? { breakGlass: { reason: breakGlassReason } } : {}),
 });
+
+/**
+ * A carrier that takes everything and loses nothing. Not the shipped simulated
+ * driver, which fails a deterministic slice on purpose — a fixture that is
+ * about the fee should not also be a lottery on whether the message arrived.
+ */
+const perfectCarrier: Carrier = {
+  name: 'test',
+  send: async (message) => ({ providerRef: `test_${message.id}`, accepted: true }),
+};
+
+/**
+ * Push everything currently queued all the way to `delivered`.
+ *
+ * The non-response fee reads a delivery receipt, so a fixture that queues a
+ * reminder and stops is a fixture the sweep will exempt — correctly, and
+ * invisibly. Specs that are about something else call this and move on; specs
+ * that are about delivery drive the carrier themselves.
+ */
+export async function deliverOutbox(at: Date) {
+  const clock = { now: () => at };
+  await dispatchOutbox({ clock, carrier: perfectCarrier });
+
+  const sent = await prisma.outboxMessage.findMany({
+    where: { deliveryState: 'sent' },
+    select: { providerRef: true },
+  });
+  for (const { providerRef } of sent) {
+    if (providerRef) await recordReceipt({ providerRef, state: 'delivered', occurredAt: at }, { clock });
+  }
+}

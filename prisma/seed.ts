@@ -28,6 +28,7 @@ const { waiveFee } = await import('../src/scheduling/lifecycle');
 const { bookGroupSession } = await import('../src/scheduling/groups');
 const { assertSeedMetrics } = await import('./metrics');
 const { handleInboundReply } = await import('../src/messaging/inbound');
+const { runCarrier } = await import('../src/messaging/delivery');
 
 /** mulberry32 — small, fast, and identical on every machine. */
 function rng(seed: number) {
@@ -144,9 +145,15 @@ async function main() {
             lastName: `Client ${String(clientNo).padStart(3, '0')} ${pick(SURNAMES)}`,
             dateOfBirth: new Date(Date.UTC(1965 + Math.floor(rand() * 40), Math.floor(rand() * 12), 1 + Math.floor(rand() * 28))),
             email: `client${clientNo}@example.test`,
-            phone: `555-01${String(clientNo).padStart(2, '0')}`,
+            // Area code 555 is not a real NANP code and 555-01xx is the reserved
+            // fictional block, so this is doubly fake — and, unlike the
+            // seven-digit form it replaced, it is the length a carrier will
+            // actually accept. The short form made every sms client fail
+            // `plausibleDestination`, which was the seed being unrealistic
+            // rather than the check being wrong.
+            phone: `555-555-01${String(clientNo).padStart(2, '0')}`,
             emergencyContactName: `Emergency Contact ${clientNo}`,
-            emergencyContactPhone: `555-02${String(clientNo).padStart(2, '0')}`,
+            emergencyContactPhone: `555-555-02${String(clientNo).padStart(2, '0')}`,
             emergencyContactRelation: pick(['Partner', 'Parent', 'Sibling', 'Friend']),
             treatingClinicianId: clinician.id,
             // A third of the practice is on a sliding scale, which is normal.
@@ -336,6 +343,15 @@ async function main() {
       clock.set(zonedToUtc(date, hour * 60));
       await runReminderHorizon(clock);
 
+      // P2. The carrier, on the same hourly tick as the cadence: settle what it
+      // has already answered, then hand over what the horizon just queued. The
+      // simulated driver fails a deterministic slice — a few bad addresses, a
+      // few provider outages that clear on retry — so the quarter contains real
+      // undelivered messages rather than a uniformly perfect wire, which is the
+      // only way the "never charge for a failed send" rule gets exercised by
+      // data instead of asserted in the abstract.
+      await runCarrier({ clock });
+
       // People answer the message they just got. Which is the whole reason
       // this is inside the hourly loop rather than pinned to an offset: a
       // client under the cadence cap has exactly one message, the day before,
@@ -347,7 +363,12 @@ async function main() {
         where: {
           confirmation: 'pending',
           startAt: { gt: clock.now() },
-          reminders: { some: {} },
+          // A message that never arrived is a message nobody can answer. Before
+          // P2 this said `reminders: { some: {} }`, and the difference is the
+          // whole point of the phase: a client whose number is dead used to
+          // both "not answer" and get charged for it, in a simulation that
+          // could never show either as a mistake.
+          reminders: { some: { outboxMessage: { deliveryState: 'delivered' } } },
         },
         select: { id: true, clientId: true, startAt: true },
         orderBy: { startAt: 'asc' },
@@ -442,6 +463,10 @@ async function main() {
   const autoNoShows = await prisma.appointment.count({ where: { confirmation: 'no_response', status: 'no_show' } });
   log(`${eligibleCount} sessions the practice could ask about; ${answered.confirmed} confirmed, ${answered.declined} declined${unanswerable ? ` (${unanswerable} unreachable at the moment they would have answered)` : ''}`);
   log(`${await prisma.appointmentReminder.count()} reminders queued across ${await prisma.outboxMessage.count()} outbox rows`);
+  const deliveredCount = await prisma.outboxMessage.count({ where: { deliveryState: 'delivered' } });
+  const failedCount = await prisma.outboxMessage.count({ where: { deliveryState: 'failed' } });
+  const retried = await prisma.outboxMessage.count({ where: { attempts: { gt: 1 } } });
+  log(`${deliveredCount} delivered, ${failedCount} never arrived, ${retried} took more than one attempt`);
   log(`${swept} went unanswered, of which ${autoNoShows} became a no-show and a fee`);
   log(`${attendance.completed} completed, ${attendance.cancelled + attendance.lateCancelled + attendance.noShow} cancelled, late-cancelled or missed by clients the practice never asked`);
 

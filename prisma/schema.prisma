@@ -354,9 +354,12 @@ model AppointmentReminder {
   stage           ReminderStage
   dueAt           DateTime      @db.Timestamptz(3)
   sentAt          DateTime?
-  /// The proof the practice asked. The fee rule depends on one of these
-  /// existing, which is why it is a row and not a boolean.
+  /// The proof the practice asked — and, since P2, the proof it arrived: the
+  /// fee rule reads this message's `deliveryState`, so it is a relation rather
+  /// than a loose id. A reminder pointing at a message that no longer exists
+  /// was always an integrity gap; it is a money bug now.
   outboxMessageId String?
+  outboxMessage   OutboxMessage? @relation(fields: [outboxMessageId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
 
@@ -646,11 +649,89 @@ model OutboxMessage {
   body        String
 
   scheduledFor DateTime
+  /// When a carrier accepted it. Null until something did — which, before the
+  /// carrier port existed, was every row in this table.
   sentAt       DateTime?
+
+  /// Where the message is from the practice's side of the wire. `sent` means a
+  /// carrier took it; only `delivered` means anybody received it, and only
+  /// `delivered` is allowed anywhere near the non-response fee.
+  deliveryState DeliveryState    @default(queued)
+  /// Attempts spent, not retries remaining.
+  attempts      Int              @default(0)
+  /// The provider's handle for the current attempt; its receipts quote it back.
+  providerRef   String?          @unique
+  /// Which driver holds it. `simulated` is the only one this repository ships.
+  carrier       String?
+  /// A closed code, never the provider's prose — that routinely echoes the body
+  /// and the destination back, which would put both in an operational table.
+  failureCode   DeliveryFailure?
+  deliveredAt   DateTime?
+  /// The carrier timestamp of the receipt that put it in its current state.
+  /// Receipts are ordered by this, never by when they happened to arrive.
+  decidedAt     DateTime?
+  nextAttemptAt DateTime?
+  /// The moment this message stops being worth sending — the start of the hour
+  /// it is about. A reminder delivered after its own appointment teaches the
+  /// client that this practice's messages are not worth reading.
+  expiresAt     DateTime?
+
+  receipts  DeliveryReceipt[]
+  reminders AppointmentReminder[]
 
   createdAt DateTime @default(now())
 
   @@index([scheduledFor, sentAt])
+  @@index([deliveryState, nextAttemptAt])
+}
+
+enum DeliveryState {
+  queued
+  sent
+  delivered
+  failed
+}
+
+enum DeliveryFailure {
+  invalid_destination
+  unreachable
+  rejected
+  opted_out_at_carrier
+  carrier_unavailable
+  expired
+}
+
+/// A carrier's word on one message: a state, a code, and two timestamps.
+///
+/// Kept as rows rather than collapsed into the message because the sequence is
+/// the evidence. When a practice defends a fee, "we have proof it arrived" has
+/// to be inspectable as *what the carrier said and when*, not as a boolean
+/// somebody's job wrote. Receipts the state machine ignored are kept too —
+/// a trail that only records the receipts that won is not a trail.
+///
+/// There is deliberately no body column and no destination column. Both would
+/// be PHI-adjacent on an operational surface, and neither is needed to know
+/// whether a message arrived.
+model DeliveryReceipt {
+  id              String        @id @default(cuid())
+  outboxMessageId String
+  outboxMessage   OutboxMessage @relation(fields: [outboxMessageId], references: [id], onDelete: Cascade)
+
+  /// The attempt this receipt is about, so a late one can still be matched.
+  providerRef String
+  state       DeliveryState
+  failureCode DeliveryFailure?
+  attempt     Int
+
+  /// The carrier's clock, which is the one that orders receipts.
+  occurredAt DateTime
+  /// Ours, which only says when we heard.
+  receivedAt DateTime @default(now())
+  /// Stale, or the losing half of a tie. It still happened, so it is still here.
+  ignored    Boolean  @default(false)
+
+  @@index([outboxMessageId, occurredAt])
+  @@index([providerRef])
 }
 
 // ──────────────────────────────── waitlist ────────────────────────────────

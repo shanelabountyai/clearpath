@@ -8,6 +8,18 @@ import { defineConfig, devices } from '@playwright/test';
 const PORT = Number(process.env.PORT ?? 3700);
 const dev = process.env.E2E_DEV === '1';
 
+/**
+ * Some machines ship a Chromium of their own instead of letting Playwright
+ * download the exact build it pins — a container image with one baked in, a
+ * distribution package, a locked-down CI box. Point `PLAYWRIGHT_CHROMIUM_PATH`
+ * at it and the sweep uses it.
+ *
+ * Env-gated rather than committed as a literal path, because a hard-coded
+ * executable would break every ordinary `npx playwright install` checkout,
+ * which is the common case. Unset, this is exactly the config it was before.
+ */
+const chromiumPath = process.env.PLAYWRIGHT_CHROMIUM_PATH;
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
@@ -19,7 +31,13 @@ export default defineConfig({
     baseURL: `http://localhost:${PORT}`,
     trace: 'retain-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [{
+    name: 'chromium',
+    use: {
+      ...devices['Desktop Chrome'],
+      ...(chromiumPath ? { launchOptions: { executablePath: chromiumPath } } : {}),
+    },
+  }],
   webServer: {
     // Build and serve in one command, so a stale .next cannot quietly test
     // yesterday's code.

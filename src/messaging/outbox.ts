@@ -11,7 +11,10 @@ import { minutesToHHMM, utcToZoned, WEEKDAYS } from '../time';
  * reason the practice has a messaging name ("Stillwater") distinct from its
  * legal name ("Stillwater Counseling").
  *
- * Nothing here actually sends. Rows are the stub.
+ * Nothing here actually sends: this file queues, and `delivery.ts` hands what it
+ * queued to a `Carrier`. The only driver this repository ships is simulated, so
+ * the rows are still the whole of it — what changed in P2 is that the row now
+ * has a delivery state on it, and the fee reads that rather than the row.
  */
 
 /**
@@ -164,6 +167,12 @@ export async function queueToClient(input: QueueToClient, tx?: Tx) {
       subject,
       body,
       scheduledFor: input.scheduledFor,
+      // The moment it stops being worth sending. A reminder is a message about
+      // an hour, and "are you coming Tuesday" delivered on Wednesday teaches
+      // the client that this practice's messages are not worth opening — which
+      // is the signal the whole fee depends on. Messages with no hour behind
+      // them (a form, a portal link) fall back to the carrier's own week.
+      expiresAt: input.startAt ?? null,
     },
   });
 }

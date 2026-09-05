@@ -2,6 +2,7 @@ import { guarded } from '../auth/guard';
 import { SYSTEM_ACTOR } from '../auth/permissions';
 import { systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
+import { deliveryProven } from '../messaging/carrier';
 import { confirmationRequired, type Confirmation, type ConfirmationSettings } from './confirmation';
 import { setStatus, type Status } from './lifecycle';
 
@@ -20,6 +21,12 @@ import { setStatus, type Status } from './lifecycle';
  *      writes, and only when it queued a message. Eligibility is re-checked
  *      here, at the moment of the fee, rather than trusted from the moment of
  *      the send.
+ *   1b. And only rows a carrier said **arrived**. Queuing a message proves the
+ *      practice intended to ask; it does not prove anybody was asked. A dead
+ *      number, a bouncing mailbox and a provider outage all produce exactly the
+ *      same evidence as a client ignoring you — silence — so without a delivery
+ *      receipt the practice would be billing clients for its own failed sends,
+ *      and would never find out, because the failure looks like the offence.
  *   2. Silence is recorded whatever else happened, and acted on only from
  *      `scheduled`. A client who walked in without answering ends the day
  *      `completed` / `no_response` and pays the session fee like anybody else.
@@ -72,6 +79,13 @@ export interface SweepResult {
   noShow: string[];
   /** Rows the practice may no longer charge, returned to `not_required`. */
   exempted: string[];
+  /**
+   * Of those, the ones exempted because nothing reached the client. A subset of
+   * `exempted`, and reported separately because it is the one exemption that is
+   * the *practice's* problem: a client nobody could reach needs a phone call,
+   * not a quietly skipped fee.
+   */
+  undelivered: string[];
 }
 
 /**
@@ -103,15 +117,19 @@ export async function runNonResponseSweep(clock: Clock = systemClock): Promise<S
     select: {
       id: true, clientId: true, status: true, confirmation: true, startAt: true, createdAt: true,
       client: { select: { reminderPreference: true, email: true, phone: true } },
-      // The proof the practice asked. A `pending` row without one is
-      // unreachable — only the cadence promotes, and only when it queued — so
-      // this is the assertion, not the lookup.
-      reminders: { where: { outboxMessageId: { not: null } }, select: { id: true }, take: 1 },
+      // The proof the practice asked, and — since P2 — the proof it arrived.
+      // A `pending` row with no reminder at all is unreachable, because only
+      // the cadence promotes and only when it queued; what is very reachable is
+      // a reminder whose message a carrier never delivered.
+      reminders: {
+        where: { outboxMessageId: { not: null } },
+        select: { outboxMessage: { select: { deliveryState: true } } },
+      },
     },
     orderBy: { startAt: 'asc' },
   });
 
-  const result: SweepResult = { noResponse: [], noShow: [], exempted: [] };
+  const result: SweepResult = { noResponse: [], noShow: [], exempted: [], undelivered: [] };
 
   for (const appt of candidates) {
     // P0-2, re-checked here rather than trusted from the send. A client who
@@ -124,6 +142,28 @@ export async function runNonResponseSweep(clock: Clock = systemClock): Promise<S
       await guarded(request(appt, 'confirmation_not_required'), (tx) =>
         tx.appointment.update({ where: { id: appt.id }, data: { confirmation: 'not_required' } }));
       result.exempted.push(appt.id);
+      continue;
+    }
+
+    // The delivery precondition. One delivered stage is enough — a carrier
+    // hiccup on the day-of nudge should not erase a `d5` message the client
+    // demonstrably received — but `sent` counts for nothing, because `sent` is
+    // the old, weaker claim this phase exists to stop charging on.
+    //
+    // It lands on `not_required` rather than on `no_response` deliberately.
+    // `no_response` is a statement about the client, and the client did not do
+    // anything: the practice failed to reach them. Writing the stronger word
+    // would put "did not answer" on the record of somebody who was never
+    // spoken to, which is the same untruth as the fee, minus the money.
+    //
+    // The audit reason is its own code so the two exemptions never blur: the
+    // practice may not ask, versus the practice asked and it did not arrive.
+    // The second is an operational failure with a work-list behind it.
+    if (!deliveryProven(appt.reminders.map((r) => r.outboxMessage?.deliveryState).filter((s) => !!s))) {
+      await guarded(request(appt, 'confirmation_undelivered'), (tx) =>
+        tx.appointment.update({ where: { id: appt.id }, data: { confirmation: 'not_required' } }));
+      result.exempted.push(appt.id);
+      result.undelivered.push(appt.id);
       continue;
     }
 

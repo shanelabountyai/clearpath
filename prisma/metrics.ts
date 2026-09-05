@@ -45,14 +45,63 @@ export async function seedMetrics(): Promise<Metric[]> {
   check('no fee from silence for a client the practice never messages', feesToNeverAsked === 0,
     `${feesToNeverAsked} such fees`);
 
-  // Risk 3, in the only form this project can honour it today: the fee's
-  // precondition is a queued message. When a carrier is attached it must
-  // become a delivery receipt, and this count is where that change lands.
-  const chargedWithoutEvidence = await prisma.appointment.count({
+  // Risk 3, closed. This metric used to read "every non-response fee has an
+  // outbox row behind it", because a queued message was all the evidence there
+  // was — proof the practice *intended* to ask. With a carrier behind the
+  // outbox the precondition is a delivery receipt, and this is the count that
+  // says so: a fee whose reminders a carrier never delivered is the practice
+  // charging a client for its own failed send.
+  const chargedWithoutDelivery = await prisma.appointment.count({
+    where: {
+      confirmation: 'no_response',
+      status: 'no_show',
+      reminders: { none: { outboxMessage: { deliveryState: 'delivered' } } },
+    },
+  });
+  check('every non-response fee has a delivered message behind it', chargedWithoutDelivery === 0,
+    `${chargedWithoutDelivery} charged without one`);
+
+  // The weaker claim, kept as its own line rather than folded into the one
+  // above. If the two ever disagree, the difference is exactly the population
+  // this phase exists to protect — asked, but never reached.
+  const chargedWithoutQueue = await prisma.appointment.count({
     where: { confirmation: 'no_response', status: 'no_show', reminders: { none: { outboxMessageId: { not: null } } } },
   });
-  check('every non-response fee has an outbox row behind it', chargedWithoutEvidence === 0,
-    `${chargedWithoutEvidence} charged without one`);
+  check('and an outbox row too, which is the weaker claim it replaced', chargedWithoutQueue === 0,
+    `${chargedWithoutQueue} charged without one`);
+
+  // ── the carrier is real enough to fail ───────────────────────────────
+  //
+  // A simulated wire that never drops anything proves nothing about the rule
+  // that handles drops. These three say the quarter contains the failure the
+  // fee rule is built around, that the retry path is walked, and — the one that
+  // matters — that not one of those failures ended in a charge.
+  const undelivered = await prisma.outboxMessage.count({
+    where: { deliveryState: 'failed', failureCode: { not: 'expired' } },
+  });
+  check('the seeded carrier actually fails to deliver some messages', undelivered >= 10,
+    `${undelivered} undelivered`);
+
+  const retried = await prisma.outboxMessage.count({ where: { attempts: { gt: 1 } } });
+  check('and some messages only arrived on a retry', retried > 0, `${retried} took more than one attempt`);
+
+  // The population the phase exists for, counted rather than described: sessions
+  // the cadence asked about, where nothing the practice sent ever arrived. Every
+  // one of them must be exempt, and none may carry a fee.
+  const askedButUnreached = await prisma.appointment.findMany({
+    where: {
+      ...past,
+      reminders: { some: {}, none: { outboxMessage: { deliveryState: 'delivered' } } },
+    },
+    select: { confirmation: true, status: true, chargeFeeCents: true },
+  });
+  const unreachedAndCharged = askedButUnreached.filter(
+    (a) => a.confirmation === 'no_response' && a.status === 'no_show',
+  );
+  check('at least a few sessions were asked about and never reached', askedButUnreached.length >= 5,
+    `${askedButUnreached.length} such sessions`);
+  check('and not one of them was charged for the silence', unreachedAndCharged.length === 0,
+    `${unreachedAndCharged.length} charged`);
 
   // ── the rule is not over-firing ──────────────────────────────────────
   const eligible = await prisma.appointment.count({

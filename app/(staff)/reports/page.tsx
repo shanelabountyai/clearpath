@@ -1,4 +1,5 @@
 import { requireSession } from '../../../src/session';
+import Link from 'next/link';
 import { confirmationReport, utilizationReport, weeklyVolume } from '../../../src/reports/utilization';
 import { addDays, localDateOf } from '../../../src/time';
 import { Badge, Card, PageHeader, money } from '../../../src/ui/primitives';
@@ -131,6 +132,34 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
               — charges the practice reversed, excluded from the total above.
             </p>
           )}
+
+          {/* P2. The delivery rate belongs in the same glance as the charge
+              rate, because it is now the charge's precondition: a fee needs a
+              carrier to have said the reminder arrived. A high failed count is
+              not a messaging problem for later — it is why the charged number
+              is lower than somebody expected, and it is a list of clients
+              nobody is reaching. */}
+          <div className="mb-4 rounded-[var(--radius)] border p-3" style={{ borderColor: 'var(--border)' }}>
+            <h3 className="mb-2 text-caption font-semibold uppercase tracking-wide text-muted">
+              Reminders, as the carrier reported them
+            </h3>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Stat label="Delivered" value={`${confirmation.messages.delivered} · ${pct(confirmation.messages.deliveredRate)}`} />
+              <Stat
+                label="Undelivered"
+                value={String(confirmation.messages.failed)}
+                tone={confirmation.messages.deliveredRate < 0.9 ? 'danger' : undefined}
+              />
+              <Stat label="Awaiting receipt" value={String(confirmation.messages.awaiting)} />
+              <Stat label="Not yet sent" value={String(confirmation.messages.queued)} />
+            </div>
+            <p className="mt-2 max-w-prose text-caption text-muted">
+              A session is only charged for silence where a carrier confirmed the client
+              was actually reached. Undelivered reminders charge nobody — the practice
+              failed to ask — and the clients behind them are on the{' '}
+              <Link href="/worklists" className="text-accent hover:underline">work lists</Link>.
+            </p>
+          </div>
 
           <div className="scroll-x">
             <table className="w-full min-w-[520px] border-collapse text-body">

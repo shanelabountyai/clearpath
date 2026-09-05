@@ -19,8 +19,12 @@ data. Mental-health data is among the most sensitive that exists; modeling the
 protections is the lesson, claiming them would be the credibility-killer.
 
 **Nothing sends and nothing charges.** Every message is a row in an outbox table
-that no carrier reads, and every fee is a flag on an appointment that no payment
-processor sees. The automatic no-show fee — a client who never answers three
+handed to a *simulated* carrier, and every fee is a flag on an appointment that
+no payment processor sees. The carrier is a real seam — a `Carrier` interface,
+delivery receipts, retries and failure codes — with the only shipped driver
+being an offline stub, because a real credential here would mean real messages
+to real handsets from a project whose first promise is that it holds nothing
+real. The automatic no-show fee — a client who never answers three
 reminders is marked absent and billed — is a *modeled mechanism*, built to show
 what such a rule costs and what it has to refuse. It is not clinical advice, not
 legal advice, and not a policy recommendation: the write-up argues at length
@@ -81,11 +85,12 @@ and a test greps the rest of `src/` to prove no endpoint re-implements a role ch
   the guarantee rather than a policy about not reading it. An `unparsed` reply
   alerts the treating clinician alone, sends back the practice's number and the
   urgent-help line, and tells front desk to ring the client, with nothing to read.
-- **All outbound messages are outbox stubs.** Nothing is actually sent. This is
-  load-bearing for the confirmation fee: today its precondition is a *queued*
-  message, which proves the practice intended to ask. Attach a real carrier and
-  that precondition has to become a delivery receipt, or the practice charges
-  clients for its own failed sends.
+- **No real carrier is attached.** Nothing is actually sent: `simulatedCarrier`
+  is the only driver, and it decides delivery offline and deterministically.
+  What is *not* a stub is the rule around it — the no-show fee's precondition is
+  a delivery receipt, not a queued message, so a client the practice could not
+  reach is never charged for silence. Attaching a real provider means writing a
+  second `Carrier` and changing no policy code.
 
 ## Stack
 
@@ -145,18 +150,26 @@ process-note refusal.
 
 The quarter is **simulated rather than assigned**. Every day of it gets a
 reminder-horizon run, the clients who answer answer through their own tokenized
-link, and the non-response sweep runs at midnight — so the 1,355 reminders, the
+link, and the non-response sweep runs at midnight — so the 1,176 reminders, the
 outbox rows and the audit trail are consequences of the shipped code rather than
 fixtures shaped to look like consequences. Client behaviour is dealt from a fixed
 cycle (70% confirm, 10% decline, 15% silent but present, 5% silent and absent)
-so the totals are hand-tallyable rather than sampled.
+so the totals are hand-tallyable rather than sampled. The carrier runs on the
+same hourly tick, failing a deterministic slice of messages — a few bad
+addresses, a few provider outages that clear on retry — so the quarter contains
+real undelivered reminders rather than a uniformly perfect wire.
 
-The seed then checks itself. Twenty-two success metrics run as queries at the end
-of `npm run db:seed`, and it refuses to finish if any fails — no fee for a client
-on `reminderPreference: 'none'`, no fee without a queued message behind it, no
-more than 5% of eligible sessions charged, and every one of the 102 clients who
-attended without ever answering charged the session fee rather than the no-show
-fee. That last group is the row the confirmation feature is judged on.
+The seed then checks itself. Twenty-six success metrics run as queries at the end of
+`npm run db:seed`, and it refuses to finish if any fails — no fee for a client on
+`reminderPreference: 'none'`, **no fee without a delivered message behind it**,
+no more than 5% of eligible sessions charged, and every one of the 102 clients
+who attended without ever answering charged the session fee rather than the
+no-show fee. That last group is the row the confirmation feature is judged on.
+
+Requiring delivery rather than a queued send cost the policy almost nothing and
+made it defensible: **33 fees from 685 eligible sessions (4.82%), against 34 from
+692 (4.91%) when a queued row was enough.** Seven sessions were asked about and
+never reached, and none of them was charged.
 
 ## Design
 
@@ -180,5 +193,6 @@ means replacing that file's values and nothing else.
 | Whether the practice may ask, and when | [`src/scheduling/confirmation.ts`](src/scheduling/confirmation.ts) |
 | What silence means, and what it does not | [`src/scheduling/nonresponse.ts`](src/scheduling/nonresponse.ts) |
 | A reply classified and thrown away | [`src/messaging/inbound.ts`](src/messaging/inbound.ts) |
+| The carrier port, and what "delivered" may mean | [`src/messaging/carrier.ts`](src/messaging/carrier.ts) |
 | The seed's own success metrics | [`prisma/metrics.ts`](prisma/metrics.ts) |
 | Why any of it is shaped this way | [`WRITEUP.md`](WRITEUP.md) |

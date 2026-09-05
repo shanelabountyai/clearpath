@@ -2,11 +2,12 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { DAY, HOUR, fixedClock } from '../clock';
 import { prisma } from '../db';
-import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
+import { actor, deliverOutbox, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { assertsLiteral } from '../test/lint';
 import { bookAppointment } from './booking';
 import { bookGroupSession } from './groups';
 import { setStatus, type Status } from './lifecycle';
+import { dispatchOutbox, recordReceipt } from '../messaging/delivery';
 import { runReminderHorizon } from './reminders';
 import { sweepAt, runNonResponseSweep, type SweepAction } from './nonresponse';
 import type { Confirmation } from './confirmation';
@@ -101,12 +102,16 @@ describe('against the database', () => {
 
   /**
    * The only way into `pending` is the cadence, so the fixture takes the real
-   * road: book with 30 days' notice, run the horizon, arrive at the sweep with
-   * reminder rows and outbox rows behind the row — which is what the fee rests
-   * on and what a hand-written `confirmation: 'pending'` would quietly skip.
+   * road: book with 30 days' notice, run the horizon, hand the outbox to a
+   * carrier and take its receipts — and arrive at the sweep with reminder rows,
+   * outbox rows and *delivery* behind the row. All three are what the fee rests
+   * on, and a hand-written `confirmation: 'pending'` would skip every one.
+   *
+   * `deliver: false` stops at the queue, which is the case P2 exists for: the
+   * practice asked and nobody was reached.
    */
   async function asked(
-    opts: { startMinute?: number; reminderPreference?: 'email' | 'sms' | 'none' } = {},
+    opts: { startMinute?: number; reminderPreference?: 'email' | 'sms' | 'none'; deliver?: boolean } = {},
   ) {
     const client = await makeClient(therapist.id);
     await prisma.client.update({
@@ -119,6 +124,7 @@ describe('against the database', () => {
       clock: fixedClock(new Date(START.getTime() - 30 * DAY)),
     });
     await runReminderHorizon(fixedClock(new Date(appt.startAt.getTime() - 2 * HOUR)));
+    if (opts.deliver !== false) await deliverOutbox(new Date(appt.startAt.getTime() - HOUR));
     return prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } });
   }
 
@@ -189,7 +195,7 @@ describe('against the database', () => {
     await runNonResponseSweep(afterGrace(appt));
 
     const second = await runNonResponseSweep(afterGrace(appt));
-    expect(second).toEqual({ noResponse: [], noShow: [], exempted: [] });
+    expect(second).toEqual({ noResponse: [], noShow: [], exempted: [], undelivered: [] });
     expect(await prisma.appointment.count({ where: { status: 'no_show' } })).toBe(1);
   });
 
@@ -200,8 +206,118 @@ describe('against the database', () => {
     });
 
     const run = await runNonResponseSweep(afterGrace(confirmed));
-    expect(run).toEqual({ noResponse: [], noShow: [], exempted: [] });
+    expect(run).toEqual({ noResponse: [], noShow: [], exempted: [], undelivered: [] });
     expect((await row(confirmed.id)).status).toBe('scheduled');
+  });
+
+  /**
+   * P2, and the reason this phase exists. The practice queued three messages
+   * and a carrier delivered none of them: a dead number, a bouncing mailbox, a
+   * provider that was down for the six hours the cadence ran in. Every one of
+   * those produces exactly the same evidence as a client ignoring you, which is
+   * why charging on `queued` was never safe — the failure looks like the
+   * offence, so nobody would ever have found out.
+   */
+  it('never charges a client the carrier could not reach', async () => {
+    const appt = await asked({ deliver: false });
+    expect(appt.confirmation).toBe('pending');
+
+    const run = await runNonResponseSweep(afterGrace(appt));
+    expect(run.undelivered).toEqual([appt.id]);
+    expect(run.exempted).toEqual([appt.id]);
+    expect(run.noResponse).toEqual([]);
+    expect(run.noShow).toEqual([]);
+
+    const after = await row(appt.id);
+    expect(after.status).toBe('scheduled');
+    expect(after.chargeFeeCents).toBeNull();
+  });
+
+  /**
+   * And it lands on `not_required`, not on `no_response`. `no_response` is a
+   * statement about the client, and the client did not do anything — the
+   * practice failed to reach them. Writing the stronger word would put "did not
+   * answer" on the record of somebody who was never spoken to, which is the
+   * same untruth as the fee minus the money.
+   */
+  it('records the failure as never having asked, not as the client staying silent', async () => {
+    const appt = await asked({ deliver: false });
+    await runNonResponseSweep(afterGrace(appt));
+    expect((await row(appt.id)).confirmation).toBe('not_required');
+  });
+
+  /** The two exemptions must never blur: one is a rule, the other is a fault. */
+  it('gives the delivery failure its own audit reason code', async () => {
+    const appt = await asked({ deliver: false });
+    await runNonResponseSweep(afterGrace(appt));
+
+    const reasons = await prisma.auditEvent.findMany({
+      where: { resourceId: appt.id }, select: { reason: true },
+    });
+    expect(reasons.map((r) => r.reason)).toContain('confirmation_undelivered');
+    expect(reasons.map((r) => r.reason)).not.toContain('confirmation_not_required');
+  });
+
+  /**
+   * `sent` is the old precondition wearing a better name. A carrier accepting a
+   * message says nothing about whether anybody received it, and this is the
+   * assertion that stops a future refactor from quietly treating the two as one.
+   */
+  it('is not satisfied by a carrier merely accepting the message', async () => {
+    const appt = await asked({ deliver: false });
+    await dispatchOutbox({
+      clock: fixedClock(new Date(appt.startAt.getTime() - HOUR)),
+      carrier: { name: 'accepts', send: async (m) => ({ providerRef: `r_${m.id}`, accepted: true }) },
+    });
+    expect(await prisma.outboxMessage.count({ where: { deliveryState: 'sent' } })).toBe(3);
+
+    const run = await runNonResponseSweep(afterGrace(appt));
+    expect(run.undelivered).toEqual([appt.id]);
+    expect((await row(appt.id)).chargeFeeCents).toBeNull();
+  });
+
+  /**
+   * One delivered stage is enough, and that is a choice rather than a default.
+   * Requiring all three would let a carrier hiccup on the day-of nudge erase a
+   * `d5` message the client demonstrably received — stricter, but not more
+   * honest, and it would hand the client a fee-free session for the provider's
+   * bad afternoon rather than for anything either party did.
+   */
+  it('charges where one stage arrived and the rest did not', async () => {
+    const appt = await asked({ deliver: false });
+    const clock = fixedClock(new Date(appt.startAt.getTime() - HOUR));
+    await dispatchOutbox({
+      clock,
+      carrier: { name: 'accepts', send: async (m) => ({ providerRef: `r_${m.id}`, accepted: true }) },
+    });
+
+    const [first, ...rest] = await prisma.outboxMessage.findMany({ orderBy: { createdAt: 'asc' } });
+    const occurredAt = new Date(appt.startAt.getTime() - 30 * 60_000);
+    await recordReceipt({ providerRef: first!.providerRef!, state: 'delivered', occurredAt });
+    for (const m of rest) {
+      await recordReceipt({ providerRef: m.providerRef!, state: 'failed', failureCode: 'unreachable', occurredAt });
+    }
+
+    const run = await runNonResponseSweep(afterGrace(appt));
+    expect(run.undelivered).toEqual([]);
+    expect(run.noShow).toEqual([appt.id]);
+    expect((await row(appt.id)).chargeFeeCents).toBe(9000);
+  });
+
+  /**
+   * Eligibility is still checked first, and the order matters for the trail: a
+   * client on `none` was never asked at all, so their exemption is the rule
+   * rather than a delivery fault, and the audit row must not say otherwise.
+   */
+  it('still calls a never-asked client never-asked, not undelivered', async () => {
+    const appt = await asked();
+    await prisma.client.update({
+      where: { id: appt.clientId }, data: { reminderPreference: 'none' },
+    });
+
+    const run = await runNonResponseSweep(afterGrace(appt));
+    expect(run.exempted).toEqual([appt.id]);
+    expect(run.undelivered).toEqual([]);
   });
 
   /**
@@ -300,6 +416,7 @@ describe('against the database', () => {
       topic: 'Tuesday skills group', clock: fixedClock(new Date(START.getTime() - 30 * DAY)),
     });
     await runReminderHorizon(fixedClock(new Date(START.getTime() - 6 * HOUR)));
+    await deliverOutbox(new Date(START.getTime() - 5 * HOUR));
 
     const attendees = await prisma.appointment.findMany({
       where: { groupSessionId: { not: null } }, orderBy: { clientId: 'asc' },
@@ -345,6 +462,28 @@ export function unguardedNoResponseWrites(files: { path: string; source: string 
     .map(({ path }) => path);
 }
 
+/**
+ * The same lint for the other precondition, added in P2.
+ *
+ * A file that concludes silence must, in the same file, be seen to have asked
+ * whether the message actually arrived. The behavioural specs above cover the
+ * one module that does it today; this covers the backfill script, the "fix up
+ * the stuck rows" admin action and the second sweep somebody writes next year —
+ * none of which exist yet, all of which would be charging on `queued` again.
+ *
+ * It greps for `deliveryProven` rather than for the string `delivered`, because
+ * the point is that the decision goes through the one pure function that owns
+ * it: a hand-rolled `deliveryState === 'delivered'` somewhere else is a second
+ * copy of the rule, and second copies are how "one delivered stage is enough"
+ * quietly becomes something else.
+ */
+export function deliveryBlindNoResponseWrites(files: { path: string; source: string }[]): string[] {
+  return files
+    .filter(({ source }) => concludesNoResponse(source))
+    .filter(({ source }) => !source.includes('deliveryProven'))
+    .map(({ path }) => path);
+}
+
 describe('no path to a fee that has not asked whether it may charge', () => {
   const files = () => {
     const out: { path: string; source: string }[] = [];
@@ -385,6 +524,28 @@ describe('no path to a fee that has not asked whether it may charge', () => {
     expect(count(`
       setStatus(SYSTEM_ACTOR, id, 'no_show', { clock, confirmation: 'no_response' })
     `)).toBe(1);
+  });
+
+  /**
+   * P2. Queuing a message proves the practice intended to ask; it does not
+   * prove anybody was asked. Without this, the money rule is one refactor away
+   * from resting on intent again — and the failure is invisible, because an
+   * undelivered message and an ignored one produce identical evidence.
+   */
+  it('holds for the delivery precondition too', () => {
+    expect(deliveryBlindNoResponseWrites(files())).toEqual([]);
+  });
+
+  it('catches a sweep that checks eligibility but not delivery', () => {
+    const planted = [{
+      path: 'src/scheduling/second-sweep.ts',
+      source: `if (!confirmationRequired(client, appt, settings)) continue;
+        await tx.appointment.update({ where: { id }, data: { confirmation: 'no_response' } });`,
+    }];
+    // The old lint is satisfied and the new one is not, which is exactly the
+    // regression this phase exists to make impossible.
+    expect(unguardedNoResponseWrites(planted)).toEqual([]);
+    expect(deliveryBlindNoResponseWrites(planted)).toEqual(['src/scheduling/second-sweep.ts']);
   });
 
   it('catches the backfill nobody has written yet', () => {

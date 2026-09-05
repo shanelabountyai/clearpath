@@ -169,6 +169,104 @@ export async function unconfirmedSoon(
 }
 
 /**
+ * P2. Clients the practice tried to message and could not reach.
+ *
+ * This list exists because of what the delivery precondition does *not* do. Once
+ * the fee requires a delivery receipt, a client with a dead number stops being
+ * charged — which is right, and which is also completely silent. The practice
+ * would simply stop hearing from them, keep booking them, keep not reaching
+ * them, and find out at the point they stopped coming.
+ *
+ * So the exemption produces a phone call. Same shape as `unconfirmedSoon` and
+ * for the same reason: the number is the feature, and nothing about why the
+ * client is attending rides along with it.
+ *
+ * Scoped to failures the practice can still act on — a permanent failure inside
+ * the window, with nothing delivered to that client since. A client whose
+ * number was fixed on Tuesday drops off the list on Tuesday, without anybody
+ * marking anything as handled.
+ */
+export async function unreachableClients(
+  actor: Actor,
+  opts: { clock?: Clock; withinDays?: number } = {},
+) {
+  const now = (opts.clock ?? systemClock).now();
+  const since = new Date(now.getTime() - (opts.withinDays ?? 30) * DAY);
+
+  return guarded(
+    {
+      actor, action: 'read', resource: 'client',
+      target: { clinicianId: actor.id, treatingSupervisorId: actor.id },
+    },
+    async (tx) => {
+      const failures = await tx.outboxMessage.findMany({
+        where: {
+          clientId: { not: null },
+          deliveryState: 'failed',
+          decidedAt: { gte: since },
+          // `expired` is the practice running out of time, not the client being
+          // unreachable — a message abandoned because its hour started says
+          // nothing about the number. It belongs to the cadence's timing, and
+          // putting it here would send front desk to ring people who are fine.
+          failureCode: { not: 'expired' },
+          ...(ownCaseloadOnly(actor) ? { client: { treatingClinicianId: actor.id } } : {}),
+        },
+        select: {
+          clientId: true, channel: true, failureCode: true, decidedAt: true,
+          client: {
+            select: {
+              id: true, code: true, firstName: true, lastName: true,
+              phone: true, email: true, reminderPreference: true, status: true,
+              treatingClinician: { select: { id: true, name: true } },
+            },
+          },
+        },
+        orderBy: { decidedAt: 'desc' },
+      });
+
+      // One row per client, newest failure first: front desk needs a call list,
+      // not a message log.
+      const byClient = new Map<string, (typeof failures)[number] & { failures: number }>();
+      for (const f of failures) {
+        if (!f.client || f.client.status !== 'active') continue;
+        const seen = byClient.get(f.client.id);
+        if (seen) seen.failures++;
+        else byClient.set(f.client.id, { ...f, failures: 1 });
+      }
+      if (byClient.size === 0) return [];
+
+      // Anything that has arrived since clears the client, so a corrected
+      // number takes them off the list without anybody marking it handled.
+      const recovered = await tx.outboxMessage.findMany({
+        where: {
+          clientId: { in: [...byClient.keys()] },
+          deliveryState: 'delivered',
+          deliveredAt: { gte: since },
+        },
+        select: { clientId: true, deliveredAt: true },
+      });
+      for (const r of recovered) {
+        const entry = r.clientId ? byClient.get(r.clientId) : undefined;
+        if (entry && r.deliveredAt && entry.decidedAt && r.deliveredAt > entry.decidedAt) {
+          byClient.delete(r.clientId!);
+        }
+      }
+
+      return [...byClient.values()]
+        .map((f) => ({
+          client: f.client!,
+          channel: f.channel,
+          failureCode: f.failureCode,
+          lastFailureAt: f.decidedAt,
+          failures: f.failures,
+          treatingClinician: f.client!.treatingClinician,
+        }))
+        .sort((a, b) => (b.lastFailureAt?.getTime() ?? 0) - (a.lastFailureAt?.getTime() ?? 0));
+    },
+  );
+}
+
+/**
  * Who to offer a freed slot to. Surfaces candidates for a human to ring; it
  * never books. An automatic rebooking would put a client in a room with a
  * clinician neither of them chose for that hour.

@@ -5,8 +5,8 @@ import { prisma } from '../db';
 import { Forbidden } from '../errors';
 import { bookAppointment } from '../scheduling/booking';
 import { cancelAppointment, setStatus, waiveFee } from '../scheduling/lifecycle';
-import { continuityQueue, unconfirmedSoon, vacationImpact, waitlistMatches } from '../scheduling/worklists';
-import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
+import { continuityQueue, unconfirmedSoon, unreachableClients, vacationImpact, waitlistMatches } from '../scheduling/worklists';
+import { actor, deliverOutbox, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { confirmationTrail, noResponseFees, queryAuditLog, toCsv } from './audit';
 import { runReminderHorizon } from '../scheduling/reminders';
 import { runNonResponseSweep } from '../scheduling/nonresponse';
@@ -340,6 +340,11 @@ describe('the confirmation report', () => {
       clock: fixedClock(new Date(START.getTime() - 30 * DAY)),
     });
     await runReminderHorizon(fixedClock(new Date(START.getTime() - 2 * DAY)));
+    // The fee needs a carrier to have said the message arrived, so the fixture
+    // takes that road too. Without it every `silent` session would be exempted
+    // as undelivered, which is right, and would quietly make this report a
+    // report about nothing.
+    await deliverOutbox(new Date(START.getTime() - 2 * DAY + HOUR));
 
     if (ending === 'confirmed' || ending === 'declined') {
       const link = await prisma.portalLink.findFirstOrThrow({ where: { clientId: client.id } });
@@ -388,6 +393,53 @@ describe('the confirmation report', () => {
 
     const report = await confirmationReport(actor(admin), RANGE);
     expect(report.totals).toMatchObject({ charged: 0, waived: 1, feeCents: 0 });
+  });
+
+  /**
+   * P2. The delivery rate sits beside the charge rate because it is now the
+   * charge's precondition. A practice looking at "we charged four people" needs
+   * to see "and eleven reminders never arrived" without changing pages — the
+   * second number is why the first one is what it is.
+   */
+  it('reports what the carrier did with the reminders it was given', async () => {
+    await session(9 * 60, 'confirmed');
+    await session(10 * 60, 'silent');
+
+    const report = await confirmationReport(actor(admin), RANGE);
+    expect(report.messages.delivered).toBeGreaterThan(0);
+    expect(report.messages.failed).toBe(0);
+    expect(report.messages.deliveredRate).toBe(1);
+  });
+
+  it('counts an undelivered reminder, and drops the rate for it', async () => {
+    await session(9 * 60, 'confirmed');
+    await prisma.outboxMessage.updateMany({
+      where: { templateKey: 'appointment_reminder' },
+      data: { deliveryState: 'failed', failureCode: 'unreachable', deliveredAt: null },
+    });
+
+    const report = await confirmationReport(actor(admin), RANGE);
+    expect(report.messages.delivered).toBe(0);
+    expect(report.messages.failed).toBeGreaterThan(0);
+    expect(report.messages.deliveredRate).toBe(0);
+  });
+
+  /**
+   * `sent` is a carrier saying it took the message. It is not evidence that
+   * anybody received it, so it is counted apart from `delivered` rather than
+   * folded in — which is the same distinction the fee rule makes.
+   */
+  it('keeps messages awaiting a receipt out of the delivered count', async () => {
+    await session(9 * 60, 'confirmed');
+    await prisma.outboxMessage.updateMany({
+      where: { templateKey: 'appointment_reminder' },
+      data: { deliveryState: 'sent', deliveredAt: null },
+    });
+
+    const report = await confirmationReport(actor(admin), RANGE);
+    expect(report.messages.delivered).toBe(0);
+    expect(report.messages.awaiting).toBeGreaterThan(0);
+    expect(report.messages.deliveredRate).toBe(0);
   });
 
   it('splits by clinician, because the question is usually about one caseload', async () => {
@@ -482,6 +534,7 @@ describe('the evidence behind an automatic charge', () => {
     for (const at of [5 * DAY, DAY, 3 * HOUR]) {
       await runReminderHorizon(fixedClock(new Date(START.getTime() - at)));
     }
+    await deliverOutbox(new Date(START.getTime() - 2 * HOUR));
     if (opts.answer === 'confirm') {
       const link = await prisma.portalLink.findFirstOrThrow({ where: { clientId: client.id } });
       await confirmAppointment(link.token, appt.id, {
@@ -603,5 +656,155 @@ describe('the utilization report', () => {
     expect(weekStart('2026-09-01')).toBe('2026-08-31'); // Tuesday -> Monday
     expect(weekStart('2026-08-31')).toBe('2026-08-31');
     expect(weekStart('2026-09-06')).toBe('2026-08-31'); // Sunday -> that Monday
+  });
+});
+
+/**
+ * P2. The list that exists because of what the delivery precondition does not
+ * do: it stops the fee, silently, and a practice that only stopped charging
+ * would also have stopped noticing.
+ */
+describe('the clients nobody could reach', () => {
+  const START = new Date('2026-09-01T19:00:00Z');
+  const clock = fixedClock(START);
+  let desk: Awaited<ReturnType<typeof makeUser>>;
+  let therapist: Awaited<ReturnType<typeof makeUser>>;
+  let other: Awaited<ReturnType<typeof makeUser>>;
+
+  beforeEach(async () => {
+    await resetDb();
+    await settings();
+    desk = await makeUser('front_desk');
+    therapist = await makeUser('therapist');
+    other = await makeUser('therapist');
+  });
+
+  /** A client with one message in whatever delivery state the test needs. */
+  async function messaged(
+    state: 'failed' | 'delivered',
+    opts: { failureCode?: 'unreachable' | 'expired'; at?: Date; clinicianId?: string } = {},
+  ) {
+    const client = await makeClient(opts.clinicianId ?? therapist.id);
+    await prisma.client.update({
+      where: { id: client.id }, data: { email: 'tc@example.test', phone: '555-010-0100' },
+    });
+    const at = opts.at ?? new Date(START.getTime() - DAY);
+    await prisma.outboxMessage.create({
+      data: {
+        clientId: client.id, channel: 'email', templateKey: 'appointment_reminder',
+        subject: 'Appointment reminder', body: 'Appointment reminder: Tuesday 15:00, Stillwater.',
+        scheduledFor: at, deliveryState: state, decidedAt: at, attempts: 1,
+        ...(state === 'failed'
+          ? { failureCode: opts.failureCode ?? 'unreachable' }
+          : { deliveredAt: at, sentAt: at }),
+      },
+    });
+    return client;
+  }
+
+  it('lists a client whose message permanently failed, with the number to ring', async () => {
+    const client = await messaged('failed');
+    const list = await unreachableClients(actor(desk), { clock });
+
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ failureCode: 'unreachable', failures: 1 });
+    expect(list[0]!.client.phone).toBe('555-010-0100');
+  });
+
+  it('says nothing about a client whose messages arrive', async () => {
+    await messaged('delivered');
+    expect(await unreachableClients(actor(desk), { clock })).toEqual([]);
+  });
+
+  /**
+   * `expired` is the practice running out of time, not the client being
+   * unreachable — the message was abandoned because its hour started, which
+   * says nothing about the number. Sending front desk to ring those people
+   * would make the list not worth reading, which is how a work-list dies.
+   */
+  it('does not ring a client whose message was merely abandoned', async () => {
+    await messaged('failed', { failureCode: 'expired' });
+    expect(await unreachableClients(actor(desk), { clock })).toEqual([]);
+  });
+
+  /** A corrected number takes the client off the list without anybody marking it. */
+  it('clears a client once something reaches them again', async () => {
+    const client = await messaged('failed', { at: new Date(START.getTime() - 2 * DAY) });
+    expect(await unreachableClients(actor(desk), { clock })).toHaveLength(1);
+
+    await prisma.outboxMessage.create({
+      data: {
+        clientId: client.id, channel: 'email', templateKey: 'appointment_reminder',
+        subject: 'Appointment reminder', body: 'Appointment reminder: Wednesday 15:00, Stillwater.',
+        scheduledFor: new Date(START.getTime() - DAY), deliveryState: 'delivered',
+        sentAt: new Date(START.getTime() - DAY), deliveredAt: new Date(START.getTime() - DAY),
+        decidedAt: new Date(START.getTime() - DAY), attempts: 1,
+      },
+    });
+    expect(await unreachableClients(actor(desk), { clock })).toEqual([]);
+  });
+
+  it('does not clear a client whose last delivery predates the failure', async () => {
+    const client = await messaged('failed');
+    await prisma.outboxMessage.create({
+      data: {
+        clientId: client.id, channel: 'email', templateKey: 'appointment_reminder',
+        subject: 'Appointment reminder', body: 'Appointment reminder: Monday 15:00, Stillwater.',
+        scheduledFor: new Date(START.getTime() - 3 * DAY), deliveryState: 'delivered',
+        sentAt: new Date(START.getTime() - 3 * DAY), deliveredAt: new Date(START.getTime() - 3 * DAY),
+        decidedAt: new Date(START.getTime() - 3 * DAY), attempts: 1,
+      },
+    });
+    expect(await unreachableClients(actor(desk), { clock })).toHaveLength(1);
+  });
+
+  it('counts repeated failures for one client as one call to make', async () => {
+    const client = await messaged('failed');
+    for (const days of [2, 3]) {
+      await prisma.outboxMessage.create({
+        data: {
+          clientId: client.id, channel: 'email', templateKey: 'appointment_reminder',
+          subject: 'Appointment reminder', body: 'Appointment reminder: Tuesday 15:00, Stillwater.',
+          scheduledFor: new Date(START.getTime() - days * DAY), deliveryState: 'failed',
+          failureCode: 'unreachable', decidedAt: new Date(START.getTime() - days * DAY), attempts: 1,
+        },
+      });
+    }
+    const list = await unreachableClients(actor(desk), { clock });
+    expect(list).toHaveLength(1);
+    expect(list[0]!.failures).toBe(3);
+  });
+
+  it('forgets a failure older than the window', async () => {
+    await messaged('failed', { at: new Date(START.getTime() - 90 * DAY) });
+    expect(await unreachableClients(actor(desk), { clock })).toEqual([]);
+  });
+
+  it('leaves an inactive client off it — nobody is booking them', async () => {
+    const client = await messaged('failed');
+    await prisma.client.update({ where: { id: client.id }, data: { status: 'inactive' } });
+    expect(await unreachableClients(actor(desk), { clock })).toEqual([]);
+  });
+
+  it('shows a clinician their own caseload and nobody else\'s', async () => {
+    await messaged('failed', { clinicianId: other.id });
+    expect(await unreachableClients(actor(therapist), { clock })).toEqual([]);
+    expect(await unreachableClients(actor(other), { clock })).toHaveLength(1);
+    // Front desk rings people, so front desk sees all of them.
+    expect(await unreachableClients(actor(desk), { clock })).toHaveLength(1);
+  });
+
+  /**
+   * The list carries a name, a number and a failure code — everything needed to
+   * ring somebody — and no message content at all. A work-list built from the
+   * outbox is one careless `select` away from putting bodies on a front-desk
+   * screen, which is the leak this whole feature is arranged around.
+   */
+  it('carries no message content anywhere in it', async () => {
+    await messaged('failed');
+    const text = JSON.stringify(await unreachableClients(actor(desk), { clock }));
+    for (const term of ['Appointment reminder: Tuesday 15:00', 'Stillwater', 'subject', 'body']) {
+      expect(text).not.toContain(term);
+    }
   });
 });

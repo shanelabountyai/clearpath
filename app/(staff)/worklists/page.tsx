@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
-import { continuityQueue, unconfirmedSoon, vacationImpact, waitlistMatches } from '../../../src/scheduling/worklists';
+import { continuityQueue, unconfirmedSoon, unreachableClients, vacationImpact, waitlistMatches } from '../../../src/scheduling/worklists';
 import { openRescheduleRequests } from '../../../src/portal/service';
 import { handleRescheduleRequest, handleInboundReplyCall } from './actions';
 import { openInboundReplies } from '../../../src/messaging/inbound';
@@ -16,9 +16,10 @@ async function WorkListsPage() {
   const { actor } = await requireSession();
   const today = localDateOf(systemClock.now());
 
-  const [replies, unconfirmed, continuity, absences] = await Promise.all([
+  const [replies, unconfirmed, unreachable, continuity, absences] = await Promise.all([
     openInboundReplies(actor),
     unconfirmedSoon(actor, { clock: systemClock, withinHours: 48 }),
+    unreachableClients(actor, { clock: systemClock }),
     continuityQueue(actor),
     prisma.availabilityOverride.findMany({
       where: { kind: 'unavailable', toDate: { gte: systemClock.now() } },
@@ -85,6 +86,55 @@ async function WorkListsPage() {
                           Called them
                         </button>
                       </form>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          </section>
+        )}
+
+        {/* P2. The other half of the delivery precondition. Once the fee needs
+            a delivery receipt, a client with a dead number stops being charged
+            — correctly, and completely silently. Without this section the
+            practice would simply stop reaching them, keep booking them, and
+            find out when they stopped coming. */}
+        {unreachable.length > 0 && (
+          <section>
+            <h2 className="mb-2 text-subhead font-semibold">Clients we cannot reach — check their details</h2>
+            <p className="mb-3 max-w-prose text-body text-muted">
+              The carrier could not deliver to these clients. They are exempt from the
+              no-show fee for as long as that is true — the practice failed to ask, so
+              there is nothing to charge for — but they are also not getting reminders.
+              A client drops off this list on their own the moment a message reaches them.
+            </p>
+            <Card className="p-0">
+              <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                {unreachable.map((u) => (
+                  <li key={u.client.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+                    <span className="text-body">
+                      <Link href={`/clients/${u.client.id}`} className="font-medium text-accent hover:underline">
+                        {u.client.lastName}, {u.client.firstName}
+                      </Link>
+                      <span className="ml-1.5 font-mono text-caption text-subtle">{u.client.code}</span>
+                      <span className="ml-2 text-muted">
+                        {u.failures === 1 ? 'one message' : `${u.failures} messages`} undelivered
+                        {u.lastFailureAt ? `, last ${localDateOf(u.lastFailureAt)}` : ''}
+                        {' · '}{u.treatingClinician.name}
+                      </span>
+                    </span>
+                    <span className="flex flex-wrap items-center gap-2">
+                      {/* The address that failed, so the fix is obvious: the one
+                          on file for the channel the practice was using. */}
+                      <span className="font-mono text-caption text-subtle">
+                        {u.channel === 'sms' ? (u.client.phone ?? 'no number on file') : (u.client.email ?? 'no address on file')}
+                      </span>
+                      {u.client.phone && u.channel !== 'sms' && (
+                        <a href={`tel:${u.client.phone}`} className="font-mono text-caption text-accent hover:underline">
+                          {u.client.phone}
+                        </a>
+                      )}
+                      <Badge tone="danger">{(u.failureCode ?? 'undelivered').replace(/_/g, ' ')}</Badge>
                     </span>
                   </li>
                 ))}
@@ -302,5 +352,5 @@ async function WorkListsPage() {
 export default withDenial(WorkListsPage, {
   title: 'Front-desk work lists',
   children:
-    'Unconfirmed sessions, continuity gaps, vacation reschedules and waitlist matches are scheduling work. They belong to front desk and the practice manager.',
+    'Unconfirmed sessions, undelivered reminders, continuity gaps, vacation reschedules and waitlist matches are scheduling work. They belong to front desk and the practice manager.',
 });

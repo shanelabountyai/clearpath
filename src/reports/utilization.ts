@@ -176,10 +176,43 @@ export async function confirmationReport(
       // "no messages" was never in the denominator of a question nobody put.
       const asked = totals.confirmed + totals.declined + totals.noResponse + totals.pending;
 
+      // P2. What the carrier did with the messages this policy sent, in the
+      // same range and on the same page as the money the policy produced.
+      //
+      // It is here rather than on a page of its own because of what it is for:
+      // the fee's precondition is now a delivery receipt, so a practice
+      // defending the charge needs the delivery rate in the same glance as the
+      // charge rate. A high `failed` count is not a messaging problem to look
+      // at later — it is the reason the charged number is lower than somebody
+      // expected, and it is a list of clients nobody is reaching.
+      const delivery = await tx.outboxMessage.groupBy({
+        by: ['deliveryState'],
+        where: {
+          templateKey: 'appointment_reminder',
+          scheduledFor: { gte: zonedToUtc(range.from, 0), lt: zonedToUtc(addDays(range.to, 1), 0) },
+        },
+        _count: { _all: true },
+      });
+      const count = (state: string) =>
+        delivery.find((d) => d.deliveryState === state)?._count._all ?? 0;
+      const messages = {
+        delivered: count('delivered'),
+        failed: count('failed'),
+        /** Accepted by a carrier and not yet spoken for. Not evidence of anything. */
+        awaiting: count('sent'),
+        queued: count('queued'),
+      };
+      const handed = messages.delivered + messages.failed + messages.awaiting;
+
       return {
         range,
         totals,
         asked,
+        messages: {
+          ...messages,
+          /** Of everything a carrier took. Queued rows have not been tried yet. */
+          deliveredRate: handed ? messages.delivered / handed : 0,
+        },
         rates: {
           confirmed: asked ? totals.confirmed / asked : 0,
           declined: asked ? totals.declined / asked : 0,

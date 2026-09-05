@@ -33,6 +33,7 @@
     "sweep:run": "dotenv -e .env -- tsx scripts/sweep-run.ts",
     "verify:seed": "dotenv -e .env -- tsx scripts/verify-seed.ts",
     "inbound:simulate": "dotenv -e .env -- tsx scripts/inbound-simulate.ts",
+    "carrier:run": "dotenv -e .env -- tsx scripts/carrier-run.ts",
     "verify:seed:e2e": "dotenv -e .env.e2e -- tsx scripts/verify-seed.ts"
   },
   "devDependencies": {
