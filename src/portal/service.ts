@@ -213,13 +213,16 @@ async function ownAppointment(
 const tokenActor = (link: { clientId: string }): Actor =>
   ({ id: link.clientId, role: 'client' });
 
-const tokenRequest = (link: { clientId: string }, appointmentId: string) => ({
+const tokenRequest = (link: { clientId: string }, appointmentId: string, reason: string) => ({
   actor: tokenActor(link),
   action: 'update' as const,
   resource: 'appointment' as const,
   resourceId: appointmentId,
   clientId: link.clientId,
   target: { ownerClientId: link.clientId },
+  // The answer, as a code. It is what lets an auditor count answers against an
+  // appointment without reading anything the client sent.
+  reason,
 });
 
 /**
@@ -245,7 +248,7 @@ export async function confirmAppointment(
   // of answers rather than of taps.
   if (appt.confirmation === 'confirmed') return appt;
 
-  return guarded(tokenRequest(link, appt.id), (tx) =>
+  return guarded(tokenRequest(link, appt.id, 'confirmed'), (tx) =>
     tx.appointment.update({ where: { id: appt.id }, data: { confirmation: 'confirmed' } }));
 }
 

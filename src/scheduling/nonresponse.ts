@@ -121,7 +121,7 @@ export async function runNonResponseSweep(clock: Clock = systemClock): Promise<S
     // outbox message behind it has nothing proving the practice ever asked,
     // which is the same answer for a stronger reason.
     if (!confirmationRequired(appt.client, appt, settings) || appt.reminders.length === 0) {
-      await guarded(request(appt), (tx) =>
+      await guarded(request(appt, 'confirmation_not_required'), (tx) =>
         tx.appointment.update({ where: { id: appt.id }, data: { confirmation: 'not_required' } }));
       result.exempted.push(appt.id);
       continue;
@@ -143,7 +143,7 @@ export async function runNonResponseSweep(clock: Clock = systemClock): Promise<S
       });
       result.noShow.push(appt.id);
     } else {
-      await guarded(request(appt), (tx) =>
+      await guarded(request(appt, 'no_response'), (tx) =>
         tx.appointment.update({ where: { id: appt.id }, data: { confirmation: 'no_response' } }));
     }
     result.noResponse.push(appt.id);
@@ -152,11 +152,17 @@ export async function runNonResponseSweep(clock: Clock = systemClock): Promise<S
   return result;
 }
 
-const request = (appt: { id: string; clientId: string }) => ({
+/**
+ * P0-9. A reason code and ids, and that is the whole row. The `no_show` branch
+ * does not come through here — it goes through `setStatus`, which derives the
+ * same code from the confirmation riding in the write.
+ */
+const request = (appt: { id: string; clientId: string }, reason: string) => ({
   actor: SYSTEM_ACTOR,
   action: 'update' as const,
   resource: 'appointment' as const,
   resourceId: appt.id,
   clientId: appt.clientId,
   target: { ownerClientId: appt.clientId },
+  reason,
 });

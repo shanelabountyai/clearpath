@@ -112,6 +112,12 @@ export async function setStatus(
       // Whose row this is. Staff roles decide on `always` and ignore it; it is
       // what lets the token door reach one appointment and no other.
       target: { ownerClientId: appt.clientId },
+      // The answer is the reason code, which is why the log can be read for
+      // "what determined this" without carrying a word anybody typed. The
+      // operational `opts.reason` deliberately does not go here: it is free
+      // text from a staff member, and free text in the audit log is one
+      // distracted afternoon away from clinical content.
+      reason: opts.confirmation,
     },
     (tx) => tx.appointment.update({ where: { id: appointmentId }, data }),
   );

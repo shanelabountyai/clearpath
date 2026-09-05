@@ -4,6 +4,7 @@ import { fixedClock, HOUR } from '../clock';
 import { prisma } from '../db';
 import { Forbidden } from '../errors';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
+import { assertsLiteral } from '../test/lint';
 import { bookAppointment } from './booking';
 import { attendanceSummary, canTransition, cancelAppointment, classifyCancellation, setStatus, waiveFee, TRANSITIONS, type Status } from './lifecycle';
 
@@ -404,7 +405,10 @@ it('nothing outside lifecycle.ts writes a no-show status', () => {
       if (!statSync(path).isFile()) continue;
       const src = readFileSync(path, 'utf8');
       if (!/prisma\.|tx\./.test(src)) continue;
-      if (/status:\s*['"`]no_show/.test(src)) offenders.push(path);
+      // Asserted, not merely mentioned: the auditor's "show me the charges
+      // nobody decided" query names this value in a `where` and decides
+      // nothing. See `assertsLiteral`.
+      if (assertsLiteral(src, 'status', 'no_show') > 0) offenders.push(path);
     }
   }
   expect(offenders).toEqual([]);

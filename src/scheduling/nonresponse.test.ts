@@ -1,7 +1,9 @@
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { DAY, HOUR, fixedClock } from '../clock';
 import { prisma } from '../db';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
+import { assertsLiteral } from '../test/lint';
 import { bookAppointment } from './booking';
 import { bookGroupSession } from './groups';
 import { setStatus, type Status } from './lifecycle';
@@ -316,4 +318,113 @@ describe('against the database', () => {
     // The three who answered keep their hour, and so does the group.
     expect(await prisma.appointment.count({ where: { status: 'scheduled' } })).toBe(3);
   });
+});
+
+/**
+ * The second structural lint this feature asks for, and the one with money
+ * attached.
+ *
+ * Everything above tests the sweep that exists. This tests the backfill script
+ * somebody writes next quarter to "tidy up old pending rows", which sets
+ * `no_response` across a table and hands the fee rule a set of appointments
+ * nobody was ever asked about — including the clients on `reminderPreference:
+ * 'none'`, for whom the exemption is a safety setting rather than a preference.
+ * Every behavioural spec in this file would still pass, because none of them
+ * calls it.
+ *
+ * So the check is on the shape of the module: a file that concludes silence
+ * must, in the same file, be seen to have asked whether asking was allowed.
+ */
+/** Files that conclude a client did not answer. See `assertsLiteral`. */
+const concludesNoResponse = (source: string) => assertsLiteral(source, 'confirmation', 'no_response') > 0;
+
+export function unguardedNoResponseWrites(files: { path: string; source: string }[]): string[] {
+  return files
+    .filter(({ source }) => concludesNoResponse(source))
+    .filter(({ source }) => !source.includes('confirmationRequired'))
+    .map(({ path }) => path);
+}
+
+describe('no path to a fee that has not asked whether it may charge', () => {
+  const files = () => {
+    const out: { path: string; source: string }[] = [];
+    for (const dir of ['src', 'app']) {
+      for (const f of readdirSync(dir, { recursive: true, encoding: 'utf8' })) {
+        const path = `${dir}/${f}`;
+        if (!/\.tsx?$/.test(f) || f.endsWith('.test.ts')) continue;
+        if (path.startsWith('src/generated/')) continue;
+        if (!statSync(path).isFile()) continue;
+        out.push({ path, source: readFileSync(path, 'utf8') });
+      }
+    }
+    return out;
+  };
+
+  it('holds across src/ and app/', () => {
+    expect(unguardedNoResponseWrites(files())).toEqual([]);
+  });
+
+  it('is concluded by exactly one module today', () => {
+    const writers = files()
+      .filter(({ source }) => concludesNoResponse(source))
+      .map(({ path }) => path);
+    expect(writers).toEqual(['src/scheduling/nonresponse.ts']);
+  });
+
+  it('does not mistake a report that reads the value for one that writes it', () => {
+    // The auditor's "show me the charges nobody decided" query names the same
+    // value and decides nothing. A lint that cannot tell the two apart would
+    // either fail on every report or pass on every backfill.
+    const count = (src: string) => assertsLiteral(src, 'confirmation', 'no_response');
+    expect(count(`
+      prisma.appointment.findMany({ where: { confirmation: 'no_response', status: 'no_show' } })
+    `)).toBe(0);
+    expect(count(`
+      tx.appointment.update({ where: { id }, data: { confirmation: 'no_response' } })
+    `)).toBe(1);
+    expect(count(`
+      setStatus(SYSTEM_ACTOR, id, 'no_show', { clock, confirmation: 'no_response' })
+    `)).toBe(1);
+  });
+
+  it('catches the backfill nobody has written yet', () => {
+    // The planted violation, so the lint is asserted rather than asserted-about.
+    const planted = [{
+      path: 'src/scripts/tidy-pending.ts',
+      source: `await prisma.appointment.updateMany({
+        where: { confirmation: 'pending' },
+        data: { confirmation: 'no_response' },
+      });`,
+    }];
+    expect(unguardedNoResponseWrites(planted)).toEqual(['src/scripts/tidy-pending.ts']);
+    // And clears once the eligibility question is asked in the same file.
+    expect(unguardedNoResponseWrites([{
+      ...planted[0]!,
+      source: `if (confirmationRequired(client, appt, settings)) {${planted[0]!.source}}`,
+    }])).toEqual([]);
+  });
+});
+
+/**
+ * P0-9's quietest requirement. The cadence and the sweep run unattended, so
+ * their output goes wherever a server's stdout goes — a log aggregator, a
+ * screen in an office, a support ticket. An appointment id in a log line is a
+ * client id one join away, and this application's whole claim is that the
+ * record is the only place the record lives. Counts only.
+ */
+it('the unattended jobs log counts, never ids', () => {
+  const offenders: string[] = [];
+  for (const path of [
+    'src/scheduling/reminders.ts', 'src/scheduling/nonresponse.ts',
+    'scripts/reminders-run.ts', 'scripts/sweep-run.ts',
+  ]) {
+    for (const line of readFileSync(path, 'utf8').split('\n')) {
+      if (!/\bconsole\.\w+/.test(line)) continue;
+      // The only interpolation allowed in a log line is a count of something.
+      for (const m of line.matchAll(/\$\{([^}]*)\}/g)) {
+        if (!/\.length\s*$/.test(m[1] ?? '')) offenders.push(`${path}: \${${m[1]}}`);
+      }
+    }
+  }
+  expect(offenders).toEqual([]);
 });

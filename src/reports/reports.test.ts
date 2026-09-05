@@ -7,7 +7,10 @@ import { bookAppointment } from '../scheduling/booking';
 import { cancelAppointment, setStatus } from '../scheduling/lifecycle';
 import { continuityQueue, vacationImpact, waitlistMatches } from '../scheduling/worklists';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
-import { queryAuditLog, toCsv } from './audit';
+import { confirmationTrail, noResponseFees, queryAuditLog, toCsv } from './audit';
+import { runReminderHorizon } from '../scheduling/reminders';
+import { runNonResponseSweep } from '../scheduling/nonresponse';
+import { confirmAppointment } from '../portal/service';
 import { utilizationReport, weeklyVolume, weekStart } from './utilization';
 
 let desk: Awaited<ReturnType<typeof makeUser>>;
@@ -236,6 +239,93 @@ describe('the auditor', () => {
       const csv = toCsv([{ reason: '=HYPERLINK("http://evil","click")' }]);
       expect(csv).toContain(`"'=HYPERLINK`);
     });
+  });
+});
+
+/**
+ * P0-9. The capstone question, asked by somebody who was not there: this client
+ * was charged for not answering — show me that they were asked, that they never
+ * did, and who decided that silence was the answer.
+ */
+describe('the evidence behind an automatic charge', () => {
+  const START = new Date('2026-09-01T19:00:00Z');
+
+  /** Book with a month's notice, run the cadence to its end, then sweep. */
+  async function charged(opts: { answer?: 'confirm'; startMinute?: number } = {}) {
+    const client = await makeClient(therapist.id);
+    await prisma.client.update({ where: { id: client.id }, data: { email: 'tc@example.test' } });
+    const appt = await bookAppointment(actor(desk), {
+      clientId: client.id, clinicianId: therapist.id, date: '2026-09-01',
+      startMinute: opts.startMinute ?? 15 * 60, type: 'standard', modality: 'in_person',
+      clock: fixedClock(new Date(START.getTime() - 30 * DAY)),
+    });
+
+    for (const at of [5 * DAY, DAY, 3 * HOUR]) {
+      await runReminderHorizon(fixedClock(new Date(START.getTime() - at)));
+    }
+    if (opts.answer === 'confirm') {
+      const link = await prisma.portalLink.findFirstOrThrow({ where: { clientId: client.id } });
+      await confirmAppointment(link.token, appt.id, {
+        clock: fixedClock(new Date(START.getTime() - 2 * HOUR)),
+      });
+    }
+    await runNonResponseSweep(fixedClock(new Date(START.getTime() + 20 * 60_000)));
+    return appt;
+  }
+
+  it('shows three sends, no answers, one determination and one fee', async () => {
+    const appt = await charged();
+    const trail = await confirmationTrail(actor(auditorUser), appt.id);
+
+    expect(trail).toMatchObject({
+      sends: 3,
+      stages: ['d5', 'd1', 'd0'],
+      answers: 0,
+      determinations: 1,
+      status: 'no_show',
+      confirmation: 'no_response',
+      feeCents: 9000,
+      waived: false,
+    });
+  });
+
+  it('shows the answer where there was one, and no determination', async () => {
+    const appt = await charged({ answer: 'confirm' });
+    const trail = await confirmationTrail(actor(auditorUser), appt.id);
+
+    expect(trail).toMatchObject({
+      answers: 1, determinations: 0, confirmation: 'confirmed', feeCents: null,
+    });
+  });
+
+  it('carries ids, codes and cents — never a name, a number or a body', async () => {
+    const appt = await charged();
+    const client = await prisma.client.findUniqueOrThrow({ where: { id: appt.clientId } });
+    const trail = await confirmationTrail(actor(auditorUser), appt.id);
+
+    const text = JSON.stringify(trail);
+    for (const secret of [client.firstName, client.lastName, client.code, client.email!]) {
+      expect(text).not.toContain(secret);
+    }
+    expect(text).not.toContain('Appointment reminder');
+  });
+
+  it('filters to the charges nobody decided', async () => {
+    const charged1 = await charged();
+    await charged({ answer: 'confirm', startMinute: 16 * 60 });
+
+    const rows = await noResponseFees(actor(auditorUser));
+    expect(rows.map((r) => r.id)).toEqual([charged1.id]);
+    expect(rows[0]).toMatchObject({ chargeFeeCents: 9000, feeWaivedAt: null });
+  });
+
+  it('is the auditor\'s, and not the practice manager\'s', async () => {
+    const appt = await charged();
+    await expect(confirmationTrail(actor(admin), appt.id)).rejects.toBeInstanceOf(Forbidden);
+    await expect(noResponseFees(actor(desk))).rejects.toBeInstanceOf(Forbidden);
+
+    const denials = await prisma.auditEvent.findMany({ where: { resource: 'audit_log', allowed: false } });
+    expect(denials.map((d) => d.actorRole).sort()).toEqual(['admin', 'front_desk']);
   });
 });
 

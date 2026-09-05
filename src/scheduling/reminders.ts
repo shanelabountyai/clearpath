@@ -94,7 +94,7 @@ export async function runReminderHorizon(
       // into `no_response`. The safety setting is not allowed to become a
       // billing trap by arriving late.
       if (appt.confirmation === 'pending') {
-        await guarded(auditFor(appt), (tx) =>
+        await guarded(auditFor(appt, 'confirmation_not_required'), (tx) =>
           tx.appointment.update({ where: { id: appt.id }, data: { confirmation: 'not_required' } }));
         result.exempted.push(appt.id);
       }
@@ -109,7 +109,7 @@ export async function runReminderHorizon(
     // rows, the promotion and the audit row commit together or not at all.
     // Losing a race leaves the work to the run that won it.
     try {
-      await guarded(auditFor(appt), async (tx) => {
+      await guarded(auditFor(appt, 'reminder_queued'), async (tx) => {
         // The response the reminder asks for is a tap, so the body needs the
         // client's own door in it. Their live link, or a first one — never a
         // second token type, and never a fresh token per stage.
@@ -157,10 +157,16 @@ export async function runReminderHorizon(
   return result;
 }
 
-const auditFor = (appt: { id: string; clientId: string }) => ({
+/**
+ * P0-9. Every row this job writes carries a reason code, so the trail says what
+ * happened as well as that something did — and a code is all it says. No body,
+ * no address, no name, no stage-by-stage narrative.
+ */
+const auditFor = (appt: { id: string; clientId: string }, reason: string) => ({
   actor: SYSTEM_ACTOR,
   action: 'update' as const,
   resource: 'appointment' as const,
   resourceId: appt.id,
   clientId: appt.clientId,
+  reason,
 });
