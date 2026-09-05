@@ -21,6 +21,8 @@ Kept as the work happens, not reconstructed afterwards.
    was not building it.
 10. **The confirmation loop and its fee** — an automatic charge, and the four
     things it is not allowed to conclude.
+11. **The reply nobody is allowed to read** — an inbound channel whose defining
+    property is that nothing said on it is kept.
 
 ---
 
@@ -667,6 +669,135 @@ exemption reappear as an absence nobody notices.
 
 ---
 
+## 11. The reply nobody is allowed to read
+
+Two P1 items, and they pull in opposite directions in a way worth writing down:
+one *reduces* the number of messages the practice sends, and the other accepts
+messages back.
+
+### Capping the cadence, because volume degrades the evidence
+
+Three messages a week to seventy standing clients is about eleven thousand
+messages a year. The obvious objection is cost and the obvious answer is that
+SMS is cheap — which misses it. The failure mode is that the reminder stops
+being read, and the reminder being read is the entire basis for treating silence
+as an answer. Left uncapped, the policy erodes its own evidence and then bills
+people for the erosion.
+
+So a client who has confirmed the last four times running drops to the
+day-before message alone, until they miss one. **The asymmetry is the design.**
+Earning the quieter cadence takes four answers; losing it takes one. A client
+drifting out of the habit — which, per Risk 1, is often the clinical signal
+rather than the noise — has their full cadence back on the next horizon run,
+before the drift can cost them a fee.
+
+The streak is *derived*, never counted. A `confirmationStreak` column would be
+one read instead of a query and a second copy of a fact the appointments already
+hold, so a corrected row or a backfill would leave the two disagreeing — in the
+direction of sending people fewer messages than they should get, which is
+exactly the direction nobody would notice. The lookback is bounded at three
+weeks per session, and that bound is part of the rule rather than a concession
+to the query planner: a client whose last four confirmations were a year ago is
+not a standing client with an earned cadence, they are somebody coming back.
+
+The cap narrows which stages exist and changes nothing about eligibility. One
+message is still asking. A capped client booked inside the day-before window
+gets nothing at all — which keeps `no_response` unreachable with no message
+behind it, the same invariant the whole fee rests on.
+
+**The seed found the mistake this feature invites, which is the reason to
+simulate rather than assign.** The old loop had clients answering "off the
+five-day message" at a fixed offset, and a capped client has no five-day
+message. Every capped client silently became a silent one, and the non-response
+count rose by a third with nothing failing. The loop now runs the cadence hourly
+through the practice's day and lets people answer the message they just got —
+more faithful, and what a real deployment does, since the job is idempotent and
+due-date driven. Measured: 1,168 reminders where the uncapped cadence sent
+1,355, with the answer rate and the fee count unchanged.
+
+### The inbound channel, and the thing it refuses to be
+
+Q1 resolved as "both": the tap-link ships first, and a client who texts back in
+words anyway should be understood rather than met with silence. What that must
+not become is an inbound channel that *stores* what they wrote.
+
+A person can reply to a reminder with anything. Some of them will reply with the
+most acute thing they have ever written, to a number the front desk monitors.
+Storing that body would put clinical content on an operational surface (hard
+rule 3) and route it to the one desk that must never see it (hard rule 9).
+
+So the message is classified in memory and dropped. **`InboundReply` has no
+column to put a body in** — that absence is the guarantee; the grep test is only
+the guard for the migration that adds one. The spec plants a sentence about
+self-harm in a reply and then greps the row, the outbox, the alerts and the
+audit log for it.
+
+An unreadable reply does three things and none of them is showing anybody the
+words: an `Alert` to the treating clinician alone carrying reason codes, an
+auto-reply, and a line on the front-desk list saying "this client replied — call
+them". The end-to-end spec asserts that the page does *not* contain the seeded
+message, because a page that quietly rendered it would pass every unit test in
+the file that forbids it.
+
+Matching is whole-message, not substring. "Yes if my ride works out" is not a
+yes, and a system that decides it is will confirm somebody's Tuesday on the
+strength of a word order. When the cost of guessing is a client's hour or a fee,
+the honest failure is `unparsed` — which reaches a person, who can ask.
+
+### Two things the PRD did not say, and one it could not
+
+**`STOP` is not a decline.** The PRD specified three classifications. A fourth
+was necessary and the reason is that both alternatives are wrong: read as a
+decline, `STOP` cancels a session the client never mentioned; read as
+`unparsed`, it earns an auto-reply, and replying to an opt-out is the one thing
+a carrier forbids. The correct response is to stop messaging them and say
+nothing — which also takes them out of reach of the fee, because the cadence's
+existing exemption branch pulls their live `pending` rows back to
+`not_required`. It is flagged as a PRD amendment rather than smuggled in.
+
+**The deny-list and the crisis line collided.** The auto-reply has to carry a
+number a person picks up, and P1-3 says it must also carry the crisis line — but
+`crisis` is *on the deny-list*, because it names why somebody might be attending,
+on a lock screen, which is precisely the disclosure the list exists to prevent.
+The two requirements are both right and cannot both be met literally.
+
+The resolution is that the message says what the number is *for* rather than
+what it is called: "If you need urgent help right now, call or text 988 at any
+hour." The information survives the constraint. Dropping either one would have
+been the easy wrong answer, and it is worth noticing that the constraint and the
+requirement come from the same instinct — protect the person holding the phone.
+988 is the real US line and the only real external number in this codebase,
+because a plausible-looking placeholder on that particular path would be worse
+than none.
+
+**The endpoint is the only write in this application with no session behind
+it**, and it can cancel an appointment. It is not left open the way the dev-mode
+switcher is: a shared secret in the header, and with `INBOUND_WEBHOOK_SECRET`
+unset it refuses everything rather than defaulting to open — a webhook that
+quietly works without its secret is a webhook nobody notices is unauthenticated.
+The route classifies nothing, decides nothing, and does not echo the message
+back, because a carrier logs its callbacks and an echo is the same leak by a
+longer route. The gap that remains is named in the route rather than papered
+over: a shared secret proves the *caller* is the carrier and says nothing about
+whether the carrier was told the truth about who sent the message.
+
+### The report, and one vocabulary for one question
+
+The confirmation report exists because Risk 1 is answerable only from data. Its
+rates are against the sessions the practice was *allowed* to ask about — a
+client on "no messages" was never in the denominator of a question nobody put to
+them, and dividing by them would flatter the confirmation rate by exactly the
+number of people the policy is forbidden to reach. `notRequired` is a column
+rather than a footnote, because hiding it would make the exemption invisible in
+the one place somebody is deciding whether the exemption is working.
+
+And a decline now carries one of the reschedule request's four codes rather than
+a parallel list. Two of them read oddly on a cancellation; that is the smaller
+cost than two places to add a fifth reason and a client answering the same
+question with different words depending on which button they came in through.
+
+---
+
 ## Decisions log
 
 | Decision | Why |
@@ -735,6 +866,16 @@ exemption reappear as an absence nobody notices.
 | The success metrics run inside the seed and fail it, rather than living in a spec | Each is a statement about a whole simulated quarter, and reproducing that in a test that truncates between cases would be reproducing the seed. A seed that can produce data violating its own eligibility rule will, quietly, on the run nobody watched |
 | The unconfirmed work list ships before the fee, and lists the clients who can never be charged | A practice that ships the charge without the list has automated a penalty and nothing else. Clients on `reminderPreference: 'none'` appear flagged *never asked* rather than hidden: they are precisely the people somebody should ring, and filtering them out would let the exemption reappear as an absence nobody notices |
 | Confirmation on the calendar is a border treatment, not a sixth colour | `status` already owns the colour channel, and confirmation is an independent axis — putting two independent facts on one channel makes neither readable. A dashed edge and an ellipsis say "still waiting" without competing, and the dynamic-token incident above is the standing reason not to reach for a status colour by name |
+| The confirmation streak is derived from appointment history, not counted in a column | A counter is one read instead of a query and a second copy of a fact the rows already hold. A corrected status or a backfill leaves the two disagreeing silently, in the direction of sending people fewer messages than they are owed — which is the direction nobody notices. The lookback bound is part of the rule too: a client whose last four confirmations were a year ago is somebody coming back, not somebody with an earned cadence |
+| Earning the quieter cadence takes four answers; losing it takes one | The client who drifts out of the habit is, per this feature's own stated risk, often displaying the clinical reason they are attending. The asymmetry puts their reminders back before the drift can cost them a fee, and it costs the practice one extra message |
+| The cap narrows the stages and never touches eligibility | One message is still asking, so a capped client who says nothing is still fee-eligible — otherwise the reward for being reliable would be a silent exemption nobody chose. And a capped client booked inside the day-before window queues nothing at all, which keeps the "no fee without an outbox row" invariant intact rather than special-casing around it |
+| `InboundReply` has no column for the message body | A client can reply to a reminder with anything, including the most acute thing they have ever written, to a number front desk monitors. The schema having nowhere to put it is a stronger guarantee than any policy about not reading it, and it makes every future query safe by construction. The grep test is not the rule — it is the guard for the migration that adds a column |
+| `STOP` is its own classification, not a decline (a PRD amendment) | Read as a decline it cancels a session the client never mentioned; read as `unparsed` it earns an auto-reply, and replying to an opt-out is the one thing a carrier forbids. The right answer — stop messaging, say nothing — is neither of the three the PRD named, so the fourth was added and flagged rather than forced into one that fits badly |
+| Keyword matching is whole-message, never substring | "Yes if my ride works out" is not a yes. A substring match confirms somebody's Tuesday on the strength of a word order, and the cost of being wrong is an hour or a fee. `unparsed` reaches a person who can ask, which is the correct failure |
+| The auto-reply says what the number is for rather than naming the crisis line | The deny-list forbids `crisis` because it names why somebody might be attending, on a lock screen — and P1-3 requires the one message that can carry an external number to carry that one. Both requirements come from the same instinct and cannot both be met literally; "if you need urgent help right now, call or text 988 at any hour" keeps the information and loses only the label. 988 is real, because a plausible placeholder on that path would be worse than none |
+| The inbound webhook refuses everything when its secret is unset | It is the only write endpoint in the application with no session behind it and it can cancel an appointment, so it does not get the dev switcher's latitude. Defaulting to open would mean a webhook that works without its secret, which is a webhook nobody notices is unauthenticated. What it still cannot prove — that the carrier was told the truth about who sent the message — is named in the route rather than implied by its absence |
+| The confirmation report's rates are against what the practice was allowed to ask | A client on "no messages" was never in the denominator of a question nobody put to them, and dividing by them would flatter the confirmation rate by exactly the count of people the policy may not reach. `notRequired` stays a visible column for the same reason: an exemption that disappears from the report disappears from the decision |
+| A decline reuses the reschedule request's four reason codes | Two of them read oddly on a cancellation. The alternative is two places to add a fifth reason, two things for a report to union, and a client answering the same question with different words depending on which button they came in through. Reusing an imperfect vocabulary beats maintaining two |
 | The cadence is a script and a function, with no scheduler dependency | Due times derive from `startAt` and the injected clock, so the job is idempotent and the schedule is an implementation detail of whatever calls it — cron, a timer, a hosted trigger, or a person typing `npm run reminders:run`. A missed hour costs lateness and nothing else, and the whole five-day cadence runs in a test in a millisecond because the clock is an argument |
 
 ## What this project deliberately is not

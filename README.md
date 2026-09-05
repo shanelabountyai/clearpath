@@ -75,6 +75,12 @@ and a test greps the rest of `src/` to prove no endpoint re-implements a role ch
   tokenized link. The portal shows appointment times and nothing clinical, and a
   reschedule request is a reason code rather than a message — there is no
   free-text channel from a client to the front desk.
+- **A client can text back, and nothing they write is kept.** An inbound reply is
+  classified as `confirm`, `decline`, `opt_out` or `unparsed` in memory and then
+  discarded — the `InboundReply` table has no column for a message body, which is
+  the guarantee rather than a policy about not reading it. An `unparsed` reply
+  alerts the treating clinician alone, sends back the practice's number and the
+  urgent-help line, and tells front desk to ring the client, with nothing to read.
 - **All outbound messages are outbox stubs.** Nothing is actually sent. This is
   load-bearing for the confirmation fee: today its precondition is a *queued*
   message, which proves the practice intended to ask. Attach a real carrier and
@@ -92,8 +98,8 @@ createdb clearpath_dev clearpath_test clearpath_e2e clearpath_shadow
 npm install
 npm run db:setup     # migrate all three, generate the client, seed dev + e2e
 npm run dev          # http://localhost:3700
-npm test             # 1,544 unit + integration tests
-npm run test:e2e     # 26 Playwright tests against a production build
+npm test             # 1,622 unit + integration tests
+npm run test:e2e     # 32 Playwright tests against a production build
 npm run verify:seed  # the seeded quarter, against its own success metrics
 ```
 
@@ -145,7 +151,7 @@ fixtures shaped to look like consequences. Client behaviour is dealt from a fixe
 cycle (70% confirm, 10% decline, 15% silent but present, 5% silent and absent)
 so the totals are hand-tallyable rather than sampled.
 
-The seed then checks itself. Fifteen success metrics run as queries at the end
+The seed then checks itself. Twenty-two success metrics run as queries at the end
 of `npm run db:seed`, and it refuses to finish if any fails — no fee for a client
 on `reminderPreference: 'none'`, no fee without a queued message behind it, no
 more than 5% of eligible sessions charged, and every one of the 102 clients who
@@ -173,5 +179,6 @@ means replacing that file's values and nothing else.
 | The discretion deny-list | [`src/messaging/outbox.ts`](src/messaging/outbox.ts) |
 | Whether the practice may ask, and when | [`src/scheduling/confirmation.ts`](src/scheduling/confirmation.ts) |
 | What silence means, and what it does not | [`src/scheduling/nonresponse.ts`](src/scheduling/nonresponse.ts) |
+| A reply classified and thrown away | [`src/messaging/inbound.ts`](src/messaging/inbound.ts) |
 | The seed's own success metrics | [`prisma/metrics.ts`](prisma/metrics.ts) |
 | Why any of it is shaped this way | [`WRITEUP.md`](WRITEUP.md) |

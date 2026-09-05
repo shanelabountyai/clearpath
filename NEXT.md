@@ -1,79 +1,73 @@
 # Next
 
-**Item:** Appointment confirmation loop — **Phase 5, the rest of P1** —
-[prd-appointment-confirmation.md](prd-appointment-confirmation.md), P1-2, P1-3,
-P1-4 and P1-5. P1-1 already shipped in Phase 4, so the order the PRD gives is
-now: cadence cap, then inbound keyword handling, then the report.
+**Item:** the appointment confirmation loop is **complete through P1**. What
+remains in [prd-appointment-confirmation.md](prd-appointment-confirmation.md) is
+the P2 list, and the first of those is the one that changes what the feature is
+allowed to claim.
 
-Phase 4 is committed and pushed. **The feature is P0-complete.** What exists:
+Phase 5 is committed and pushed. What landed on top of Phase 4:
 
-- `src/scheduling/nonresponse.ts` — `sweepAt` (pure, the whole policy as one
-  function of two fields and one flag) and `runNonResponseSweep(clock)`. Writes
-  `no_response` always, transitions `status` to `no_show` only from `scheduled`,
-  re-checks `confirmationRequired` **and** the existence of an outbox row before
-  the money, and goes through `setStatus` so the fee, the status and the
-  determination are one transaction with one audit row. `npm run sweep:run`.
-- `setStatus(..., 'no_show')` reads `noShowFeeCents` (schema default 9000,
-  identical to `lateCancelFeeCents`, so the split changed nothing).
-- `waiveFee(actor, id, reason, { clock })` in `lifecycle.ts` behind a new
-  `fee: waive` matrix cell, admin only. **The matrix is now 546 cells**, not 455
-  — three docs quote that number and all three are updated.
-- `confirmationTrail(actor, appointmentId)` and `noResponseFees(actor)` in
-  `src/reports/audit.ts`, both gated on `audit_log` (auditor only).
-- Reason codes on every state change in the feature. `setStatus` derives its
-  code from `opts.confirmation`; the operational cancel reason deliberately does
-  not reach the audit row.
-- `unconfirmedSoon(actor, { clock, withinHours })` in `worklists.ts`, plus the
-  front-desk section on `/worklists` (P1-1, pulled forward).
-- `ConfirmationChip` beside `StatusChip` on the appointment page; a dashed
-  border and an ellipsis on the calendar chip; the no-show fee and the four
-  confirmation settings on `/practice`.
-- Two lints: no fee path that has not called `confirmationRequired`, and no id
-  in a job's log line. The shared write-vs-filter helper is `src/test/lint.ts`.
-- `prisma/metrics.ts` — fifteen success metrics, run by the seed itself and by
-  `npm run verify:seed`. **The seed throws if any fails.**
-- `e2e/money.spec.ts` — the waiver's one role, and the work list's phone number.
+- **P1-2, the cadence cap.** `cadenceCapped(history, cap)` in
+  `confirmation.ts`, wired through `dueStages` via `ConfirmationSettings.capped`.
+  A client who confirms `confirmationStreakCap` times running (default 4) drops
+  to `d1` alone until they miss one. **The streak is derived from appointment
+  history, not stored** — `recentAnswers` in `reminders.ts`, bounded to three
+  weeks per session. Measured on the seeded quarter: 1,168 reminders where the
+  uncapped cadence sent 1,355, with the answer rate and fee count unchanged.
+- **P1-3, inbound replies.** `classifyReply` (pure) and `handleInboundReply` in
+  `src/messaging/inbound.ts`; `POST /api/inbound` behind a shared secret;
+  `npm run inbound:simulate`. `InboundReply` has **no body column** and a grep
+  test refuses any write that adds one. `unparsed` raises an `inbound_unparsed`
+  alert to the treating clinician, sends the auto-reply, and lands on the
+  front-desk list as "call them".
+- **P1-4**, `confirmationReport` in `src/reports/utilization.ts`, on
+  `/reports`. **P1-5**, a decline carries one of the portal's four reason codes.
 
-Gate at this commit: unit **1544/1544**, typecheck clean, e2e **26/26** against
-a production build, seed green on all fifteen metrics (34 charges from 692
-eligible sessions, 4.91%).
+Gate at this commit: unit **1622/1622**, typecheck clean, e2e **32/32** against
+a production build, seed green on **all twenty-two** metrics (34 charges from
+692 eligible, 4.91%; 148 sessions on the capped cadence; 2 replies waiting for
+a phone call).
 
-**The Phase 3 timezone finding is fixed, not carried.** `bookAppointment` and
-`bookGroupSession` now stamp `createdAt` from the injected clock, and a lint in
-`booking.test.ts` requires every appointment insert to name it. Nothing is
-outstanding from it.
+**Two decisions the owner should accept or reject before this ships anywhere.**
 
-Phase 5 specs to build:
+1. **`STOP` is a fourth classification, which the PRD did not specify.** Read as
+   a decline it cancels a session the client never mentioned; read as
+   `unparsed` it earns an auto-reply, and replying to an opt-out is the one
+   thing a carrier forbids. It now sets `reminderPreference = 'none'` and sends
+   nothing back. If that is wrong, it is one branch in `classifyReply` and one
+   in `handleInboundReply`.
+2. **The auto-reply names no crisis line, because `crisis` is on the
+   deny-list.** It says "If you need urgent help right now, call or text 988 at
+   any hour" instead. Both requirements were right and could not both be met
+   literally; this keeps the information and loses the label. Worth a read by
+   whoever owns the clinical copy.
 
-- **P1-2, and it probably should have been P0.** ~70 standing clients × 3
-  messages × 52 weeks is ~11,000 messages a year, and the failure mode is not
-  cost — it is that the reminder stops being read, which degrades the very
-  signal the fee depends on. Proposal in the PRD: after
-  `confirmationStreakCap` consecutive confirmations (default 4), drop that
-  client's series to `d1` only until they miss one. Needs a schema field and a
-  branch in `dueStages`, which is pure, so it is a unit spec first.
-- **P1-3** inbound keyword handling, committed rather than conditional (Q1).
-  Classify a body as `confirm | decline | unparsed` and **store only the
-  classification** — D-04, and the reason is that a client can reply to an
-  inbound channel with a crisis disclosure. An `unparsed` reply raises an
-  `Alert` to the treating clinician only (hard rule 9), sends the neutral
-  "please call us" auto-reply carrying the practice number and the crisis line,
-  and surfaces to front desk as "this client replied — call them," with nothing
-  to read.
-- **P1-4** confirmation-rate report beside the existing utilization report:
-  confirmed / declined / no-response / not-required per clinician and
-  practice-wide, plus the fee total the policy generated. `noResponseFees` is
-  already the query underneath the fee half.
-- **P1-5** decline reason codes — reuse the portal's existing four rather than
-  inventing a parallel vocabulary.
+P2, in the order that matters:
 
-**The standing recommendation, unchanged and not withdrawn.** Risk 1 in the PRD:
-non-response in counseling correlates with the reason people are attending, so
+- **A real carrier behind the outbox, with delivery receipts.** This is the
+  single biggest honesty upgrade available and it is not optional for a real
+  deployment. Today the fee's precondition is a *queued* message, which proves
+  the practice intended to ask. With a carrier attached it must become a
+  delivery receipt, or the practice charges clients for its own failed sends.
+  The metric `every non-response fee has an outbox row behind it` in
+  `prisma/metrics.ts` is where that change lands.
+- **Confirmation state feeding the waitlist.** A decline at `d5` is a
+  five-day-notice opening, which is exactly what a waitlisted client can take.
+  `waitlistMatches` already exists and takes a slot.
+- **Per-client cadence selection** — a client who wants only the day-of nudge.
+  The cap made the machinery for this: `ConfirmationSettings.capped` is already
+  a per-client property threaded through a pure function.
+- **Multi-language message bodies.** The deny-list is English-only and would
+  need one per language. A real gap, and named.
+
+**The standing recommendation, unchanged and not withdrawn.** Risk 1: in
+counseling, non-response correlates with the reason people are attending, so
 this policy's fee falls hardest on the clients least able to answer, and the
-practice learns about it as attrition rather than as complaints. The loop and
-the work list are the defensible half and both now ship. The number to look at
-before defending the money is the seeded quarter's non-response rate, and
-`autoNoShowOnNoResponse = false` is one row if it reads badly.
+practice learns about it as attrition rather than as complaints. Everything
+defensible now ships — the loop, the work list, the cap, the report. The number
+to look at before defending the money is the seeded quarter's non-response rate
+on `/reports`, and `autoNoShowOnNoResponse = false` is one row if it reads
+badly.
 
 Still open from earlier, answered but not actioned: the "refer a friend" growth
 motion is off (anti-kickback / state patient-brokering / ethics codes, and a
@@ -81,7 +75,12 @@ referral program cannot be built without linking two clients' records). The
 defensible version is a fixed-list `referralSource` field at intake —
 attribution only, no credit, no link between client records.
 
-**Local setup note.** `playwright.config.ts` expects Playwright's own browser
-download. On a machine that ships a system Chromium instead, run the sweep with
-`launchOptions: { executablePath: ... }` added to `use` — it was not committed,
-because pinning a path in the repo would break the ordinary install.
+**Local setup notes.**
+
+- `INBOUND_WEBHOOK_SECRET` must be set in `.env`, `.env.test` and `.env.e2e`, or
+  `/api/inbound` refuses every request. That refusal is deliberate; see
+  `app/api/inbound/route.ts`.
+- `playwright.config.ts` expects Playwright's own browser download. On a machine
+  that ships a system Chromium instead, add
+  `launchOptions: { executablePath: ... }` to `use` for the sweep — not
+  committed, because pinning a path would break the ordinary install.
