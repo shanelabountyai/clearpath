@@ -1,5 +1,5 @@
 import { guarded } from '../auth/guard';
-import type { Actor } from '../auth/permissions';
+import { SYSTEM_ACTOR } from '../auth/permissions';
 import { DAY, systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
 import { queueToClient } from '../messaging/outbox';
@@ -26,14 +26,6 @@ import {
  * queued a message. So there is no route to a charge that does not leave a row
  * proving the practice asked.
  */
-
-/**
- * The cadence has no person behind it, and the trail says so rather than
- * borrowing whoever happened to run the script. `admin` because the matrix
- * already grants it `appointment: update`; the id is not a user row, which is
- * why `AuditEvent.actorId` carries no foreign key.
- */
-export const SYSTEM_ACTOR: Actor = { id: 'system', role: 'admin' };
 
 /** `d5` is the furthest stage out, so nothing beyond it can be due yet. */
 const MAX_LEAD_DAYS = 5;

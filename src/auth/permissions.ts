@@ -261,6 +261,23 @@ export function requiresSecondFactor(role: Role): boolean {
   return role === 'therapist' || role === 'associate' || role === 'supervisor' || role === 'admin';
 }
 
+/**
+ * The actor behind work no person asked for.
+ *
+ * The cadence and the non-response sweep both write, and an audit row naming
+ * whoever happened to run the script — or the client the row belongs to —
+ * would be a false statement about who decided. `system` is honest and
+ * greppable (D-11). It lives here rather than beside either job because which
+ * role an automatic actor holds is a policy decision like every other one in
+ * this file: `admin`, because that is the role the matrix already grants
+ * `appointment: update`, and because a second, wider role invented for jobs is
+ * exactly the ad-hoc authorization this module exists to prevent.
+ *
+ * The id is not a user row, which is why `AuditEvent.actorId` carries no
+ * foreign key.
+ */
+export const SYSTEM_ACTOR: Actor = { id: 'system', role: 'admin' };
+
 export interface Decision {
   allowed: boolean;
   /** Which matrix rule decided it — goes in the audit row. */
