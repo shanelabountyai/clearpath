@@ -2,7 +2,8 @@ import { guarded } from '../auth/guard';
 import { ownCaseloadOnly, type Actor } from '../auth/permissions';
 import { systemClock, type Clock, DAY } from '../clock';
 import { prisma } from '../db';
-import { addDays, localDateOf, weekdayOf, zonedToUtc, type LocalDate } from '../time';
+import { addDays, localDateOf, utcToZoned, weekdayOf, zonedToUtc, type LocalDate } from '../time';
+import { overlaps } from './availability';
 
 /**
  * The work-lists. Each one exists because something that ought to be visible
@@ -16,11 +17,31 @@ import { addDays, localDateOf, weekdayOf, zonedToUtc, type LocalDate } from '../
  * A week off in a practice built on the same hour every week is this domain's
  * cascade: it is not one gap, it is fifteen conversations. So the absence
  * produces a work-list rather than fifteen silent holes in a calendar.
+ *
+ * `startMinute`/`endMinute` narrow it to part of each day, and passing them
+ * matters: an override recording two hours at the dentist used to hand back
+ * every session in the range, so a list whose whole value is that each row
+ * needs a phone call filled up with clients whose hour was never touched. A
+ * work-list nobody trusts is one nobody reads.
+ *
+ * Both bounds are minutes from local midnight on each day of the range, and
+ * the comparison assumes a session ends on the day it starts — true of every
+ * booking this practice can make, since working windows live inside one day.
  */
 export async function vacationImpact(
   actor: Actor,
-  input: { clinicianId: string; fromDate: LocalDate; toDate: LocalDate },
+  input: {
+    clinicianId: string;
+    fromDate: LocalDate;
+    toDate: LocalDate;
+    startMinute?: number | null;
+    endMinute?: number | null;
+  },
 ) {
+  const absent = {
+    startMinute: input.startMinute ?? 0,
+    endMinute: input.endMinute ?? 1440,
+  };
   return guarded(
     { actor, action: 'read', resource: 'appointment' },
     async (tx) => {
@@ -37,11 +58,18 @@ export async function vacationImpact(
         },
         orderBy: { startAt: 'asc' },
       });
-      return affected.map((a) => ({
-        ...a,
-        date: localDateOf(a.startAt),
-        standing: a.seriesId !== null,
-      }));
+      return affected
+        .filter((a) =>
+          overlaps(
+            { startMinute: utcToZoned(a.startAt).minutes, endMinute: utcToZoned(a.endAt).minutes },
+            absent,
+          ),
+        )
+        .map((a) => ({
+          ...a,
+          date: localDateOf(a.startAt),
+          standing: a.seriesId !== null,
+        }));
     },
   );
 }

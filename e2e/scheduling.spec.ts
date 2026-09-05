@@ -65,12 +65,81 @@ test.describe('the calendar', () => {
     await expect(page.getByText(/late cancellation|Advance notice/)).toBeVisible();
   });
 
+  /**
+   * Two hours out is not a day off, and the two have to read differently.
+   *
+   * The banner used to announce anybody with any override as away for the day
+   * while their morning sat in the grid below it — a page contradicting itself
+   * where front desk reads it fastest.
+   */
+  test('a part-day absence is stated as hours, and the rest of the day still runs', async ({ page }) => {
+    const [date, who, from, to] = sql(`
+      select to_char(o."fromDate", 'YYYY-MM-DD') || '|' || u.name
+             || '|' || o."startMinute" || '|' || o."endMinute"
+      from "AvailabilityOverride" o join "User" u on u.id = o."userId"
+      where o.kind = 'unavailable' and o."startMinute" is not null
+      order by o."fromDate" limit 1`).split('|');
+
+    await actAs(page, USERS.frontDesk);
+    await page.goto(`/calendar?date=${date}`);
+
+    // The hours are the whole point of the sentence, so they are in it.
+    const hhmm = (m: string) =>
+      `${String(Math.floor(Number(m) / 60)).padStart(2, '0')}:${String(Number(m) % 60).padStart(2, '0')}`;
+    await expect(page.getByText(new RegExp(`${who} out ${hhmm(from!)}.${hhmm(to!)}`))).toBeVisible();
+    await expect(page.getByText(new RegExp(`${who} away today`))).toHaveCount(0);
+
+    // The seeded day happens to hold a whole-week vacation as well, so the two
+    // shapes are in the same sentence — which is the sharpest form of the
+    // assertion: one clinician is gone and one is out for two hours, and the
+    // banner has to say so differently.
+    await expect(page.getByText(/away today/)).toBeVisible();
+
+    // And the part-day clinician is still seeing people the same day.
+    await expect(page.locator('a[href^="/appointments/"]').first()).toBeVisible();
+  });
+
   test('the work lists surface an absence and its displaced clients', async ({ page }) => {
     await actAs(page, USERS.frontDesk);
     await page.goto('/worklists');
     await expect(page.getByRole('heading', { name: 'Reschedules from clinician absence' })).toBeVisible();
     await expect(page.getByText('Annual leave')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Continuity of care' })).toBeVisible();
+  });
+
+  /**
+   * The other half: a part-day absence displaces the sessions inside its hours
+   * and nothing else. The list used to hand back the clinician's whole day, so
+   * every row was a phone call and most of them were not.
+   */
+  test('a part-day absence displaces only the sessions inside its hours', async ({ page }) => {
+    const inside = sql(`
+      select c."lastName"
+      from "AvailabilityOverride" o
+      join "Appointment" a on a."clinicianId" = o."userId"
+      join "Client" c on c.id = a."clientId"
+      where o.kind = 'unavailable' and o."startMinute" is not null
+        and (a."startAt" at time zone 'America/New_York')::date = o."fromDate"
+        and extract(hour from a."startAt" at time zone 'America/New_York') * 60 >= o."startMinute"
+        and extract(hour from a."startAt" at time zone 'America/New_York') * 60 < o."endMinute"
+      limit 1`);
+    const outside = sql(`
+      select c."lastName"
+      from "AvailabilityOverride" o
+      join "Appointment" a on a."clinicianId" = o."userId"
+      join "Client" c on c.id = a."clientId"
+      where o.kind = 'unavailable' and o."startMinute" is not null
+        and (a."startAt" at time zone 'America/New_York')::date = o."fromDate"
+        and extract(hour from a."startAt" at time zone 'America/New_York') * 60 < o."startMinute"
+      limit 1`);
+
+    await actAs(page, USERS.frontDesk);
+    await page.goto('/worklists');
+    await expect(page.getByText('Offsite training')).toBeVisible();
+
+    const card = page.locator('div', { hasText: 'Offsite training' }).last();
+    await expect(card.getByText(inside, { exact: false })).toBeVisible();
+    await expect(card.getByText(outside, { exact: false })).toHaveCount(0);
   });
 });
 

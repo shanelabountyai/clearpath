@@ -55,16 +55,23 @@ async function CalendarPage({
         </TierBanner>
       </div>
 
-      {day.away.length > 0 && (
+      {day.absences.length > 0 && (
         <p
           className="mb-4 rounded-[var(--radius)] border px-3 py-2 text-body"
           style={{ borderColor: 'var(--warning)', background: 'var(--warning-soft)' }}
         >
           <span aria-hidden>⚠ </span>
-          Away today:{' '}
-          {day.away
-            .map((id) => `${day.clinicians.find((c) => c.id === id)?.name ?? 'A clinician'} (${day.awayReasons[id]})`)
-            .join(', ')}
+          {day.absences
+            .map((a) => {
+              const who = day.clinicians.find((c) => c.id === a.userId)?.name ?? 'A clinician';
+              // An hour missing from the middle of a day is a different fact
+              // from a day off, and front desk acts on it differently.
+              const when = a.allDay
+                ? 'away today'
+                : `out ${a.lost.map((w) => `${minutesToHHMM(w.startMinute)}–${minutesToHHMM(w.endMinute)}`).join(', ')}`;
+              return `${who} ${when} (${a.reason})`;
+            })
+            .join('; ')}
           . <Link className="underline" href="/worklists">See the reschedule work-list</Link>.
         </p>
       )}

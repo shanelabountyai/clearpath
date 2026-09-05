@@ -78,6 +78,31 @@ export function workingWindows(
   return merge(windows);
 }
 
+/**
+ * The parts of today's pattern that overrides take away.
+ *
+ * `workingWindows` answers what is left, which is what booking needs. The day
+ * view needs the complement, and needs it separated from the pattern itself:
+ * being out from one until three is not a day off, and a screen that rounds it
+ * up to one is lying about the other six hours. Empty when nothing is lost, the
+ * whole pattern when the clinician is out for the day, and — the case that
+ * makes it usable in a banner — empty for someone who simply does not work this
+ * weekday, because not working Tuesdays is not an absence anybody needs told.
+ */
+export function lostWindows(
+  weekly: WeeklyWindow[],
+  overrides: Override[],
+  date: LocalDate,
+): Span[] {
+  const weekday = weekdayOf(date);
+  const pattern = merge(
+    weekly
+      .filter((w) => w.weekday === weekday)
+      .map(({ startMinute, endMinute }) => ({ startMinute, endMinute })),
+  );
+  return merge(workingWindows(weekly, overrides, date).reduce(subtract, pattern));
+}
+
 export const isAway = (overrides: Override[], date: LocalDate): boolean =>
   overrides.some(
     (o) => covers(o, date) && o.kind === 'unavailable' && o.startMinute == null && o.endMinute == null,

@@ -79,8 +79,8 @@ createdb clearpath_dev clearpath_test clearpath_e2e clearpath_shadow
 npm install
 npm run db:setup     # migrate all three, generate the client, seed dev + e2e
 npm run dev          # http://localhost:3700
-npm test             # 1,303 unit + integration tests
-npm run test:e2e     # 19 Playwright tests against a production build
+npm test             # 1,348 unit + integration tests
+npm run test:e2e     # 21 Playwright tests against a production build
 ```
 
 Local Postgres only, three databases and each for one job:

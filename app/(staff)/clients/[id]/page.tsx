@@ -8,7 +8,7 @@ import { breakGlassWouldHelp, may } from '../../../../src/auth/guard';
 import { prisma } from '../../../../src/db';
 import { Forbidden } from '../../../../src/errors';
 import { requireSession } from '../../../../src/session';
-import { localDateOf, minutesToHHMM, utcToZoned } from '../../../../src/time';
+import { calendarDateOf, localDateOf, minutesToHHMM, utcToZoned } from '../../../../src/time';
 import {
   Badge, Card, EmptyState, Field, LockedPanel, PageHeader, StatusChip, TierBanner, money,
 } from '../../../../src/ui/primitives';
@@ -125,7 +125,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
               </TierBanner>
             </div>
             <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
-              <Field label="Date of birth">{localDateOf(client.dateOfBirth)}</Field>
+              <Field label="Date of birth">{calendarDateOf(client.dateOfBirth)}</Field>
               <Field label="Phone">{client.phone}</Field>
               <Field label="Email">{client.email}</Field>
               <Field label="Emergency contact">

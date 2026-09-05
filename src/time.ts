@@ -93,6 +93,21 @@ export function localDateOf(instant: Date): LocalDate {
   return partsOf(instant).date;
 }
 
+/**
+ * The calendar date held in a `date` column.
+ *
+ * A date column has no time and no zone: a birthday is that day everywhere, and
+ * the first day of a vacation is that day whatever hour you ask. Postgres hands
+ * one back as UTC midnight, and reading that through `localDateOf` — which asks
+ * which wall-clock day an *instant* falls on here — moves it to the day before,
+ * every row, all year, because this timezone is always behind UTC. A date is
+ * not an instant, and they need different readers. `time.test.ts` fails the
+ * build if a `@db.Date` field is read through the wrong one.
+ */
+export function calendarDateOf(column: Date): LocalDate {
+  return column.toISOString().slice(0, 10);
+}
+
 export const minutesToHHMM = (m: number) =>
   `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 

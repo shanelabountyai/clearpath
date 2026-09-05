@@ -55,6 +55,69 @@ describe('the vacation work-list', () => {
     expect(impact.map((i) => i.date)).toEqual(['2026-09-01', '2026-09-01']);
   });
 
+  it('narrows to the hours of a part-day absence', async () => {
+    // Two hours at the dentist is not a day off. The list used to hand back
+    // every session in the range, so a work-list whose entire value is that
+    // each row needs a phone call filled up with clients nobody had to ring.
+    const morning = await makeClient(therapist.id, { code: 'TC-MORNING' });
+    const afternoon = await makeClient(therapist.id, { code: 'TC-AFTERNOON' });
+    await book(morning.id, 600); // 10:00
+    await book(afternoon.id, 840); // 14:00
+
+    const impact = await vacationImpact(actor(desk), {
+      clinicianId: therapist.id, fromDate: '2026-09-01', toDate: '2026-09-01',
+      startMinute: 780, endMinute: 900, // out 13:00–15:00
+    });
+    expect(impact.map((i) => i.client.code)).toEqual(['TC-AFTERNOON']);
+  });
+
+  it('counts a session that only overlaps the edge of the absence', async () => {
+    // Out from 13:00: the 12:30 session runs to 13:20 and is displaced; the
+    // one that ends exactly at 13:00 is not, because the window is half-open.
+    const straddles = await makeClient(therapist.id, { code: 'TC-STRADDLES' });
+    const clears = await makeClient(therapist.id, { code: 'TC-CLEARS' });
+    await book(straddles.id, 750); // 12:30–13:20
+    await book(clears.id, 670); // 11:10–12:00
+
+    const impact = await vacationImpact(actor(desk), {
+      clinicianId: therapist.id, fromDate: '2026-09-01', toDate: '2026-09-01',
+      startMinute: 780, endMinute: 1020,
+    });
+    expect(impact.map((i) => i.client.code)).toEqual(['TC-STRADDLES']);
+
+    const touching = await vacationImpact(actor(desk), {
+      clinicianId: therapist.id, fromDate: '2026-09-01', toDate: '2026-09-01',
+      startMinute: 800, endMinute: 1020, // 13:20, exactly when that session ends
+    });
+    expect(touching).toEqual([]);
+  });
+
+  it('applies the hours to every day of a multi-day absence', async () => {
+    const week1 = await makeClient(therapist.id, { code: 'TC-WEEK-1' });
+    const week2 = await makeClient(therapist.id, { code: 'TC-WEEK-2' });
+    await book(week1.id, 600, '2026-09-01');
+    await book(week2.id, 840, '2026-09-08');
+
+    const impact = await vacationImpact(actor(desk), {
+      clinicianId: therapist.id, fromDate: '2026-09-01', toDate: '2026-09-08',
+      startMinute: 780, endMinute: 1020,
+    });
+    expect(impact.map((i) => i.client.code)).toEqual(['TC-WEEK-2']);
+  });
+
+  it('still takes the whole day when the absence names no hours', async () => {
+    const morning = await makeClient(therapist.id, { code: 'TC-MORNING' });
+    const afternoon = await makeClient(therapist.id, { code: 'TC-AFTERNOON' });
+    await book(morning.id, 600);
+    await book(afternoon.id, 840);
+
+    const impact = await vacationImpact(actor(desk), {
+      clinicianId: therapist.id, fromDate: '2026-09-01', toDate: '2026-09-01',
+      startMinute: null, endMinute: null,
+    });
+    expect(impact.map((i) => i.client.code)).toEqual(['TC-MORNING', 'TC-AFTERNOON']);
+  });
+
   it('leaves already-cancelled sessions out of the work-list', async () => {
     const c = await makeClient(therapist.id);
     const appt = await book(c.id, 900);

@@ -1,11 +1,77 @@
 import { describe, expect, it } from 'vitest';
-import { freeSlots, isAway, overlaps, pickRoom, workingWindows, type Override, type WeeklyWindow } from './availability';
+import { freeSlots, isAway, lostWindows, overlaps, pickRoom, workingWindows, type Override, type WeeklyWindow } from './availability';
 
 // Tuesdays and Thursdays, 9:00–17:00.
 const weekly: WeeklyWindow[] = [
   { weekday: 2, startMinute: 540, endMinute: 1020 },
   { weekday: 4, startMinute: 540, endMinute: 1020 },
 ];
+
+describe('the working time an override takes away', () => {
+  const TUESDAY = '2026-09-01';
+  const WEDNESDAY = '2026-09-02';
+
+  it('is nothing when nothing is lost', () => {
+    expect(lostWindows(weekly, [], TUESDAY)).toEqual([]);
+  });
+
+  it('is the hours out, not the day, for a partial block', () => {
+    const dentist: Override[] = [
+      { fromDate: TUESDAY, toDate: TUESDAY, kind: 'unavailable', startMinute: 780, endMinute: 900 },
+    ];
+    expect(lostWindows(weekly, dentist, TUESDAY)).toEqual([{ startMinute: 780, endMinute: 900 }]);
+    // And the rest of the day is still worked, which is the half the day view
+    // used to throw away.
+    expect(workingWindows(weekly, dentist, TUESDAY)).toHaveLength(2);
+  });
+
+  it('clips a block that runs past the end of the working day', () => {
+    // Out from three until eight loses two hours of work, not five.
+    const early: Override[] = [
+      { fromDate: TUESDAY, toDate: TUESDAY, kind: 'unavailable', startMinute: 900, endMinute: 1200 },
+    ];
+    expect(lostWindows(weekly, early, TUESDAY)).toEqual([{ startMinute: 900, endMinute: 1020 }]);
+  });
+
+  it('is the whole pattern for a day off', () => {
+    const vacation: Override[] = [{ fromDate: '2026-09-01', toDate: '2026-09-01', kind: 'unavailable' }];
+    expect(lostWindows(weekly, vacation, TUESDAY)).toEqual([{ startMinute: 540, endMinute: 1020 }]);
+  });
+
+  it('is nothing on a weekday the clinician does not work', () => {
+    // A vacation covering a Wednesday takes no working time from someone who
+    // never works Wednesdays, and a banner announcing it would be noise.
+    const vacation: Override[] = [{ fromDate: '2026-09-01', toDate: '2026-09-04', kind: 'unavailable' }];
+    expect(lostWindows(weekly, vacation, WEDNESDAY)).toEqual([]);
+    expect(lostWindows(weekly, vacation, TUESDAY)).toHaveLength(1);
+  });
+
+  it('is nothing when the override only adds time', () => {
+    const extra: Override[] = [
+      { fromDate: WEDNESDAY, toDate: WEDNESDAY, kind: 'available', startMinute: 600, endMinute: 720 },
+    ];
+    expect(lostWindows(weekly, extra, WEDNESDAY)).toEqual([]);
+    // Added time is outside the pattern, so it cannot register as lost even on
+    // a day the clinician does work.
+    expect(lostWindows(weekly, [{ ...extra[0]!, fromDate: TUESDAY, toDate: TUESDAY }], TUESDAY)).toEqual([]);
+  });
+
+  it('reports two gaps when two blocks bite out of one day', () => {
+    const twice: Override[] = [
+      { fromDate: TUESDAY, toDate: TUESDAY, kind: 'unavailable', startMinute: 600, endMinute: 660 },
+      { fromDate: TUESDAY, toDate: TUESDAY, kind: 'unavailable', startMinute: 840, endMinute: 900 },
+    ];
+    expect(lostWindows(weekly, twice, TUESDAY)).toEqual([
+      { startMinute: 600, endMinute: 660 },
+      { startMinute: 840, endMinute: 900 },
+    ]);
+  });
+
+  it('ignores an override whose range does not reach the date', () => {
+    const nextWeek: Override[] = [{ fromDate: '2026-09-07', toDate: '2026-09-11', kind: 'unavailable' }];
+    expect(lostWindows(weekly, nextWeek, TUESDAY)).toEqual([]);
+  });
+});
 
 describe('working windows', () => {
   it('follows the weekly pattern', () => {

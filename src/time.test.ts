@@ -1,5 +1,6 @@
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { addDays, daysBetween, localDateOf, utcToZoned, weekdayOf, zonedToUtc } from './time';
+import { addDays, calendarDateOf, daysBetween, localDateOf, utcToZoned, weekdayOf, zonedToUtc } from './time';
 
 describe('local wall time to instant', () => {
   it('converts a winter afternoon (EST, UTC-5)', () => {
@@ -65,4 +66,101 @@ describe('calendar arithmetic', () => {
     // 01:30 UTC on the 2nd is still the evening of the 1st in New York.
     expect(localDateOf(new Date('2026-09-02T01:30:00Z'))).toBe('2026-09-01');
   });
+});
+
+describe('a date column is not an instant', () => {
+  // Postgres hands a `date` column back as midnight UTC, whatever wrote it.
+  const stored = (date: string) => new Date(`${date}T00:00:00Z`);
+
+  it('reads the date that is in the column', () => {
+    expect(calendarDateOf(stored('1990-04-12'))).toBe('1990-04-12');
+    expect(calendarDateOf(stored('2026-01-15'))).toBe('2026-01-15');
+  });
+
+  it('does not move it in either half of the year', () => {
+    // The practice timezone is behind UTC all year, so the old reading was a
+    // day early in January and a day early in July — never loudly wrong once.
+    for (const date of ['2026-01-15', '2026-03-08', '2026-07-04', '2026-11-01']) {
+      expect(calendarDateOf(stored(date))).toBe(date);
+      expect(localDateOf(stored(date))).toBe(addDays(date, -1));
+    }
+  });
+
+  it('still reads an instant as the local day it falls on', () => {
+    // The two readers exist precisely because they must disagree here.
+    expect(localDateOf(new Date('2026-09-02T01:30:00Z'))).toBe('2026-09-01');
+    expect(calendarDateOf(new Date('2026-09-02T01:30:00Z'))).toBe('2026-09-02');
+  });
+});
+
+/**
+ * Which fields are calendar dates, read from the schema rather than listed.
+ *
+ * A list typed out here would be right on the day it was written. Deriving it
+ * means a `@db.Date` column added next month is covered the day it lands —
+ * the same reason the role-check and author-only rules read the tree instead
+ * of a list of names.
+ */
+const DATE_COLUMNS = [
+  ...new Set(
+    [...readFileSync('prisma/schema.prisma', 'utf8').matchAll(/^\s*(\w+)\s+DateTime\??\s+@db\.Date/gm)]
+      .map((m) => m[1] as string),
+  ),
+];
+
+/**
+ * A calendar date read through a reader meant for instants.
+ *
+ * Every one of these was in the codebase, and each was a day early: a client's
+ * date of birth on their own record, the range a vacation covers in the
+ * booking slot-finder, a recurring series' first and last day, and the
+ * absence work-list. Nothing caught them because a day-early date is still a
+ * plausible date — it never throws, and it is wrong in the same direction all
+ * year, so no test written on a summer Tuesday reads differently in January.
+ */
+const READS_A_DATE_AS_AN_INSTANT = new RegExp(
+  String.raw`\b(?:localDateOf|utcToZoned)\(\s*[\w.?!\[\]]*\b(?:${DATE_COLUMNS.join('|')})\b\s*,?\s*\)`,
+);
+
+it('knows which fields the schema declares as dates', () => {
+  // If this ever comes back empty the lint below passes by finding nothing.
+  expect(DATE_COLUMNS).toEqual(expect.arrayContaining(['dateOfBirth', 'fromDate', 'toDate', 'startDate', 'endDate']));
+});
+
+it('recognises the mistake however it is written', () => {
+  const violations = [
+    'localDateOf(client.dateOfBirth)',
+    'fromDate: localDateOf(o.fromDate), toDate: localDateOf(o.toDate),',
+    'series.endDate ? localDateOf(series.endDate) : null',
+    '{localDateOf(d.absence.toDate)}',
+    'utcToZoned(row.startDate)',
+    'localDateOf( series.startDate )',
+  ];
+  expect(violations.filter((v) => !READS_A_DATE_AS_AN_INSTANT.test(v))).toEqual([]);
+
+  // And the reads that are correct: an instant column through the instant
+  // reader, and a date column through the date one.
+  const allowed = [
+    'localDateOf(a.startAt)',
+    'localDateOf(clock.now())',
+    'calendarDateOf(o.fromDate)',
+    'calendarDateOf(client.dateOfBirth)',
+    'utcToZoned(a.startAt).minutes',
+    'startAt: { gte: zonedToUtc(input.fromDate, 0) }',
+  ];
+  expect(allowed.filter((v) => READS_A_DATE_AS_AN_INSTANT.test(v))).toEqual([]);
+});
+
+it('no date column is read through an instant reader', () => {
+  const offenders: string[] = [];
+  for (const dir of ['src', 'app']) {
+    for (const f of readdirSync(dir, { recursive: true, encoding: 'utf8' })) {
+      const path = `${dir}/${f}`;
+      if (!/\.tsx?$/.test(f) || f.endsWith('.test.ts')) continue;
+      if (path.startsWith('src/generated/')) continue;
+      if (!statSync(path).isFile()) continue;
+      if (READS_A_DATE_AS_AN_INSTANT.test(readFileSync(path, 'utf8'))) offenders.push(path);
+    }
+  }
+  expect(offenders).toEqual([]);
 });

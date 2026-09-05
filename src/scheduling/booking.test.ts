@@ -25,6 +25,82 @@ beforeEach(async () => {
 });
 afterAll(() => prisma.$disconnect());
 
+describe('an absence against the slot-finder', () => {
+  /** A `date` column: Postgres returns it as UTC midnight, whatever wrote it. */
+  const dateColumn = (d: string) => new Date(`${d}T00:00:00Z`);
+  const NEXT_TUESDAY = '2026-09-08';
+  const MONDAY = '2026-08-31';
+
+  /** Mondays and Tuesdays, 9:00–17:00 — a pattern that can show a one-day slip. */
+  async function clinicianWorkingMondaysAndTuesdays() {
+    const u = await makeUser('therapist');
+    for (const weekday of [1, 2]) {
+      await prisma.availability.create({ data: { userId: u.id, weekday, startMinute: 540, endMinute: 1020 } });
+    }
+    return u;
+  }
+
+  it('clears the day the clinician is out, and only that day', async () => {
+    // The range was read through the instant reader, which in a timezone
+    // behind UTC moves both bounds a day early. A multi-day vacation hides
+    // that — shifted by one it still covers its own middle — so this asks
+    // with a single day, where a slip cannot be absorbed: the slot-finder
+    // cleared the Monday and offered the Tuesday the clinician is away.
+    await makeRoom('Room 1');
+    const t = await clinicianWorkingMondaysAndTuesdays();
+    await prisma.availabilityOverride.create({
+      data: {
+        userId: t.id, kind: 'unavailable',
+        fromDate: dateColumn(TUESDAY), toDate: dateColumn(TUESDAY),
+        reason: 'Annual leave',
+      },
+    });
+
+    expect(await availableSlots({ clinicianId: t.id, date: TUESDAY, type: 'standard', modality: 'in_person' }))
+      .toEqual([]);
+    expect(await availableSlots({ clinicianId: t.id, date: MONDAY, type: 'standard', modality: 'in_person' }))
+      .not.toEqual([]);
+  });
+
+  it('covers the last day of a range, not the day before the first', async () => {
+    await makeRoom('Room 1');
+    const t = await clinicianWorkingMondaysAndTuesdays();
+    await prisma.availabilityOverride.create({
+      data: {
+        userId: t.id, kind: 'unavailable',
+        fromDate: dateColumn('2026-09-07'), toDate: dateColumn(NEXT_TUESDAY),
+        reason: 'Annual leave',
+      },
+    });
+
+    // The Monday and Tuesday inside the range are gone; the Tuesday before it
+    // starts is a normal working day.
+    expect(await availableSlots({ clinicianId: t.id, date: NEXT_TUESDAY, type: 'standard', modality: 'in_person' }))
+      .toEqual([]);
+    expect(await availableSlots({ clinicianId: t.id, date: '2026-09-07', type: 'standard', modality: 'in_person' }))
+      .toEqual([]);
+    expect(await availableSlots({ clinicianId: t.id, date: TUESDAY, type: 'standard', modality: 'in_person' }))
+      .not.toEqual([]);
+  });
+
+  it('takes only the hours a part-day absence names', async () => {
+    await makeRoom('Room 1');
+    const t = await clinicianWorkingTuesdays();
+    await prisma.availabilityOverride.create({
+      data: {
+        userId: t.id, kind: 'unavailable',
+        fromDate: dateColumn(TUESDAY), toDate: dateColumn(TUESDAY),
+        startMinute: 780, endMinute: 900, reason: 'Dentist',
+      },
+    });
+
+    const slots = await availableSlots({ clinicianId: t.id, date: TUESDAY, type: 'standard', modality: 'in_person' });
+    expect(slots).toContain(540); // 9:00, still bookable
+    expect(slots.filter((m) => m >= 730 && m < 900)).toEqual([]); // nothing running into the gap
+    expect(slots).toContain(900); // 15:00, straight after
+  });
+});
+
 describe('the conditional resource', () => {
   it('gives an in-person session a room and a telehealth session none', async () => {
     await makeRoom('Room 1');
@@ -224,6 +300,45 @@ describe('recurring series', () => {
     expect(second.created).toEqual([]);
     expect(second.withdrawn).toEqual([]);
     expect(await prisma.appointment.count()).toBe(5);
+  });
+
+  it('materialises the occurrence that falls on the series end date', async () => {
+    // `endDate` is inclusive, and it is a `date` column. Read as an instant it
+    // came back a day early, which lands on a weekday the series never uses —
+    // so the last session of a fixed-length course silently never appeared.
+    for (let i = 1; i <= 4; i++) await makeRoom(`Room ${i}`);
+    const { series } = await makeSeries();
+    const LAST = '2026-09-22';
+    await prisma.appointmentSeries.update({
+      where: { id: series.id },
+      data: { endDate: new Date(`${LAST}T00:00:00Z`) },
+    });
+
+    const run = await materialiseSeries(actor(desk), series.id, { from: TUESDAY, horizonDays: 60 });
+
+    expect(run.created).toHaveLength(4); // 1, 8, 15 and 22 September
+    const dates = (await prisma.appointment.findMany({ orderBy: { startAt: 'asc' } }))
+      .map((a) => localDateOf(a.startAt));
+    expect(dates).toEqual(['2026-09-01', '2026-09-08', '2026-09-15', LAST]);
+  });
+
+  it('anchors a series whose start date is not on its own weekday', async () => {
+    // `anchorOf` shifts forward to the pattern's weekday, which absorbs a
+    // one-day error whenever the start date already sits on that weekday —
+    // which is every series this app creates. It stops absorbing it here: a
+    // Wednesday start read as the Tuesday before anchors a whole week early,
+    // and the client gets a session in the week before their course begins.
+    for (let i = 1; i <= 4; i++) await makeRoom(`Room ${i}`);
+    const { series } = await makeSeries();
+    await prisma.appointmentSeries.update({
+      where: { id: series.id },
+      data: { startDate: new Date('2026-09-02T00:00:00Z') }, // Wednesday; the pattern is Tuesdays
+    });
+
+    await materialiseSeries(actor(desk), series.id, { from: TUESDAY, horizonDays: 14 });
+
+    expect((await prisma.appointment.findMany({ orderBy: { startAt: 'asc' } })).map((a) => localDateOf(a.startAt)))
+      .toEqual(['2026-09-08', '2026-09-15']);
   });
 
   it('keeps a standing 3pm at 3pm across the autumn DST change', async () => {

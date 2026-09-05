@@ -343,6 +343,34 @@ async function main() {
   });
   log(`${nour.name} is away ${vacationFrom} to ${vacationTo} — ${displaced} standing sessions to reschedule`);
 
+  // ── and somebody is out for two hours, which is not the same thing ────
+  //
+  // The whole-week vacation was the only absence in the seed, so the code
+  // paths that separate part of a day from all of it never ran against real
+  // data. This one takes Rosa's 14:00 and leaves her 10:00 alone: the day
+  // view says "out 13:00–15:00" rather than "away today", and the reschedule
+  // work-list names one client rather than every client she sees that day.
+  // Placed in the same forward window as the vacation: the seed's dates are
+  // pinned so the screenshots reproduce, while the app reads the real clock,
+  // so anything meant to appear on a work-list has to sit ahead of it.
+  const offsite = addDays(TODAY, 16);
+  await prisma.availabilityOverride.create({
+    data: {
+      userId: rosa.id, kind: 'unavailable',
+      fromDate: new Date(`${offsite}T00:00:00Z`),
+      toDate: new Date(`${offsite}T00:00:00Z`),
+      startMinute: 13 * 60, endMinute: 15 * 60,
+      reason: 'Offsite training',
+    },
+  });
+  const partlyDisplaced = await prisma.appointment.count({
+    where: {
+      clinicianId: rosa.id, status: { in: ['scheduled', 'confirmed'] },
+      startAt: { gte: zonedToUtc(offsite, 13 * 60), lt: zonedToUtc(offsite, 15 * 60) },
+    },
+  });
+  log(`${rosa.name} is out 13:00–15:00 on ${offsite} — ${partlyDisplaced} session to move, not the day`);
+
   // ── waitlist ──────────────────────────────────────────────────────────
   for (const client of clients.slice(60, 68)) {
     await prisma.waitlistEntry.create({

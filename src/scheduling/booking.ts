@@ -3,7 +3,7 @@ import { guarded } from '../auth/guard';
 import { prisma, type Tx } from '../db';
 import { systemClock, type Clock } from '../clock';
 import { Conflict, NotFound } from '../errors';
-import { addDays, localDateOf, zonedToUtc, type LocalDate } from '../time';
+import { addDays, calendarDateOf, localDateOf, zonedToUtc, type LocalDate } from '../time';
 import { freeSlots, pickRoom, workingWindows, type Span } from './availability';
 import { DURATION_MINUTES, occurrenceKey, planOccurrences, type AppointmentType } from './recurrence';
 
@@ -160,7 +160,7 @@ export async function availableSlots(q: SlotQuery): Promise<number[]> {
   const windows = workingWindows(
     weekly,
     overrides.map((o) => ({
-      fromDate: localDateOf(o.fromDate), toDate: localDateOf(o.toDate),
+      fromDate: calendarDateOf(o.fromDate), toDate: calendarDateOf(o.toDate),
       kind: o.kind, startMinute: o.startMinute ?? undefined, endMinute: o.endMinute ?? undefined,
     })),
     q.date,
@@ -266,7 +266,8 @@ export async function materialiseSeries(
   const horizon = opts.horizonDays ?? settings?.recurrenceHorizonDays ?? 90;
   const clock = opts.clock ?? systemClock;
   const from = opts.from ?? localDateOf(clock.now());
-  const window = { from: from < localDateOf(series.startDate) ? localDateOf(series.startDate) : from, to: addDays(from, horizon) };
+  const seriesStart = calendarDateOf(series.startDate);
+  const window = { from: from < seriesStart ? seriesStart : from, to: addDays(from, horizon) };
 
   const existing = await prisma.appointment.findMany({
     where: { seriesId },
@@ -277,8 +278,8 @@ export async function materialiseSeries(
     {
       frequency: series.frequency,
       weekday: series.weekday,
-      startDate: localDateOf(series.startDate),
-      endDate: series.endDate ? localDateOf(series.endDate) : null,
+      startDate: seriesStart,
+      endDate: series.endDate ? calendarDateOf(series.endDate) : null,
     },
     existing.map((a) => ({
       id: a.id,

@@ -4,7 +4,7 @@ import { requireSession } from '../../../src/session';
 import { continuityQueue, vacationImpact, waitlistMatches } from '../../../src/scheduling/worklists';
 import { openRescheduleRequests } from '../../../src/portal/service';
 import { handleRescheduleRequest } from './actions';
-import { addDays, localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
+import { addDays, calendarDateOf, localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
 import { Badge, Card, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
 import { withDenial } from '@/src/ui/denied';
@@ -19,7 +19,10 @@ async function WorkListsPage() {
     continuityQueue(actor),
     prisma.availabilityOverride.findMany({
       where: { kind: 'unavailable', toDate: { gte: systemClock.now() } },
-      select: { userId: true, fromDate: true, toDate: true, reason: true, user: { select: { name: true } } },
+      select: {
+        userId: true, fromDate: true, toDate: true, startMinute: true, endMinute: true,
+        reason: true, user: { select: { name: true } },
+      },
       orderBy: { fromDate: 'asc' },
     }),
   ]);
@@ -29,8 +32,10 @@ async function WorkListsPage() {
       absence: a,
       sessions: await vacationImpact(actor, {
         clinicianId: a.userId,
-        fromDate: localDateOf(a.fromDate),
-        toDate: localDateOf(a.toDate),
+        fromDate: calendarDateOf(a.fromDate),
+        toDate: calendarDateOf(a.toDate),
+        startMinute: a.startMinute,
+        endMinute: a.endMinute,
       }),
     })),
   );
@@ -113,7 +118,12 @@ async function WorkListsPage() {
               .map((d) => (
                 <Card key={d.absence.userId + d.absence.fromDate.toISOString()} className="mb-3">
                   <h3 className="font-semibold">
-                    {d.absence.user.name} · {localDateOf(d.absence.fromDate)} to {localDateOf(d.absence.toDate)}
+                    {d.absence.user.name} · {calendarDateOf(d.absence.fromDate)} to {calendarDateOf(d.absence.toDate)}
+                    {d.absence.startMinute !== null && d.absence.endMinute !== null && (
+                      <span className="ml-2 font-normal text-muted">
+                        {minutesToHHMM(d.absence.startMinute)}–{minutesToHHMM(d.absence.endMinute)}
+                      </span>
+                    )}
                     <span className="ml-2 font-normal text-muted">{d.absence.reason}</span>
                   </h3>
                   <ul className="mt-2 divide-y" style={{ borderColor: 'var(--border)' }}>
