@@ -281,6 +281,57 @@ describe('auditor', () => {
   });
 });
 
+/**
+ * The shapes a role check gets written in.
+ *
+ * The first version of this lint matched `actor.role ===` and a role literal on
+ * the left of a comparison — the form the rule had actually been broken in. Four
+ * idiomatic spellings of the identical violation walked past it: destructuring
+ * to `role`, aliasing to a local, a `switch`, and `.includes()` over a list of
+ * roles. A lint that only finds the mistake somebody already made is a
+ * regression test wearing a lint's clothes, and this one is load-bearing: it is
+ * the whole evidence for the claim that authorization happens in one file.
+ *
+ * The alternation is built from `ROLES` rather than typed out, so adding a role
+ * to the matrix does not quietly narrow the lint that guards it.
+ */
+const ROLE_NAMES = ROLES.join('|');
+const ROLE_CHECKS: RegExp[] = [
+  // `actor.role === …`, whatever it is being compared to.
+  /\.role\s*[=!]==?/,
+  // `… === 'therapist'` — what destructuring and aliasing leave behind.
+  new RegExp(`[=!]==?\\s*['"](${ROLE_NAMES})['"]`),
+  // The same comparison written the other way round.
+  new RegExp(`['"](${ROLE_NAMES})['"]\\s*[=!]==?`),
+  // `switch (actor.role) { case 'supervisor': … }`.
+  /switch\s*\([^)]*\brole\b/,
+  // `['therapist', 'supervisor'].includes(actor.role)`.
+  /\.includes\(\s*[\w.]*\brole\b/,
+];
+
+const isRoleCheck = (src: string) => ROLE_CHECKS.some((re) => re.test(src));
+
+it('recognises a role check however it is spelled', () => {
+  // Every one of these passed the first version of the lint except the first.
+  const violations = [
+    "if (actor.role === 'therapist') return true;",
+    "const { role } = actor; if (role === 'therapist') return true;",
+    "const r = actor.role; if (r !== 'auditor') return true;",
+    "switch (actor.role) { case 'admin': return true; }",
+    "if (['therapist', 'supervisor'].includes(actor.role)) return true;",
+  ];
+  expect(violations.filter((v) => !isRoleCheck(v))).toEqual([]);
+
+  // And the two places a role name legitimately appears: choosing which users
+  // are clinicians, which is data selection rather than a permission, and a
+  // deny-list of clinical words that happens to contain one.
+  const allowed = [
+    "where: { active: true, role: { in: ['therapist', 'associate', 'supervisor'] } },",
+    "export const DENY_LIST = ['therapy', 'therapist', 'therapeutic'];",
+  ];
+  expect(allowed.filter(isRoleCheck)).toEqual([]);
+});
+
 it('no ad-hoc role checks outside the auth module', () => {
   const offenders: string[] = [];
   // `app/` is where the rule is easiest to break: a page that draws its own
@@ -291,11 +342,8 @@ it('no ad-hoc role checks outside the auth module', () => {
       if (!/\.tsx?$/.test(f) || f.endsWith('.test.ts')) continue;
       if (path.startsWith('src/auth/') || path.startsWith('src/generated/')) continue;
       if (!statSync(path).isFile()) continue;
-      const src = readFileSync(path, 'utf8');
       // Authorization decisions come from can(); nothing else branches on a role.
-      if (/\.role\s*[=!]==|['"](front_desk|therapist|associate|supervisor|admin|auditor)['"]\s*[=!]==/.test(src)) {
-        offenders.push(path);
-      }
+      if (isRoleCheck(readFileSync(path, 'utf8'))) offenders.push(path);
     }
   }
   expect(offenders).toEqual([]);
