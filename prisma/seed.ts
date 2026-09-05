@@ -27,6 +27,7 @@ const { confirmAppointment, declineAppointment } = await import('../src/portal/s
 const { waiveFee } = await import('../src/scheduling/lifecycle');
 const { bookGroupSession } = await import('../src/scheduling/groups');
 const { assertSeedMetrics } = await import('./metrics');
+const { handleInboundReply } = await import('../src/messaging/inbound');
 
 /** mulberry32 — small, fast, and identical on every machine. */
 function rng(seed: number) {
@@ -450,6 +451,45 @@ async function main() {
     },
     data: { status: 'confirmed' },
   });
+
+  // ── clients who texted back in words ──────────────────────────────────
+  //
+  // P1-3. The tap-link is the response this feature asked for, and some people
+  // reply anyway. Three of them here, each landing somewhere different: one
+  // understood and acted on, one asking to be left alone, and two the system
+  // could not read — which is the only kind that reaches a person.
+  const inboundAt = fixedClock(new Date(zonedToUtc(TODAY, 9 * 60).getTime() - 2 * 3_600_000));
+  const withPhone = await prisma.client.findMany({
+    where: { phone: { not: null }, reminderPreference: { not: 'none' } },
+    select: { id: true, phone: true },
+    orderBy: { code: 'desc' },
+    take: 4,
+  });
+
+  let understood = 0, unreadable = 0, optedOut = 0;
+  const REPLIES: [string, 'yes' | 'stop' | 'unreadable'][] = [
+    [withPhone[0]?.phone ?? '', 'yes'],
+    [withPhone[1]?.phone ?? '', 'stop'],
+    [withPhone[2]?.phone ?? '', 'unreadable'],
+    [withPhone[3]?.phone ?? '', 'unreadable'],
+  ];
+  const WORDS: Record<string, string> = {
+    yes: 'YES',
+    stop: 'STOP',
+    // Deliberately something no keyword list should ever guess at. The point of
+    // the fixture is the branch where the practice telephones rather than
+    // decides — and the words below exist in this file for one instant and are
+    // never written anywhere, which is the feature.
+    unreadable: 'sorry, can I call you tomorrow about this?',
+  };
+  for (const [from, kind] of REPLIES) {
+    if (!from) continue;
+    const reply = await handleInboundReply({ from, body: WORDS[kind]! }, { clock: inboundAt });
+    if (reply.classification === 'unparsed') unreadable++;
+    else if (reply.classification === 'opt_out') optedOut++;
+    else understood++;
+  }
+  log(`${understood + unreadable + optedOut} clients texted back: ${understood} understood, ${optedOut} asked to stop, ${unreadable} for front desk to ring`);
 
   // ── the rest of the awkward rows ──────────────────────────────────────
 

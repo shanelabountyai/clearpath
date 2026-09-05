@@ -18,6 +18,14 @@ const REASON_TEXT: Record<string, string> = {
   'threshold:moderate': 'The total score reached the moderate band.',
   'threshold:moderately_severe': 'The total score reached the moderately severe band.',
   'threshold:severe': 'The total score reached the severe band.',
+  // P1-3. Everything this alert can say. The reply itself was classified and
+  // discarded, so there is no version of this screen that shows you the words —
+  // which is the point, and is why the sentence says so rather than implying a
+  // detail view exists somewhere.
+  'inbound:unparsed':
+    'This client replied to a reminder in words we could not read as yes or no. '
+    + 'The message was not stored. They were sent our number and the urgent-help line, '
+    + 'and front desk has been asked to call them.',
 };
 
 async function AlertsPage() {

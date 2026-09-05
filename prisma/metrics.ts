@@ -147,6 +147,32 @@ export async function seedMetrics(): Promise<Metric[]> {
   const waived = await prisma.appointment.count({ where: { feeWaivedAt: { not: null } } });
   check('at least one fee has been waived', waived >= 1, `${waived} waived`);
 
+  // P1-3. The branch that matters is the one where the practice telephones,
+  // so the quarter has to contain one — and the row it leaves has to be empty
+  // of everything except the fact that it happened.
+  const replies = await prisma.inboundReply.findMany({
+    select: { id: true, classification: true, handledAt: true, clientId: true },
+  });
+  const unparsed = replies.filter((r) => r.classification === 'unparsed');
+  check('at least one client replied in words nobody here can read', unparsed.length >= 1,
+    `${unparsed.length} of ${replies.length} replies`);
+  check('and every one of them is waiting for a phone call',
+    unparsed.every((r) => r.handledAt === null), `${unparsed.filter((r) => r.handledAt).length} closed without one`);
+
+  const inboundAlerts = await prisma.alert.findMany({ where: { kind: 'inbound_unparsed' } });
+  check('each unreadable reply alerted exactly one treating clinician',
+    inboundAlerts.length === unparsed.length
+      && inboundAlerts.every((a) => a.reasons.join() === 'inbound:unparsed'),
+    `${inboundAlerts.length} alerts, reason codes only`);
+
+  const optedOut = replies.filter((r) => r.classification === 'opt_out');
+  const stillMessaged = await prisma.client.count({
+    where: { id: { in: optedOut.map((r) => r.clientId) }, reminderPreference: { not: 'none' } },
+  });
+  check('a client who asked to stop is not messaged again',
+    optedOut.length >= 1 && stillMessaged === 0,
+    `${optedOut.length} opted out, ${stillMessaged} still on a channel`);
+
   // P1-2, exercised by data rather than asserted in the abstract. A quarter in
   // which nobody ever earns the quieter cadence would leave the cap untested by
   // the one thing that tests it end to end.

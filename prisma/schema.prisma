@@ -101,6 +101,7 @@ model Client {
   createdAt          DateTime            @default(now())
   portalLinks        PortalLink[]
   rescheduleRequests RescheduleRequest[]
+  inboundReplies     InboundReply[]
 
   @@index([treatingClinicianId])
 }
@@ -137,6 +138,10 @@ model PracticeSettings {
   /// every client gets all three stages, forever, which is the volume problem
   /// this field exists to bound.
   confirmationStreakCap  Int     @default(4)
+  /// The number front desk answers. It reaches exactly one client-facing body:
+  /// the auto-reply to a message this system cannot read, which has to end
+  /// somewhere a person picks up.
+  contactPhone           String  @default("555-0100")
 }
 
 model Room {
@@ -319,6 +324,7 @@ model Appointment {
   processNotes       ProcessNote[]
   rescheduleRequests RescheduleRequest[]
   reminders          AppointmentReminder[]
+  inboundReplies     InboundReply[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -554,6 +560,49 @@ model FormSubmission {
 enum AlertKind {
   screener_threshold
   screener_critical_item
+  /// P1-3. A client replied in words this system could not classify. Carries
+  /// reason codes and nothing else — the words themselves were never stored.
+  inbound_unparsed
+}
+
+/// What a client's reply was, and the only thing kept of it.
+enum InboundClassification {
+  confirm
+  decline
+  /// Anything else. The body is classified and discarded, never stored: a
+  /// client can reply with anything, including the most acute thing they have
+  /// ever written, and storing it would put clinical content on an operational
+  /// surface and route it to the desk that must never see it.
+  unparsed
+  /// A carrier opt-out keyword. Not a decline — the client is unsubscribing,
+  /// not cancelling — and it is answered with silence and a preference change.
+  opt_out
+}
+
+/// A client texted back.
+///
+/// There is deliberately no `body` column, and that absence is the feature: it
+/// is not possible to store what they wrote, so no future query can leak it.
+/// A grep test in `inbound.test.ts` refuses any write that tries.
+model InboundReply {
+  id       String @id @default(cuid())
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id])
+  /// The session the reply was about, where there was an open question.
+  appointmentId String?
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
+
+  classification InboundClassification
+  channel        OutboxChannel
+
+  receivedAt  DateTime  @default(now())
+  /// Front desk rang them. Only `unparsed` replies need this — the rest were
+  /// understood and acted on.
+  handledAt   DateTime?
+  handledById String?
+
+  @@index([handledAt, receivedAt])
+  @@index([clientId, receivedAt])
 }
 
 /// Routes to the treating clinician only. Never a shared surface, never front

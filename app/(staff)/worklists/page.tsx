@@ -3,7 +3,8 @@ import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
 import { continuityQueue, unconfirmedSoon, vacationImpact, waitlistMatches } from '../../../src/scheduling/worklists';
 import { openRescheduleRequests } from '../../../src/portal/service';
-import { handleRescheduleRequest } from './actions';
+import { handleRescheduleRequest, handleInboundReplyCall } from './actions';
+import { openInboundReplies } from '../../../src/messaging/inbound';
 import { addDays, localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
 import { Badge, Card, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
@@ -15,7 +16,8 @@ async function WorkListsPage() {
   const { actor } = await requireSession();
   const today = localDateOf(systemClock.now());
 
-  const [unconfirmed, continuity, absences] = await Promise.all([
+  const [replies, unconfirmed, continuity, absences] = await Promise.all([
+    openInboundReplies(actor),
     unconfirmedSoon(actor, { clock: systemClock, withinHours: 48 }),
     continuityQueue(actor),
     prisma.availabilityOverride.findMany({
@@ -45,6 +47,52 @@ async function WorkListsPage() {
       <div className="mb-4"><TierBanner tier="operational" /></div>
 
       <div className="space-y-6">
+        {/* P1-3. Above everything, and short by design: a client wrote
+            something this system could not understand, and the only thing to
+            do about it is ring them. There is nothing here to read because
+            nothing was kept. */}
+        {replies.length > 0 && (
+          <section>
+            <h2 className="mb-2 text-subhead font-semibold">Clients who replied — call them</h2>
+            <p className="mb-3 max-w-prose text-body text-muted">
+              They texted back in words. The message was not stored and cannot be shown
+              to you: a reply to a reminder can contain anything, and this desk is not
+              where that should land. Their clinician has been told separately.
+            </p>
+            <Card className="p-0">
+              <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                {replies.map((r) => (
+                  <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+                    <span className="text-body">
+                      <Link href={`/clients/${r.client.id}`} className="font-medium text-accent hover:underline">
+                        {r.client.lastName}, {r.client.firstName}
+                      </Link>
+                      <span className="ml-1.5 font-mono text-caption text-subtle">{r.client.code}</span>
+                      <span className="ml-2 text-muted">
+                        replied {localDateOf(r.receivedAt)} · {r.client.treatingClinician.name}
+                      </span>
+                    </span>
+                    <span className="flex flex-wrap items-center gap-2">
+                      {r.client.phone
+                        ? <a href={`tel:${r.client.phone}`} className="font-mono text-caption text-accent hover:underline">{r.client.phone}</a>
+                        : <span className="text-caption text-subtle">no number on file</span>}
+                      <form action={handleInboundReplyCall}>
+                        <input type="hidden" name="replyId" value={r.id} />
+                        <button
+                          className="rounded-[var(--radius)] border px-2 py-1 text-caption font-medium"
+                          style={{ borderColor: 'var(--border-strong)' }}
+                        >
+                          Called them
+                        </button>
+                      </form>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          </section>
+        )}
+
         {/* P1-1. First on the page, because it is the list with a deadline on
             it: every row is a session starting inside two days that nobody has
             answered for, and the work is a phone call. */}

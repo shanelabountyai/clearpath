@@ -60,6 +60,8 @@ interface ClientMessageContext {
   practice: string;
   startAt?: Date;
   link?: string;
+  /** The number front desk answers. Only the inbound auto-reply carries it. */
+  contactPhone?: string;
 }
 
 /** Neutral by construction. Editable by the practice; still lint-gated on send. */
@@ -90,15 +92,40 @@ export const CLIENT_TEMPLATES: Record<string, (c: ClientMessageContext) => { sub
     subject: 'Your upcoming appointments',
     body: `You can see your upcoming appointments with ${practice} here: ${link}. The link is personal to you — please do not forward it.`,
   }),
+  /**
+   * P1-3. The answer to a message this system cannot read.
+   *
+   * It is the one client-facing body that carries phone numbers, and it has to:
+   * a reply that reached nobody would be worse than no inbound channel at all,
+   * because the client believes they have told somebody.
+   *
+   * Note what it does *not* say. "Crisis line" is on the deny-list — it names
+   * why somebody might be attending, on a lock screen, which is exactly the
+   * disclosure the list exists to stop — so the message says what the number is
+   * for instead of what it is called. The information survives the constraint;
+   * dropping either would have been the easy wrong answer.
+   *
+   * 988 is the United States Suicide & Crisis Lifeline, and it is the only real
+   * external number in this codebase. A placeholder here would be a plausible
+   * -looking dead end on the one path where that matters most.
+   */
+  inbound_unparsed: ({ contactPhone }) => ({
+    subject: 'We received your message',
+    body:
+      `We cannot read replies to this number. Please call us on ${contactPhone}. `
+      + 'If you need urgent help right now, call or text 988 at any hour.',
+  }),
   appointment_cancelled: ({ practice }) => ({
     subject: 'Appointment cancelled',
     body: `Your appointment with ${practice} has been cancelled. Reply to this message to rebook.`,
   }),
 };
 
-async function practiceName(db: Tx | typeof prisma): Promise<string> {
-  const s = await db.practiceSettings.findUnique({ where: { id: 1 }, select: { messagingName: true } });
-  return s?.messagingName ?? 'Stillwater';
+async function practiceVoice(db: Tx | typeof prisma) {
+  const s = await db.practiceSettings.findUnique({
+    where: { id: 1 }, select: { messagingName: true, contactPhone: true },
+  });
+  return { practice: s?.messagingName ?? 'Stillwater', contactPhone: s?.contactPhone ?? '555-0100' };
 }
 
 interface QueueToClient {
@@ -122,7 +149,7 @@ export async function queueToClient(input: QueueToClient, tx?: Tx) {
   if (!client || client.reminderPreference === 'none') return null;
 
   const { subject, body } = CLIENT_TEMPLATES[input.templateKey]!({
-    practice: await practiceName(db),
+    ...(await practiceVoice(db)),
     startAt: input.startAt,
     link: input.link,
   });
