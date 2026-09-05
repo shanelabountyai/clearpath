@@ -12,6 +12,22 @@ describe('occurrence dates', () => {
     expect(anchorOf(tuesdays)).toBe('2026-09-01');
   });
 
+  it('does not reach back before the window for an occurrence one day earlier', () => {
+    // The anchor is Tuesday 1 September and the window opens on the 2nd. The
+    // jump-ahead has to round a one-day gap up to a whole step, or the series
+    // hands back a date outside the range it was asked for.
+    expect(occurrenceDates(tuesdays, { from: '2026-09-02', to: '2026-09-15' })).toEqual([
+      '2026-09-08', '2026-09-15',
+    ]);
+  });
+
+  it('stops at the window even when the pattern runs well past it', () => {
+    // A standing series with an end date in October, asked about September:
+    // the window is the narrower of the two and the one that must win.
+    expect(occurrenceDates({ ...tuesdays, endDate: '2026-10-27' }, { from: '2026-09-01', to: '2026-09-15' }))
+      .toEqual(['2026-09-01', '2026-09-08', '2026-09-15']);
+  });
+
   it('walks weekly through the window', () => {
     expect(occurrenceDates(tuesdays, { from: '2026-09-01', to: '2026-09-29' })).toEqual([
       '2026-09-01', '2026-09-08', '2026-09-15', '2026-09-22', '2026-09-29',

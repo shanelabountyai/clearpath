@@ -39,6 +39,33 @@ describe('working windows', () => {
     expect(workingWindows(weekly, extra, '2026-09-02')).toEqual([{ startMinute: 600, endMinute: 720 }]);
   });
 
+  it('merges two windows that meet exactly, so a split shift reads as one', () => {
+    // 9:00-12:00 and 12:00-17:00 is one working day, not two. Merging on a
+    // strict `<` leaves them separate and the day reads as having a gap at noon.
+    expect(workingWindows([
+      { weekday: 2, startMinute: 540, endMinute: 720 },
+      { weekday: 2, startMinute: 720, endMinute: 1020 },
+    ], [], '2026-09-01')).toEqual([{ startMinute: 540, endMinute: 1020 }]);
+  });
+
+  it('merges a chain of three overlapping windows into one', () => {
+    // Each overlaps only its neighbour, so the merge has to carry the running
+    // window forward rather than compare each span against the one before it.
+    expect(workingWindows([
+      { weekday: 2, startMinute: 540, endMinute: 700 },
+      { weekday: 2, startMinute: 660, endMinute: 800 },
+      { weekday: 2, startMinute: 780, endMinute: 1020 },
+    ], [], '2026-09-01')).toEqual([{ startMinute: 540, endMinute: 1020 }]);
+  });
+
+  it('ignores an extra window added to a different day', () => {
+    // An evening clinic on the Thursday must not lengthen the Tuesday.
+    const elsewhere: Override[] = [
+      { fromDate: '2026-09-03', toDate: '2026-09-03', kind: 'available', startMinute: 1080, endMinute: 1200 },
+    ];
+    expect(workingWindows(weekly, elsewhere, '2026-09-01')).toEqual([{ startMinute: 540, endMinute: 1020 }]);
+  });
+
   it('lets unavailability win over an added window', () => {
     const both: Override[] = [
       { fromDate: '2026-09-02', toDate: '2026-09-02', kind: 'available', startMinute: 600, endMinute: 720 },

@@ -53,6 +53,27 @@ describe('side-by-side layout', () => {
     expect(at([span('b', 600, 650), span('a', 600, 650)])).toEqual({ a: '0/2', b: '1/2' });
   });
 
+  it('does not narrow a session because the one it touches overlaps a third', () => {
+    // `a` ends exactly as `b` starts, so `a` is alone and keeps the full width,
+    // while `b` and `c` genuinely overlap and share. Reading the cluster
+    // boundary as `>` instead of `>=` drags `a` into `b`'s cluster and halves
+    // it. Two touching sessions on their own cannot show this: `b` reuses the
+    // track `a` freed, so the cluster is one track wide either way.
+    expect(at([span('a', 600, 650), span('b', 650, 700), span('c', 660, 710)])).toEqual({
+      a: '0/1', b: '0/2', c: '1/2',
+    });
+  });
+
+  it('breaks a tie on end time before id, so the shorter of two 10:00s sits first', () => {
+    // The order-invariance test above proves the picture does not depend on the
+    // order the rows arrive in. It cannot prove the order chosen is the right
+    // one, because both sides of that comparison sort with the same comparator:
+    // one that consistently sorted by end time would satisfy it.
+    expect(at([span('a', 600, 660), span('b', 600, 650), span('c', 620, 680)])).toEqual({
+      b: '0/3', a: '1/3', c: '2/3',
+    });
+  });
+
   it('leaves the input alone', () => {
     const spans = [span('b', 700, 750), span('a', 600, 650)];
     layoutTracks(spans);

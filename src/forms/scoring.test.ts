@@ -198,3 +198,42 @@ describe('a submission renders against the version it was answered on', () => {
     expect(rendered.fields.find((f) => f.field.key === 'new')?.value).toBeNull();
   });
 });
+
+/**
+ * What an unanswered question is worth.
+ *
+ * Every case here was found by mutating `scoring.ts` and watching the suite
+ * pass anyway: the totals and the threshold fixtures pin the answers a client
+ * gives, and said nothing about the ones they leave. The blank is the clinical
+ * case — a half-finished screener is the normal way a screener arrives.
+ */
+describe('answers the client did not give', () => {
+  it('scores a visible but unanswered numeric item as nothing, not as a point', () => {
+    // Eight of the nine items answered, so item_9 is on screen and blank.
+    expect(scoreSubmission(schema, scoring, answers(1, 1, 1, 1, 1, 0, 0, 0)).total).toBe(5);
+  });
+
+  it('does not flag the critical item when nobody answered it', () => {
+    // A blank is not a disclosure. Flagging it would route an alert to a
+    // clinician about a question the client declined to answer.
+    const s = scoreSubmission(schema, scoring, answers(0, 0, 0, 0, 0, 0, 0, 0));
+    expect(s.reasons).toEqual([]);
+    expect(s.needsReview).toBe(false);
+  });
+
+  it('scores an answer the rules do not map as nothing', () => {
+    // An option retired from the template, or a value that never existed: it
+    // contributes nothing rather than defaulting to a score.
+    const rules: ScoringRules = { values: { item_1: { '0': 0, '3': 5 } }, thresholds: [] };
+    expect(scoreSubmission(schema, rules, { item_1: 7 }).total).toBe(0);
+  });
+});
+
+describe('a template with no scoring rules', () => {
+  it('scores nothing and asks for no review', () => {
+    // The intake form is not a screener. It must not arrive in a review queue
+    // just because it was submitted.
+    expect(scoreSubmission(intakeForm.schema, intakeForm.scoring, { full_name: 'Test Client 001' }))
+      .toEqual({ total: 0, band: null, reasons: [], needsReview: false });
+  });
+});
