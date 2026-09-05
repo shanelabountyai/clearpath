@@ -210,7 +210,9 @@ async function main() {
     } else if (roll < 0.12) {
       await prisma.appointment.update({
         where: { id: appt.id },
-        data: { status: 'no_show', chargeFeeCents: settings.lateCancelFeeCents },
+        // The no-show policy, which is its own field — a missed hour and a
+        // cancellation with some notice are not the same event.
+        data: { status: 'no_show', chargeFeeCents: settings.noShowFeeCents },
       });
     } else {
       await prisma.appointment.update({

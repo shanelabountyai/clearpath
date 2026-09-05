@@ -56,6 +56,9 @@ async function loadSettings() {
     (await prisma.practiceSettings.findUnique({ where: { id: 1 } })) ?? {
       id: 1, name: 'Stillwater Counseling', standardFeeCents: 18000,
       lateCancelWindowHours: 24, lateCancelFeeCents: 9000,
+      // Same figure as the late-cancel fee, which is the schema default too:
+      // the field exists so a practice can raise it, not so it starts higher.
+      noShowFeeCents: 9000,
       recurrenceHorizonDays: 90, continuityGapDays: 21,
     }
   );
@@ -86,9 +89,13 @@ export async function setStatus(
     data.cancelledById = actor.id;
     data.cancelReason = opts.reason ?? null;
   }
-  if (to === 'late_cancelled' || to === 'no_show') {
-    data.chargeFeeCents = settings.lateCancelFeeCents;
-  }
+  // Two policies, not one. A practice charging half for a cancellation with
+  // some notice and the full hour for an empty room is ordinary, and the
+  // fields ship at the same figure so the split changed nothing on the day it
+  // landed. Which of them applies is decided by the fact — not by whether a
+  // person or the non-response sweep noticed it.
+  if (to === 'late_cancelled') data.chargeFeeCents = settings.lateCancelFeeCents;
+  if (to === 'no_show') data.chargeFeeCents = settings.noShowFeeCents;
   if (to === 'completed') {
     const client = await prisma.client.findUnique({ where: { id: appt.clientId }, select: { feeCents: true } });
     data.chargeFeeCents = client?.feeCents ?? settings.standardFeeCents;

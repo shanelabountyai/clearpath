@@ -168,6 +168,77 @@ describe('against the database', () => {
   });
 
   /**
+   * P0-6. A practice charging 50% for a late cancel and 100% for a missed
+   * session is ordinary, and one field cannot say both. The field ships at the
+   * late-cancel figure, so the day it lands nothing moves — which is what the
+   * first spec here pins, and it passes on both sides of the change.
+   */
+  describe('the no-show fee is its own money', () => {
+    it('changes nothing while the two figures agree', async () => {
+      const appt = await book();
+      const out = await setStatus(actor(desk), appt.id, 'no_show');
+      expect(out.chargeFeeCents).toBe(9000);
+    });
+
+    it('charges the no-show figure, not the late-cancel one', async () => {
+      await settings({ noShowFeeCents: 18_000, lateCancelFeeCents: 9_000 });
+
+      const missed = await book();
+      expect((await setStatus(actor(desk), missed.id, 'no_show')).chargeFeeCents).toBe(18_000);
+
+      const cancelled = await bookAppointment(actor(desk), {
+        clientId: client.id, clinicianId: therapist.id, date: TUESDAY,
+        startMinute: 16 * 60, type: 'standard', modality: 'in_person',
+      });
+      const clock = fixedClock(new Date(SESSION_START.getTime() - HOUR));
+      expect((await cancelAppointment(actor(desk), cancelled.id, { clock })).chargeFeeCents).toBe(9000);
+    });
+
+    it('is the same fee whoever noticed — the policy is about the fact', async () => {
+      await settings({ noShowFeeCents: 12_500, lateCancelFeeCents: 9_000 });
+
+      const byHand = await book();
+      const byHandFee = (await setStatus(actor(desk), byHand.id, 'no_show')).chargeFeeCents;
+
+      const bySweep = await bookAppointment(actor(desk), {
+        clientId: client.id, clinicianId: therapist.id, date: TUESDAY,
+        startMinute: 16 * 60, type: 'standard', modality: 'in_person',
+      });
+      const bySweepFee = (await setStatus(
+        { id: 'system', role: 'admin' }, bySweep.id, 'no_show',
+      )).chargeFeeCents;
+
+      expect(byHandFee).toBe(12_500);
+      expect(bySweepFee).toBe(byHandFee);
+    });
+
+    it('keeps both figures in the chargeable total', async () => {
+      await settings({ noShowFeeCents: 18_000, lateCancelFeeCents: 9_000 });
+
+      const missed = await book();
+      await setStatus(actor(desk), missed.id, 'no_show');
+      const late = await bookAppointment(actor(desk), {
+        clientId: client.id, clinicianId: therapist.id, date: TUESDAY,
+        startMinute: 16 * 60, type: 'standard', modality: 'in_person',
+      });
+      await cancelAppointment(actor(desk), late.id, {
+        clock: fixedClock(new Date(SESSION_START.getTime() - HOUR)),
+      });
+
+      const summary = await attendanceSummary(actor(therapist), client.id);
+      expect(summary.chargeableFeeCents).toBe(27_000);
+    });
+
+    it('is integer cents, never a float and never a string', async () => {
+      await settings({ noShowFeeCents: 18_000 });
+      const appt = await book();
+      const fee = (await setStatus(actor(desk), appt.id, 'no_show')).chargeFeeCents;
+      expect(Number.isInteger(fee)).toBe(true);
+      expect(typeof fee).toBe('number');
+    });
+  });
+
+  /**
    * P0-1. Confirmation and attendance are separate facts, and an attendance
    * write never speaks for the client. The second test here is the row the
    * whole confirmation feature is judged on: silent, present, charged for the
