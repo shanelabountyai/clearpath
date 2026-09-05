@@ -1,0 +1,114 @@
+# Every rule this project argues for is enforced by something that runs:
+# the permission matrix asserts its denial cells, two lints grep the tree for
+# role checks and unfiltered process-note queries, a reporter holds README's
+# counts to the suite, and the denial sweep walks the route tree. None of that
+# was running anywhere but a laptop. This is where it runs on every push.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# A newer push supersedes an older run on the same branch; main is never cancelled.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      # Local Postgres, per CLAUDE.md — a service container on the runner is
+      # localhost, which is also what `src/db.ts` and `prisma.config.ts` will
+      # accept: they refuse a cloud host unless CLEARPATH_ALLOW_CLOUD_DB is set,
+      # and nothing here sets it.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: clearpath
+          POSTGRES_USER: clearpath
+          POSTGRES_DB: clearpath_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # `e2e/fixtures.ts` reads the seeded practice by shelling out to `psql`
+      # rather than hard-coding ids, and passes no connection flags. On a laptop
+      # that resolves by peer auth; here it needs saying.
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: clearpath
+      PGPASSWORD: clearpath
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # The three databases the README describes, each for one job. `_test` is
+      # truncated between every test and `_e2e` holds a seeded practice, so
+      # sharing one would mean whichever suite ran last decided what the other saw.
+      # Written before `npm ci`, because postinstall runs `prisma generate` and
+      # `prisma.config.ts` reads DATABASE_URL from `.env`.
+      - name: Create databases and env files
+        run: |
+          for db in clearpath_test clearpath_e2e clearpath_shadow; do
+            psql -d clearpath_dev -c "CREATE DATABASE $db"
+          done
+          base="postgresql://clearpath:clearpath@localhost:5432"
+          query="connection_limit=10&pool_timeout=20"
+          for env in dev:.env test:.env.test e2e:.env.e2e; do
+            printf 'DATABASE_URL="%s/clearpath_%s?%s"\nSHADOW_DATABASE_URL="%s/clearpath_shadow"\n' \
+              "$base" "${env%%:*}" "$query" "$base" > "${env##*:}"
+          done
+
+      - run: npm ci
+
+      - run: npm run db:migrate:test
+
+      # `pretest` typechecks first — both trees, app and e2e — so a run that
+      # gets this far has already compiled. The suite reporter fails the run if
+      # README's test count has drifted from the suite it describes.
+      - name: Typecheck and unit + integration suite
+        run: npm test
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # Migrates, seeds, builds for production and sweeps. e2e runs against a
+      # production build rather than the dev server, which is the artifact that
+      # ships.
+      - name: End-to-end sweep
+        run: npm run test:e2e
+
+      # The README's four pictures are captured by this spec rather than taken by
+      # hand, so a picture pointing at UI that no longer exists is a spec that
+      # fails to find it. What runs here is that check — every locator resolves —
+      # and not a comparison of the pixels. A capture is byte-stable on one
+      # machine and not across two: of the four committed images, the one
+      # regenerated most recently reproduces exactly on this runner class and
+      # the three captured on an earlier machine wrap their text a line
+      # differently. Asserting bytes would therefore report the font stack of
+      # whoever ran it last. Re-capturing stays a deliberate `npm run shots`.
+      - name: README screenshots still find what they point at
+        run: npm run shots && git checkout -- docs/screenshots
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
