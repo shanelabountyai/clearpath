@@ -1,4 +1,4 @@
-import { actAs, expect, test, USERS } from './fixtures';
+import { actAs, expect, sql, test, USERS } from './fixtures';
 import { addDays, localDateOf, weekdayOf } from '../src/time';
 
 /**
@@ -24,9 +24,20 @@ test.describe('the calendar', () => {
   });
 
   test('a cancellation states its consequence before the click', async ({ page }) => {
+    // A *cancellable* session, named rather than taken in document order. Since
+    // P2-2 the seeded practice gives some of the coming month's hours back, so
+    // the first chip on a day is no longer reliably one that can be cancelled —
+    // and a cancelled session correctly offers no cancel form.
+    const date = nextMonday();
+    const id = sql(
+      `select id from "Appointment"`
+      + ` where ("startAt" at time zone 'America/New_York')::date = '${date}'`
+      + ` and status = 'scheduled' order by "startAt", id limit 1`,
+    );
+
     await actAs(page, USERS.frontDesk);
-    await page.goto(`/calendar?date=${nextMonday()}`);
-    await page.locator('a[href^="/appointments/"]').first().click();
+    await page.goto(`/calendar?date=${date}`);
+    await page.locator(`a[href="/appointments/${id}"]`).first().click();
 
     await expect(page.getByRole('heading', { name: /Cancel/ })).toBeVisible();
     await expect(page.getByText(/late cancellation|Advance notice/)).toBeVisible();

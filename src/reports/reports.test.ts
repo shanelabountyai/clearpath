@@ -5,7 +5,7 @@ import { prisma } from '../db';
 import { Forbidden } from '../errors';
 import { bookAppointment } from '../scheduling/booking';
 import { cancelAppointment, setStatus, waiveFee } from '../scheduling/lifecycle';
-import { continuityQueue, unconfirmedSoon, unreachableClients, vacationImpact, waitlistMatches } from '../scheduling/worklists';
+import { continuityQueue, freedSlots, unconfirmedSoon, unreachableClients, vacationImpact, waitlistMatches } from '../scheduling/worklists';
 import { actor, deliverOutbox, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { confirmationTrail, noResponseFees, queryAuditLog, toCsv } from './audit';
 import { runReminderHorizon } from '../scheduling/reminders';
@@ -150,9 +150,202 @@ describe('the waitlist', () => {
       ],
     });
 
-    const matches = await waitlistMatches(actor(desk), { date: '2026-09-01', startMinute: 900 });
+    const matches = await waitlistMatches(actor(desk), {
+      date: '2026-09-01', startMinute: 900, clinicianId: therapist.id,
+    });
     expect(matches.map((m) => m.client.code).sort()).toEqual(['TC-ANY', 'TC-WANTS']);
     expect(await prisma.appointment.count()).toBe(0);
+  });
+
+  /**
+   * The rule that outranks every preference the client stated. A waiting client
+   * of another therapist fits the day and the hour perfectly and is still not
+   * offered it, because the offer would be to see somebody else.
+   */
+  it('never offers one clinician\u2019s hour to another clinician\u2019s client', async () => {
+    const other = await makeUser('therapist');
+    const theirs = await makeClient(other.id, { code: 'TC-OTHER' });
+    const ours = await makeClient(therapist.id, { code: 'TC-OURS' });
+    await prisma.waitlistEntry.createMany({
+      data: [
+        { clientId: theirs.id, weekdays: [2], earliestMinute: 840, latestMinute: 1020 },
+        { clientId: ours.id, weekdays: [2], earliestMinute: 840, latestMinute: 1020 },
+      ],
+    });
+
+    const matches = await waitlistMatches(actor(desk), {
+      date: '2026-09-01', startMinute: 900, clinicianId: therapist.id,
+    });
+    expect(matches.map((m) => m.client.code)).toEqual(['TC-OURS']);
+  });
+});
+
+/**
+ * P2-2. The freed hour, and who has been waiting for one.
+ *
+ * `2026-09-01` is a Tuesday and the therapist works 09:00\u201317:00 on it, which is
+ * what the shared `beforeEach` sets up. Every clock here is fixed a few days
+ * before that, so a cancellation is always in the future.
+ */
+describe('freed slots', () => {
+  const FRIDAY_BEFORE = fixedClock('2026-08-28T12:00:00Z');
+
+  const cancelledSession = async (startMinute = 900, date = '2026-09-01') => {
+    const c = await makeClient(therapist.id);
+    const appt = await book(c.id, startMinute, date);
+    await cancelAppointment(actor(desk), appt.id, { clock: FRIDAY_BEFORE });
+    return { client: c, appt };
+  };
+
+  it('turns a future cancellation into an opening, with the notice remaining', async () => {
+    await cancelledSession();
+
+    const slots = await freedSlots(actor(desk), { clock: FRIDAY_BEFORE });
+    expect(slots).toHaveLength(1);
+    expect(slots[0]!.date).toBe('2026-09-01');
+    expect(slots[0]!.startMinute).toBe(900);
+    expect(slots[0]!.clinician.id).toBe(therapist.id);
+    expect(slots[0]!.notice).toBe('4 days');
+    expect(slots[0]!.fillability).toBe('ample');
+  });
+
+  /** A decline is one source of an opening, not the definition of one. */
+  it('includes a hour the front desk cancelled, not only a client decline', async () => {
+    const { appt } = await cancelledSession();
+    const row = await prisma.appointment.findUnique({ where: { id: appt.id } });
+    expect(row!.confirmation).toBe('not_required');
+
+    const slots = await freedSlots(actor(desk), { clock: FRIDAY_BEFORE });
+    expect(slots).toHaveLength(1);
+  });
+
+  it('carries the confirmation through, so a decline is legible as one', async () => {
+    const c = await makeClient(therapist.id);
+    const appt = await book(c.id, 900);
+    await cancelAppointment(actor(desk), appt.id, { clock: FRIDAY_BEFORE, confirmation: 'declined' });
+
+    const slots = await freedSlots(actor(desk), { clock: FRIDAY_BEFORE });
+    expect(slots[0]!.confirmation).toBe('declined');
+  });
+
+  it('never shows an hour that has already started', async () => {
+    await cancelledSession();
+    const after = fixedClock('2026-09-01T19:30:00Z');
+    expect(await freedSlots(actor(desk), { clock: after })).toEqual([]);
+  });
+
+  it('drops an hour somebody was rebooked into, with nothing marked as handled', async () => {
+    await cancelledSession();
+    expect(await freedSlots(actor(desk), { clock: FRIDAY_BEFORE })).toHaveLength(1);
+
+    const filled = await makeClient(therapist.id);
+    await book(filled.id, 900);
+    expect(await freedSlots(actor(desk), { clock: FRIDAY_BEFORE })).toEqual([]);
+  });
+
+  /**
+   * Otherwise the vacation work-list and this one describe the same week in
+   * opposite words: fifteen conversations to have, or fifteen hours to sell.
+   */
+  it('never offers an hour on a day the clinician is away', async () => {
+    await cancelledSession();
+    await prisma.availabilityOverride.create({
+      data: {
+        userId: therapist.id, kind: 'unavailable',
+        fromDate: new Date('2026-08-31T00:00:00Z'), toDate: new Date('2026-09-05T00:00:00Z'),
+        reason: 'Leave',
+      },
+    });
+    expect(await freedSlots(actor(desk), { clock: FRIDAY_BEFORE })).toEqual([]);
+  });
+
+  it('never offers an hour outside the clinician\u2019s working pattern', async () => {
+    await prisma.availability.deleteMany({ where: { userId: therapist.id } });
+    await prisma.availability.create({
+      data: { userId: therapist.id, weekday: 2, startMinute: 540, endMinute: 660 },
+    });
+    await cancelledSession(900);
+    expect(await freedSlots(actor(desk), { clock: FRIDAY_BEFORE })).toEqual([]);
+  });
+
+  it('counts the same hour once however many cancelled rows point at it', async () => {
+    const a = await cancelledSession(900);
+    // A second client cancelled out of the same hour: one hour, one opening.
+    const b = await makeClient(therapist.id);
+    const appt = await prisma.appointment.create({
+      data: {
+        clientId: b.id, clinicianId: therapist.id, roomId: a.appt.roomId,
+        startAt: a.appt.startAt, endAt: a.appt.endAt, status: 'cancelled',
+      },
+    });
+    expect(appt.id).not.toBe(a.appt.id);
+
+    const slots = await freedSlots(actor(desk), { clock: FRIDAY_BEFORE });
+    expect(slots).toHaveLength(1);
+  });
+
+  it('attaches the waiting clients who could take it, longest wait first', async () => {
+    const { client: gaveItUp } = await cancelledSession(900);
+    const first = await makeClient(therapist.id, { code: 'TC-FIRST' });
+    const second = await makeClient(therapist.id, { code: 'TC-SECOND' });
+    const mornings = await makeClient(therapist.id, { code: 'TC-MORNINGS' });
+
+    await prisma.waitlistEntry.create({
+      data: { clientId: first.id, weekdays: [2], createdAt: new Date('2026-07-01T00:00:00Z') },
+    });
+    await prisma.waitlistEntry.create({
+      data: { clientId: second.id, createdAt: new Date('2026-08-01T00:00:00Z') },
+    });
+    await prisma.waitlistEntry.create({
+      data: { clientId: mornings.id, latestMinute: 660 },
+    });
+    // The person who just gave the hour back is on the list and is not offered it.
+    await prisma.waitlistEntry.create({ data: { clientId: gaveItUp.id } });
+
+    const slots = await freedSlots(actor(desk), { clock: FRIDAY_BEFORE });
+    expect(slots[0]!.candidates.map((c) => c.client.code)).toEqual(['TC-FIRST', 'TC-SECOND']);
+  });
+
+  it('shows the opening even when nobody on the list can take it', async () => {
+    await cancelledSession(900);
+    const slots = await freedSlots(actor(desk), { clock: FRIDAY_BEFORE });
+    expect(slots).toHaveLength(1);
+    expect(slots[0]!.candidates).toEqual([]);
+  });
+
+  it('books nothing', async () => {
+    const { client: gaveItUp } = await cancelledSession(900);
+    const waiting = await makeClient(therapist.id);
+    await prisma.waitlistEntry.create({ data: { clientId: waiting.id } });
+
+    await freedSlots(actor(desk), { clock: FRIDAY_BEFORE });
+    expect(await prisma.appointment.count({ where: { status: { in: ['scheduled', 'confirmed'] } } })).toBe(0);
+    expect(await prisma.appointment.count({ where: { clientId: waiting.id } })).toBe(0);
+    expect(await prisma.appointment.count({ where: { clientId: gaveItUp.id } })).toBe(1);
+  });
+
+  /** A therapist sees the hours that are theirs to fill, and no others. */
+  it('shows a therapist only their own freed hours', async () => {
+    const other = await makeUser('therapist');
+    await prisma.availability.create({ data: { userId: other.id, weekday: 2, startMinute: 540, endMinute: 1020 } });
+    const theirClient = await makeClient(other.id);
+    const theirAppt = await bookAppointment(actor(desk), {
+      clientId: theirClient.id, clinicianId: other.id, date: '2026-09-01',
+      startMinute: 780, type: 'standard', modality: 'in_person',
+    });
+    await cancelAppointment(actor(desk), theirAppt.id, { clock: FRIDAY_BEFORE });
+    await cancelledSession(900);
+
+    expect(await freedSlots(actor(desk), { clock: FRIDAY_BEFORE })).toHaveLength(2);
+    const mine = await freedSlots(actor(therapist), { clock: FRIDAY_BEFORE });
+    expect(mine).toHaveLength(1);
+    expect(mine[0]!.startMinute).toBe(900);
+  });
+
+  it('stays inside the horizon it was asked for', async () => {
+    await cancelledSession();
+    expect(await freedSlots(actor(desk), { clock: FRIDAY_BEFORE, horizonDays: 1 })).toEqual([]);
+    expect(await freedSlots(actor(desk), { clock: FRIDAY_BEFORE, horizonDays: 30 })).toHaveLength(1);
   });
 });
 

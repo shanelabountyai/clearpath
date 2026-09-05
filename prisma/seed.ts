@@ -18,13 +18,13 @@ const { bookAppointment, materialiseSeries } = await import('../src/scheduling/b
 const { createProgressNote, signProgressNote, coSignProgressNote, createProcessNote } =
   await import('../src/notes/service');
 const { guarded } = await import('../src/auth/guard');
-const { addDays, localDateOf, zonedToUtc } = await import('../src/time');
+const { addDays, localDateOf, utcToZoned, zonedToUtc } = await import('../src/time');
 const { fixedClock, DAY } = await import('../src/clock');
 const { runReminderHorizon } = await import('../src/scheduling/reminders');
 const { runNonResponseSweep } = await import('../src/scheduling/nonresponse');
 const { confirmationRequired } = await import('../src/scheduling/confirmation');
 const { confirmAppointment, declineAppointment } = await import('../src/portal/service');
-const { waiveFee } = await import('../src/scheduling/lifecycle');
+const { cancelAppointment, waiveFee } = await import('../src/scheduling/lifecycle');
 const { bookGroupSession } = await import('../src/scheduling/groups');
 const { assertSeedMetrics } = await import('./metrics');
 const { handleInboundReply } = await import('../src/messaging/inbound');
@@ -692,7 +692,76 @@ async function main() {
   });
   log(`${nour.name} is away ${vacationFrom} to ${vacationTo} — ${displaced} standing sessions to reschedule`);
 
+  // ── cancellations that came in since ──────────────────────────────────
+  //
+  // P2-2. The quarter's own declines land where the simulation stops — the
+  // loop ends at "today", so the only hours it frees ahead of itself are the
+  // one or two answered on the last tick. That is an artefact of where the
+  // simulation ends rather than a fact about a practice: a real one on any
+  // given morning is looking at several freed hours in the coming weeks, from
+  // clients who rang, replied, or told the desk in the room.
+  //
+  // So a handful of the horizon's sessions are given back, through the same
+  // `cancelAppointment` the desk uses, spread across the month so the list has
+  // a range of notice on it rather than one band. All are far enough out to be
+  // ordinary cancellations: none of them is inside the late-cancel window and
+  // none of them carries a fee, which is checked below rather than assumed.
+  const horizon = await prisma.appointment.findMany({
+    where: {
+      status: { in: ['scheduled', 'confirmed'] },
+      startAt: { gte: zonedToUtc(addDays(TODAY, 6), 0), lt: zonedToUtc(addDays(TODAY, 27), 0) },
+      // Not the ones a vacation already displaced; those are a different
+      // work-list, and an hour a clinician is not working is not one to sell.
+      NOT: {
+        clinicianId: nour.id,
+        startAt: { gte: zonedToUtc(vacationFrom, 0), lt: zonedToUtc(addDays(vacationTo, 1), 0) },
+      },
+    },
+    select: { id: true, startAt: true, clinicianId: true },
+    orderBy: [{ startAt: 'asc' }, { id: 'asc' }],
+  });
+
+  const deskActor = actor(frontDesk);
+  const cancelClock = fixedClock(zonedToUtc(TODAY, 9 * 60));
+  const givenBack: string[] = [];
+  // Every fourth one, so they spread across the month and across clinicians
+  // instead of clustering in one week.
+  for (let i = 0; i < horizon.length && givenBack.length < 6; i += 4) {
+    const appt = horizon[i]!;
+    await cancelAppointment(deskActor, appt.id, {
+      clock: cancelClock,
+      // Half of them answered the reminder and half rang the desk. The
+      // distinction is the whole reason this list is not "declines": the hour
+      // is just as empty either way.
+      ...(givenBack.length % 2 === 0
+        ? { confirmation: 'declined' as const, reason: 'client declined' }
+        : { reason: 'client rescheduled' }),
+    });
+    givenBack.push(appt.id);
+  }
+
+  // One inside the vacation week, which must *not* become an offerable hour:
+  // the clinician is not there to work it. Without this the freed-hour list and
+  // the vacation work-list would describe the same absence in opposite words.
+  const inVacation = await prisma.appointment.findFirst({
+    where: {
+      clinicianId: nour.id, status: { in: ['scheduled', 'confirmed'] },
+      startAt: { gte: zonedToUtc(vacationFrom, 0), lt: zonedToUtc(addDays(vacationTo, 1), 0) },
+    },
+    orderBy: [{ startAt: 'asc' }, { id: 'asc' }],
+    select: { id: true },
+  });
+  if (inVacation) {
+    await cancelAppointment(deskActor, inVacation.id, { clock: cancelClock, reason: 'clinician unavailable' });
+  }
+
+  const chargedGiveBacks = await prisma.appointment.count({
+    where: { id: { in: givenBack }, chargeFeeCents: { not: null } },
+  });
+  log(`${givenBack.length} sessions given back across the coming month — ${chargedGiveBacks} of them chargeable`);
+
   // ── waitlist ──────────────────────────────────────────────────────────
+  const onList = new Set<string>();
   for (const client of clients.slice(60, 68)) {
     await prisma.waitlistEntry.create({
       data: {
@@ -702,8 +771,55 @@ async function main() {
         note: 'Would take an earlier standing slot',
       },
     });
+    onList.add(client.id);
   }
-  log('8 clients on the waitlist');
+
+  // P2-2. And at least one of them has to be able to take an hour the quarter
+  // actually freed, or the freed-hour list demonstrates nothing.
+  //
+  // Left to the dice this is unlikely rather than merely uncertain, and the
+  // reason is the continuity rule: a match needs a waiting client *of the same
+  // clinician* whose window covers the freed hour, and eight entries spread
+  // over six clinicians with a random weekday and a 4pm floor will usually miss
+  // every time. The first run of this seed produced two freed hours and no
+  // candidate for either. Same treatment as the demo client below: constructed
+  // explicitly, from the openings the simulation produced rather than from a
+  // slot invented to be matched.
+  const freedAhead = await prisma.appointment.findMany({
+    where: {
+      status: { in: ['cancelled', 'late_cancelled'] },
+      startAt: { gt: zonedToUtc(TODAY, 0) },
+    },
+    select: { startAt: true, clinicianId: true, clientId: true },
+    orderBy: { startAt: 'asc' },
+  });
+  let matched = 0;
+  for (const slot of freedAhead) {
+    // Only the first few. A practice where every freed hour has somebody
+    // waiting for it is not a practice, it is a fixture — and it would hide the
+    // case the list has to handle honestly: an hour nobody can take, which
+    // stays on the screen rather than disappearing for being inconvenient.
+    if (matched >= 3) break;
+    const { minutes, weekday } = utcToZoned(slot.startAt);
+    const candidate = clients.find(
+      (c) => c.clinicianId === slot.clinicianId && c.id !== slot.clientId && !onList.has(c.id),
+    );
+    if (!candidate) continue;
+    onList.add(candidate.id);
+    matched++;
+    await prisma.waitlistEntry.create({
+      data: {
+        clientId: candidate.id,
+        weekdays: [weekday],
+        // A window around the hour rather than the hour itself: a waiting
+        // client with a taste in times, not one reverse-engineered to fit.
+        earliestMinute: Math.max(0, minutes - 120),
+        latestMinute: Math.min(1439, minutes + 120),
+        note: 'Would take an earlier standing slot',
+      },
+    });
+  }
+  log(`${onList.size} clients on the waitlist — ${matched} of them can take an hour the quarter freed`);
 
   // ── the demo, guaranteed ──────────────────────────────────────────────
   //

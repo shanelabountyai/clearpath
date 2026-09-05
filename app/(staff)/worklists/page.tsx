@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
-import { continuityQueue, unconfirmedSoon, unreachableClients, vacationImpact, waitlistMatches } from '../../../src/scheduling/worklists';
+import { continuityQueue, freedSlots, unconfirmedSoon, unreachableClients, vacationImpact } from '../../../src/scheduling/worklists';
 import { openRescheduleRequests } from '../../../src/portal/service';
 import { handleRescheduleRequest, handleInboundReplyCall } from './actions';
 import { openInboundReplies } from '../../../src/messaging/inbound';
@@ -39,7 +39,10 @@ async function WorkListsPage() {
     })),
   );
 
-  const waiting = await waitlistMatches(actor, { date: addDays(today, 1), startMinute: 15 * 60 }).catch(() => []);
+  // No `.catch(() => [])` here. The call this replaced had one, and it was
+  // swallowing a real authorization denial for therapists rather than
+  // reporting it — an empty waitlist and a refused read looked identical.
+  const freed = await freedSlots(actor, { clock: systemClock });
   const rescheduleAsks = await openRescheduleRequests(actor).catch(() => []);
 
   return (
@@ -317,33 +320,74 @@ async function WorkListsPage() {
           )}
         </section>
 
+        {/* P2-2. The confirmation loop's other half. Every other list on this
+            page protects the practice from something; this one is the only one
+            that is worth something to a client — somebody who has been waiting
+            weeks gets the hour a decline handed back. Nothing here books, and
+            there is no button to mark an opening as handled: a slot leaves this
+            list when the hour is filled, the clinician stops working it, or it
+            starts. */}
         <section>
-          <h2 className="mb-2 text-subhead font-semibold">Waitlist</h2>
+          <h2 className="mb-2 text-subhead font-semibold">Freed hours — offer them</h2>
           <p className="mb-3 max-w-prose text-body text-muted">
-            Who to offer a freed slot to. Clearpath surfaces candidates; a person rings them.
-            Nothing here books itself.
+            Sessions cancelled ahead of time, and the waiting clients who could take one.
+            A client is only ever offered their own clinician&rsquo;s hour. Clearpath surfaces
+            candidates; a person rings them. Nothing here books itself.
           </p>
-          {waiting.length === 0 ? (
-            <EmptyState title="Nobody waiting for tomorrow afternoon" />
+          {freed.length === 0 ? (
+            <EmptyState title="No freed hours in the next 30 days" />
           ) : (
-            <Card className="p-0">
-              <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                {waiting.map((w) => (
-                  <li key={w.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-body">
-                    <Link href={`/clients/${w.client.id}`} className="font-medium text-accent hover:underline">
-                      {w.client.lastName}, {w.client.firstName}
-                    </Link>
-                    <span className="text-muted">
-                      {w.weekdays.length ? w.weekdays.map((d) => WEEKDAYS[d]).join(', ') : 'any day'}
-                      {w.earliestMinute !== null ? ` · from ${minutesToHHMM(w.earliestMinute)}` : ''}
-                      {' · '}{w.client.treatingClinician.name}
+            <div className="space-y-3">
+              {freed.map((slot) => (
+                <Card key={slot.appointmentId} className="p-0">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2 border-b px-4 py-3" style={{ borderColor: 'var(--border)' }}>
+                    <span className="text-body font-medium">
+                      {WEEKDAYS[slot.weekday]} {slot.date} · {minutesToHHMM(slot.startMinute)}
+                      <span className="text-muted"> · {slot.clinician.name}</span>
+                      {slot.room ? <span className="text-muted"> · {slot.room.name}</span> : null}
+                      {slot.modality === 'telehealth' ? <span className="text-muted"> · telehealth</span> : null}
                     </span>
-                  </li>
-                ))}
-              </ul>
-            </Card>
+                    <span className="flex items-center gap-2">
+                      {slot.confirmation === 'declined' ? <Badge tone="info">Client declined</Badge> : null}
+                      {/* Notice remaining, never hidden and never a filter. The
+                          two-hour slot is on the list too, ranked last and
+                          labelled for what it is. */}
+                      <Badge tone={slot.fillability === 'ample' ? 'success' : slot.fillability === 'tight' ? 'warning' : 'neutral'}>
+                        {slot.notice} notice
+                      </Badge>
+                    </span>
+                  </div>
+                  {slot.candidates.length === 0 ? (
+                    <p className="px-4 py-3 text-body text-muted">
+                      Nobody on the waitlist can take this one. It stays here anyway — an
+                      empty hour nobody is looking at is the thing this list exists to prevent.
+                    </p>
+                  ) : (
+                    <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                      {slot.candidates.map((w) => (
+                        <li key={w.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-body">
+                          <Link href={`/clients/${w.client.id}`} className="font-medium text-accent hover:underline">
+                            {w.client.lastName}, {w.client.firstName}
+                          </Link>
+                          <span className="text-muted">
+                            {/* The number is the feature: the only thing to do
+                                with this list is ring somebody. */}
+                            {w.client.phone ?? 'no number on file'}
+                            {' · waiting since '}{localDateOf(w.createdAt)}
+                            {w.weekdays.length ? ` · ${w.weekdays.map((d) => WEEKDAYS[d]).join(', ')}` : ' · any day'}
+                            {w.earliestMinute !== null ? ` · from ${minutesToHHMM(w.earliestMinute)}` : ''}
+                            {w.latestMinute !== null ? ` · until ${minutesToHHMM(w.latestMinute)}` : ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </Card>
+              ))}
+            </div>
           )}
         </section>
+
       </div>
     </>
   );

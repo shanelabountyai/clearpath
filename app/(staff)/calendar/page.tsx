@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import { requireSession } from '../../../src/session';
 import { daySchedule, type DaySession } from '../../../src/scheduling/calendar';
-import { addDays, localDateOf, minutesToHHMM, WEEKDAYS, weekdayOf } from '../../../src/time';
+import { addDays, daysBetween, localDateOf, minutesToHHMM, WEEKDAYS, weekdayOf } from '../../../src/time';
+import { freedSlots } from '../../../src/scheduling/worklists';
 import { AppointmentChip, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
 import { withDenial } from '@/src/ui/denied';
@@ -21,6 +22,15 @@ async function CalendarPage({
   const params = await searchParams;
   const date = params.date && /^\d{4}-\d{2}-\d{2}$/.test(params.date) ? params.date : localDateOf(systemClock.now());
   const day = await daySchedule(actor, date);
+
+  // P2-2. The grid already draws a cancelled hour, receded and struck through.
+  // What it cannot say on its own is that the hour is still sellable and who
+  // has been waiting for one — so the freed hours for this day are read
+  // alongside it. A day in the past has none by definition: an hour that has
+  // started cannot be offered to anybody.
+  const ahead = daysBetween(localDateOf(systemClock.now()), date);
+  const freed = ahead < 0 ? [] : (await freedSlots(actor, { clock: systemClock, horizonDays: ahead + 1 }))
+    .filter((slot) => slot.date === date);
 
   const byRoom = new Map<string, DaySession[]>();
   const telehealth: DaySession[] = [];
@@ -64,6 +74,23 @@ async function CalendarPage({
             .map((id) => `${day.clinicians.find((c) => c.id === id)?.name ?? 'A clinician'} (${day.awayReasons[id]})`)
             .join(', ')}
           . <Link className="underline" href="/worklists">See the reschedule work-list</Link>.
+        </p>
+      )}
+
+      {freed.length > 0 && (
+        <p
+          className="mb-4 rounded-[var(--radius)] border px-3 py-2 text-body"
+          style={{ borderColor: 'var(--accent)', background: 'var(--accent-soft)' }}
+        >
+          <span aria-hidden>↺ </span>
+          Freed today:{' '}
+          {freed
+            .map((slot) => {
+              const who = slot.candidates.length === 1 ? '1 waiting' : `${slot.candidates.length} waiting`;
+              return `${minutesToHHMM(slot.startMinute)} ${slot.clinician.name} (${slot.candidates.length ? who : 'nobody waiting'})`;
+            })
+            .join(', ')}
+          . <Link className="underline" href="/worklists">Offer them from the work-list</Link>.
         </p>
       )}
 

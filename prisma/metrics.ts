@@ -1,4 +1,5 @@
 import { prisma } from '../src/db';
+import { freedSlots } from '../src/scheduling/worklists';
 import { zonedToUtc } from '../src/time';
 
 /**
@@ -249,6 +250,79 @@ export async function seedMetrics(): Promise<Metric[]> {
   );
   check('the cadence cap is reached by real clients in the quarter', capped.length >= 1,
     `${capped.length} of ${asked.length} sessions got the day-before message alone`);
+
+  // ── the freed hour ───────────────────────────────────────────────────
+  //
+  // P2-2, and the first thing in this feature whose number is worth something
+  // to a client rather than protecting one. A decline five days out is an
+  // opening a waiting client can take, and the three claims worth making about
+  // it over a whole quarter are all claims about *who is offered what* — which
+  // is why they run the real function against the real seed rather than
+  // re-deriving a match rule here.
+  // Front desk, because that is whose list this is. The practice manager reads
+  // a client only through logged break-glass, and computing a metric is not a
+  // reason to open that door — a number that needs break-glass to produce is a
+  // number measuring the wrong actor.
+  const desk = await prisma.user.findFirstOrThrow({ where: { role: 'front_desk' } });
+  const freed = await freedSlots(
+    { id: desk.id, role: desk.role },
+    { clock: { now: () => zonedToUtc(TODAY, 9 * 60) }, horizonDays: 30 },
+  );
+  const offered = freed.filter((f) => f.candidates.length > 0);
+  check('the quarter leaves freed hours behind', freed.length >= 5,
+    `${freed.length} freed hours in the next 30 days`);
+  check('and somebody on the waitlist can take at least one of them', offered.length >= 1,
+    `${offered.length} of ${freed.length} have a waiting client`);
+  // The other branch, and the one a fixture would quietly erase. An hour nobody
+  // can take stays on the list; it is exactly the hour that otherwise goes
+  // empty without anyone noticing.
+  check('and some of them have nobody, and are shown anyway',
+    freed.length - offered.length >= 1,
+    `${freed.length - offered.length} freed hours with nobody waiting`);
+
+  // The rule that outranks every preference a client stated. Checked on the
+  // output, so it is a regression guard rather than a restatement: if the
+  // continuity filter ever fell out of `openingSuits`, this is the query that
+  // notices, over a quarter rather than over one fixture.
+  const crossed = freed.flatMap((f) =>
+    f.candidates
+      .filter((c) => c.client.treatingClinician.id !== f.clinician.id)
+      .map((c) => `${c.client.code} → ${f.clinician.name}`),
+  );
+  check('no freed hour is offered to another clinician’s client', crossed.length === 0,
+    `${crossed.length} cross-clinician offers`);
+
+  // And never back to the person who just gave it up. Resolved from the
+  // appointment rather than from anything the function returned.
+  const gaveItUp = new Map(
+    (await prisma.appointment.findMany({
+      where: { id: { in: freed.map((f) => f.appointmentId) } },
+      select: { id: true, clientId: true },
+    })).map((a) => [a.id, a.clientId]),
+  );
+  const offeredBack = freed.filter((f) =>
+    f.candidates.some((c) => c.client.id === gaveItUp.get(f.appointmentId)),
+  );
+  check('and none is offered back to the client who cancelled it', offeredBack.length === 0,
+    `${offeredBack.length} such offers`);
+
+  // An hour the clinician is not there to work is not an hour to sell. The
+  // seed cancels one session inside the vacation week precisely so this can be
+  // a count rather than an argument: without it the freed-hour list and the
+  // vacation work-list would describe the same absence in opposite words — one
+  // as sessions to reschedule, the other as hours to fill.
+  const awayOverrides = await prisma.availabilityOverride.findMany({
+    where: { kind: 'unavailable' },
+    select: { userId: true, fromDate: true, toDate: true, startMinute: true, endMinute: true },
+  });
+  const duringLeave = freed.filter((f) =>
+    awayOverrides.some((o) =>
+      o.userId === f.clinician.id &&
+      o.startMinute === null && o.endMinute === null &&
+      f.startAt >= o.fromDate && f.startAt < new Date(o.toDate.getTime() + 24 * 3_600_000)),
+  );
+  check('no freed hour falls in a week the clinician is away', duringLeave.length === 0,
+    `${duringLeave.length} offered from a vacation week`);
 
   // ── audit completeness ───────────────────────────────────────────────
   //

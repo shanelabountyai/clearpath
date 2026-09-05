@@ -85,6 +85,14 @@ and a test greps the rest of `src/` to prove no endpoint re-implements a role ch
   the guarantee rather than a policy about not reading it. An `unparsed` reply
   alerts the treating clinician alone, sends back the practice's number and the
   urgent-help line, and tells front desk to ring the client, with nothing to read.
+- **A freed hour is offered by a person, never by the system.** A cancellation
+  ahead of time becomes an offerable hour with the notice remaining on it,
+  matched against the waitlist — but Clearpath surfaces candidates and a human
+  rings them. It books nothing, and it tells the waiting client nothing: an "an
+  hour came free, do you want it" sent automatically to a matching list is the
+  kind of message that goes wrong when two people answer it. It also keeps no
+  record that an offer was made, so front desk can ring the same person about
+  two different hours without the system knowing.
 - **No real carrier is attached.** Nothing is actually sent: `simulatedCarrier`
   is the only driver, and it decides delivery offline and deterministically.
   What is *not* a stub is the rule around it — the no-show fee's precondition is
@@ -194,5 +202,6 @@ means replacing that file's values and nothing else.
 | What silence means, and what it does not | [`src/scheduling/nonresponse.ts`](src/scheduling/nonresponse.ts) |
 | A reply classified and thrown away | [`src/messaging/inbound.ts`](src/messaging/inbound.ts) |
 | The carrier port, and what "delivered" may mean | [`src/messaging/carrier.ts`](src/messaging/carrier.ts) |
+| The freed hour, and who may be offered it | [`src/scheduling/openings.ts`](src/scheduling/openings.ts) |
 | The seed's own success metrics | [`prisma/metrics.ts`](prisma/metrics.ts) |
 | Why any of it is shaped this way | [`WRITEUP.md`](WRITEUP.md) |

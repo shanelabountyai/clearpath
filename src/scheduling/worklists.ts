@@ -2,7 +2,12 @@ import { guarded } from '../auth/guard';
 import { ownCaseloadOnly, type Actor } from '../auth/permissions';
 import { systemClock, type Clock, DAY } from '../clock';
 import { prisma } from '../db';
-import { addDays, localDateOf, weekdayOf, zonedToUtc, type LocalDate } from '../time';
+import { addDays, localDateOf, utcToZoned, weekdayOf, zonedToUtc, type LocalDate } from '../time';
+import { workingWindows, type Override } from './availability';
+import {
+  describeNotice, fillability, openingSuits,
+  type Opening, type WaitlistPreference,
+} from './openings';
 
 /**
  * The work-lists. Each one exists because something that ought to be visible
@@ -270,35 +275,234 @@ export async function unreachableClients(
  * Who to offer a freed slot to. Surfaces candidates for a human to ring; it
  * never books. An automatic rebooking would put a client in a room with a
  * clinician neither of them chose for that hour.
+ *
+ * The slot carries a clinician because the match rule needs one: continuity is
+ * the first thing `openingSuits` checks, and a signature that let a caller omit
+ * it would be a signature that let a caller skip it.
  */
 export async function waitlistMatches(
   actor: Actor,
-  slot: { date: LocalDate; startMinute: number },
+  slot: { date: LocalDate; startMinute: number; clinicianId: string; exceptClientId?: string },
 ) {
-  const weekday = weekdayOf(slot.date);
+  const opening: Opening = {
+    weekday: weekdayOf(slot.date),
+    startMinute: slot.startMinute,
+    clinicianId: slot.clinicianId,
+    clientId: slot.exceptClientId ?? '',
+  };
+
   return guarded(
-    { actor, action: 'read', resource: 'client' },
+    {
+      actor, action: 'read', resource: 'client',
+      // The same self-target the other client-reading work-lists use: the rule
+      // for a therapist is `treatingOrSupervising`, and a list query has no one
+      // row to name. The WHERE clause below does the real scoping — here the
+      // continuity filter already guarantees it, since an entry only survives
+      // `openingSuits` when the waiting client is this clinician's.
+      target: { clinicianId: actor.id, treatingSupervisorId: actor.id },
+    },
     async (tx) => {
       const entries = await tx.waitlistEntry.findMany({
-        where: { active: true },
-        select: {
-          id: true, weekdays: true, earliestMinute: true, latestMinute: true, note: true, createdAt: true,
-          client: {
-            select: {
-              id: true, code: true, firstName: true, lastName: true, reminderPreference: true,
-              treatingClinician: { select: { id: true, name: true } },
-            },
-          },
-        },
+        where: { active: true, client: { status: 'active' } },
+        select: WAITLIST_SELECT,
         orderBy: { createdAt: 'asc' },
       });
-
-      return entries.filter((e) => {
-        if (e.weekdays.length && !e.weekdays.includes(weekday)) return false;
-        if (e.earliestMinute !== null && slot.startMinute < e.earliestMinute) return false;
-        if (e.latestMinute !== null && slot.startMinute > e.latestMinute) return false;
-        return true;
-      });
+      return entries.filter((e) => openingSuits(preferenceOf(e), opening));
     },
   );
+}
+
+/** Everything the call actually needs: a name, a number, and nothing clinical. */
+const WAITLIST_SELECT = {
+  id: true, weekdays: true, earliestMinute: true, latestMinute: true, note: true, createdAt: true,
+  client: {
+    select: {
+      id: true, code: true, firstName: true, lastName: true, phone: true, reminderPreference: true,
+      treatingClinicianId: true,
+      treatingClinician: { select: { id: true, name: true } },
+    },
+  },
+} as const;
+
+type WaitlistRow = {
+  weekdays: number[];
+  earliestMinute: number | null;
+  latestMinute: number | null;
+  client: { id: string; treatingClinicianId: string };
+};
+
+const preferenceOf = (e: WaitlistRow): WaitlistPreference => ({
+  clientId: e.client.id,
+  weekdays: e.weekdays,
+  earliestMinute: e.earliestMinute,
+  latestMinute: e.latestMinute,
+  treatingClinicianId: e.client.treatingClinicianId,
+});
+
+/**
+ * P2-2. Hours the practice has back, and who has been waiting for one.
+ *
+ * The confirmation loop's other half. Five phases went into deciding what a
+ * client's silence means and what it may cost them; this is what their *answer*
+ * is worth, and it is the first thing built here that is worth something to a
+ * client rather than protecting one. A decline at `d5` is not primarily a fee
+ * that was avoided — it is five days' notice of an empty hour, which is exactly
+ * what somebody who has been on a waiting list for six weeks can use.
+ *
+ * It is every future cancellation, not only the declined ones. A front-desk
+ * cancellation empties the same hour as a keyword reply, and a list that showed
+ * one and not the other would leave holes in the week that nobody was looking
+ * for — which is the failure every work-list on this page exists to prevent.
+ *
+ * Four things keep the list true rather than merely long, and all four are
+ * derived, so nothing is ever marked as handled and nothing is ever tidied away:
+ *
+ *   - **An hour somebody was rebooked into is not free.** The check is against
+ *     the clinician's live sessions, which is also what makes a group session
+ *     behave: one attendee dropping out leaves the clinician running the group,
+ *     so no opening appears, and only a group that emptied completely produces
+ *     one.
+ *   - **An hour the clinician is not working is not free either.** A week of
+ *     leave cancels fifteen sessions, and without this the vacation work-list
+ *     and this one would describe the same absence in opposite words — one as
+ *     fifteen conversations to have, the other as fifteen hours to sell.
+ *   - **The same hour is one opening**, however many cancelled rows point at it.
+ *   - **The hour has not started.** Nothing else is hidden: the slot two hours
+ *     out that will probably not be filled is on the list, ranked last and
+ *     labelled for what it is, because a system that decides on front desk's
+ *     behalf that a slot is hopeless is how an hour goes quietly empty.
+ */
+export async function freedSlots(
+  actor: Actor,
+  opts: { clock?: Clock; horizonDays?: number } = {},
+) {
+  const now = (opts.clock ?? systemClock).now();
+  const horizon = new Date(now.getTime() + (opts.horizonDays ?? 30) * DAY);
+  const mineOnly = ownCaseloadOnly(actor);
+
+  const openings = await guarded(
+    { actor, action: 'read', resource: 'appointment' },
+    async (tx) => {
+      const cancelled = await tx.appointment.findMany({
+        where: {
+          status: { in: ['cancelled', 'late_cancelled'] },
+          startAt: { gt: now, lt: horizon },
+          ...(mineOnly ? { clinicianId: actor.id } : {}),
+        },
+        select: {
+          id: true, startAt: true, endAt: true, modality: true, type: true,
+          confirmation: true, cancelledAt: true, clientId: true, clinicianId: true,
+          clinician: { select: { id: true, name: true } },
+          room: { select: { id: true, name: true } },
+        },
+        orderBy: { startAt: 'asc' },
+      });
+      if (cancelled.length === 0) return [];
+
+      const clinicianIds = [...new Set(cancelled.map((a) => a.clinicianId))];
+
+      const [live, weekly, overrides] = await Promise.all([
+        // Anything not cancelled still occupies the clinician's hour — a
+        // no-show and a completed session both mean they were not free.
+        tx.appointment.findMany({
+          where: {
+            clinicianId: { in: clinicianIds },
+            status: { notIn: ['cancelled', 'late_cancelled'] },
+            startAt: { lt: horizon },
+            endAt: { gt: now },
+          },
+          select: { clinicianId: true, startAt: true, endAt: true },
+        }),
+        tx.availability.findMany({ where: { userId: { in: clinicianIds } } }),
+        tx.availabilityOverride.findMany({ where: { userId: { in: clinicianIds } } }),
+      ]);
+
+      const overridesFor = (userId: string): Override[] =>
+        overrides
+          .filter((o) => o.userId === userId)
+          .map((o) => ({
+            fromDate: localDateOf(o.fromDate), toDate: localDateOf(o.toDate),
+            kind: o.kind,
+            startMinute: o.startMinute ?? undefined,
+            endMinute: o.endMinute ?? undefined,
+          }));
+
+      const seen = new Set<string>();
+      const out = [];
+
+      for (const a of cancelled) {
+        const key = `${a.clinicianId}@${a.startAt.getTime()}`;
+        if (seen.has(key)) continue;
+
+        const busy = live.some(
+          (l) => l.clinicianId === a.clinicianId && l.startAt < a.endAt && l.endAt > a.startAt,
+        );
+        if (busy) continue;
+
+        const { date, minutes, weekday } = utcToZoned(a.startAt);
+        const endMinute = minutes + Math.round((a.endAt.getTime() - a.startAt.getTime()) / 60_000);
+        const working = workingWindows(
+          weekly.filter((w) => w.userId === a.clinicianId),
+          overridesFor(a.clinicianId),
+          date,
+        );
+        // The whole session has to fit inside a window the clinician is
+        // actually working. A half-covered hour is not an hour to sell.
+        if (!working.some((w) => w.startMinute <= minutes && endMinute <= w.endMinute)) continue;
+
+        seen.add(key);
+        out.push({
+          appointmentId: a.id,
+          startAt: a.startAt,
+          endAt: a.endAt,
+          date,
+          startMinute: minutes,
+          weekday,
+          modality: a.modality,
+          type: a.type,
+          room: a.room,
+          clinician: a.clinician,
+          /** Whether the client answered the reminder, or the desk cancelled it. */
+          confirmation: a.confirmation,
+          cancelledAt: a.cancelledAt,
+          notice: describeNotice(a.startAt, now),
+          fillability: fillability(a.startAt, now),
+          opening: {
+            weekday, startMinute: minutes,
+            clinicianId: a.clinicianId, clientId: a.clientId,
+          } satisfies Opening,
+        });
+      }
+      return out;
+    },
+  );
+
+  if (openings.length === 0) return [];
+
+  // A second read, and a second audit row, because it is a second thing: the
+  // hours are appointment data and the people to ring are client data.
+  const entries = await guarded(
+    {
+      actor, action: 'read', resource: 'client',
+      target: { clinicianId: actor.id, treatingSupervisorId: actor.id },
+    },
+    async (tx) =>
+      tx.waitlistEntry.findMany({
+        where: {
+          active: true,
+          client: {
+            status: 'active',
+            treatingClinicianId: { in: [...new Set(openings.map((o) => o.opening.clinicianId))] },
+          },
+        },
+        select: WAITLIST_SELECT,
+        // Longest wait first. The list is a queue before it is a match.
+        orderBy: { createdAt: 'asc' },
+      }),
+  );
+
+  return openings.map(({ opening, ...slot }) => ({
+    ...slot,
+    candidates: entries.filter((e) => openingSuits(preferenceOf(e), opening)),
+  }));
 }

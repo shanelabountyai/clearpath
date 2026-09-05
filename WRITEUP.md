@@ -947,6 +947,179 @@ evidence is a worse property than being slightly conservative. It does not make
 delivery a *setting* — there is no flag to go back to charging on `queued`,
 because that flag would be a knob for turning the honesty off.
 
+## 13. The hour a decline gives back
+
+Five phases went into what a client's silence means and what it may cost them.
+This is the first one about what their *answer* is worth, and the direction is
+the other way round: every list built before it protects the practice from
+something, and this one is worth something to a client.
+
+The observation is in the PRD's first paragraph and had been sitting there
+unused the whole time. A counseling practice has no walk-in trade, so an hour
+that empties is gone — it "costs the practice the whole fee **and costs a
+waitlisted client the whole hour**." The confirmation loop was built entirely
+around the first half of that sentence. But a decline five days out is not
+primarily a fee that was avoided. It is five days' notice of an empty hour, and
+five days is long enough to ring somebody who has been waiting six weeks.
+
+### It is not a list of declines
+
+The obvious build is "declines feed the waitlist", and it is wrong in a way that
+takes a moment to see. A front-desk cancellation empties exactly the same hour
+as a keyword reply. If the list only showed the ones that arrived through the
+confirmation loop, the week would have holes in it that nobody was looking for —
+which is the failure every work-list on that page exists to prevent, reproduced
+by the newest one.
+
+So the input is every future cancellation, and the confirmation is carried
+through as a label rather than as a filter. What actually decides whether an
+hour is worth ringing round for is the notice remaining, and that is shown on
+every row.
+
+### Continuity is not a preference
+
+The match rule reads three things and the order they are written in is the order
+they matter in. The client's stated weekdays and time window come second and
+third. First is whose hour it is.
+
+A `WaitlistEntry` in this schema belongs to a `Client`, and every client has a
+`treatingClinicianId` that is not nullable. So a waiting client always has a
+therapist, and offering them Tuesday at three because the hour happens to be
+free is proposing that they see a stranger. In a practice where the relationship
+is the treatment, that is not a scheduling near-miss. It is the one mistake this
+list must not make, and it is checked before anything the client asked for
+because no preference they stated can outrank it.
+
+This changed a signature. `waitlistMatches` already existed, taking a slot of
+`{ date, startMinute }` — no clinician, because until now nothing had ever
+handed it a real one. Making `clinicianId` required rather than optional was the
+whole of the fix: an optional field there would have been a field a caller could
+skip, and the thing being skipped is the clinical rule.
+
+### The bug the type error found
+
+The one caller was the work-lists page, and it read:
+
+```ts
+const waiting = await waitlistMatches(actor, { date: addDays(today, 1), startMinute: 15 * 60 }).catch(() => []);
+```
+
+Two things wrong, and the second is the interesting one. It asked about a slot
+nobody had freed — tomorrow at three, invented — so the section had been showing
+candidates for a hypothetical hour for two phases. And the `.catch(() => [])`
+was swallowing a real authorization denial: `client:read` for a therapist is
+`treatingOrSupervising`, the call passed no target, and every clinician who ever
+opened that page got a silent empty list where the system had actually refused
+them. An empty waitlist and a refused read rendered identically.
+
+Both are gone. The guard now passes the same self-target the neighbouring
+work-lists use, and there is no catch — which is why the integration test for
+the therapist path failed the first time it ran, correctly, and is the reason
+that test exists.
+
+### Four filters, no button
+
+The list is derived, and nothing on it can be marked as handled. That follows
+the precedent set by `unreachableClients` one phase earlier, for the same
+reason: a "handled" button is a way for a problem to leave a screen without
+leaving the practice. An hour drops off this list when it is filled, when the
+clinician stops working it, or when it starts.
+
+Which makes the filters the whole design:
+
+- **An hour somebody was rebooked into is not free.** Checked against the
+  clinician's live sessions, which is also what makes group sessions behave
+  correctly without a special case: one attendee dropping out leaves the
+  clinician running the group, so no opening appears, and only a group that
+  emptied completely produces one.
+- **An hour the clinician is not working is not free either.** This one is not
+  an edge case. A week of annual leave cancels fifteen sessions, and without
+  this filter the vacation work-list and this one would describe the same
+  absence in opposite words — one as fifteen conversations to have, the other as
+  fifteen hours to sell. The seed now cancels a session inside the vacation week
+  on purpose, so that claim is a count rather than an argument.
+- **The same hour is one opening**, however many cancelled rows point at it.
+- **The hour has not started.**
+
+Nothing else is hidden. The slot two hours out that will probably not be filled
+is on the list, ranked last and labelled for what it is, because a system that
+decides on front desk's behalf that a slot is hopeless is how an hour goes
+quietly empty. `fillability` is a band on a screen and an ordering — it carries
+no money, and no code branches on it. It deliberately does not put a boundary at
+the late-cancel window, and there is a test asserting that it does not: that
+threshold decides whether a client is charged, and a practice moving its fee
+window to 48 hours has said nothing about which hours are worth ringing round
+for. Folding the two together would be the cheapest available mistake.
+
+### What the seed found
+
+The metric was written before the data supported it, and it failed on the first
+run: two freed hours, and a candidate for neither. Three separate things were
+wrong, and only the first was a fixture problem.
+
+The waitlist was seeded with dice — a random weekday half the time, a 4pm floor
+half the time, spread over six clinicians. Under a continuity rule, eight such
+entries will usually miss every opening, and they did. That is the same problem
+the demo client already had, and it gets the same treatment: constructed
+explicitly, from the openings the simulation produced rather than from a slot
+invented to be matched. But only the first three, because a practice where every
+freed hour has somebody waiting for it is not a practice, it is a fixture — and
+it would erase the case the list has to handle honestly, which is the hour
+nobody can take.
+
+The second was that the metric asked the wrong actor. It ran as the practice
+manager, and `client:read` for `admin` is `breakGlass` — so the number could
+only be produced by opening a door that exists for a client in crisis.
+Computing a metric is not a reason to open it. The list belongs to front desk,
+so the metric reads as front desk.
+
+The third was the real one. The quarter's own declines land where the simulation
+stops: the loop runs to "today", so the only hours it frees *ahead* of itself
+are the one or two answered on the last tick. That is a fact about where the
+simulation ends, not about a practice — a real one on any given morning is
+looking at several freed hours in the coming weeks. So the seed now gives back a
+handful of the horizon's sessions through the same `cancelAppointment` the desk
+uses, half of them as declines and half as calls to the front desk, spread
+across the month so the list carries a range of notice rather than one band.
+
+Six of them, plus the vacation-week one that must not appear: **eight offerable
+hours, five with somebody waiting and three with nobody** — and the three are the
+point as much as the five.
+
+### One existing test broke, and it was right to
+
+`nextMonday()` in the scheduling spec resolves to the first day of that
+give-back window, and the spec clicked whichever appointment came first in the
+document and expected a cancel form. It now finds a cancelled one, which
+correctly offers no such form. Nothing regressed: the seed had become more
+realistic and the spec's assumption — that the first chip on a day is one you can
+cancel — had always been the fragile part. It now names a `scheduled` session
+instead of taking whatever is first.
+
+### What this deliberately does not do
+
+It does not book. `waitlistMatches` has said so in a comment since the phase it
+was written in, and the reason has not changed: an automatic rebooking would put
+a client in a room with a clinician neither of them chose for that hour, and it
+would move somebody's session without a person seeing that it moved.
+
+It does not record that an offer was made. That was a real fork, and the cost of
+deciding against it is honest: front desk can ring the same three people about
+two different hours and this system will not know. The alternative was a table,
+an audit story, and a new way for an opening to be dismissed without being
+filled — and on the evidence of `unreachableClients`, the thing that keeps these
+lists useful is that nothing can be tidied off them. If a practice running this
+finds the re-ringing is the real cost, the fix is a record of offers, not a
+dismiss button.
+
+And it does not tell a waiting client anything. Every message in this system is
+one the practice chose to send to a specific person about their own appointment;
+"an hour came free, do you want it" sent automatically to a matching list is a
+different kind of message, and it is the kind that goes wrong when two people
+answer it.
+
+---
+
 ---
 
 ## Decisions log
@@ -958,6 +1131,11 @@ because that flag would be a knob for turning the honesty off.
 | A `client` role in the matrix, empty on purpose | A tokenized submission gets an honest actor in the audit trail instead of being attributed to staff |
 | Supervisor reach extends to a supervisee's caseload, except process notes | Countersigning blind is not supervision; the single exception is sharper against a full record than against an empty one |
 | Denials logged outside the caller's transaction | A rolled-back request must still leave the attempt on the record |
+| A freed hour is every future cancellation, not every decline | A front-desk cancellation empties the same hour; a list of declines would leave holes nobody was looking for |
+| Continuity checked before any preference the client stated | Offering another clinician's hour proposes a stranger, and no stated preference can outrank that |
+| `waitlistMatches` takes a required `clinicianId`, not an optional one | An optional field there is a field a caller can skip, and the thing skipped is the clinical rule |
+| `fillability` bands deliberately miss the late-cancel window | One threshold decides whether a client is charged, the other how a row is sorted; folding them together is the cheapest available mistake |
+| No record that an offer was made, and no "handled" control | What keeps these lists useful is that nothing can be tidied off them; the cost is re-ringing, and the fix for that would be a record of offers, not a dismiss button |
 | List reads logged once, not once per row | Forty audit rows for one page view buries the individual record opens that matter |
 | `may()` is silent | Deciding which buttons to draw is not an access event, and logging it would drown the real ones |
 | A separate `messagingName` on practice settings | "Stillwater Counseling" on a lock screen tells a roommate what the appointment is for; the deny-list catches exactly that, so the practice needs a short name |

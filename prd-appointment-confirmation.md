@@ -161,7 +161,7 @@ Practice manager only. Sets `chargeFeeCents = 0` and records `feeWaivedById`, `f
 
 - ~~A carrier integration behind the outbox, with delivery receipts~~ **— shipped 2026-09-05.** A `Carrier` port with a deterministic offline driver, delivery receipts, retries and failure codes; the fee rule now requires *delivered*, not merely *queued*, and an undelivered session is exempted rather than charged. The remaining gap is named honestly: no real provider is attached, and attaching one means writing a second driver and changing no policy code. See `src/messaging/carrier.ts` and WRITEUP §12.
 - Per-client cadence selection (a client who wants only the day-of nudge).
-- Confirmation state feeding the waitlist: a decline at `d5` is a five-day-notice opening, which is exactly what a waitlisted client can take.
+- ~~Confirmation state feeding the waitlist~~ **— shipped 2026-09-05.** Every future cancellation, not only a decline, becomes an offerable hour with the notice remaining on it, matched against the waitlist under a continuity rule that outranks every preference a client stated: a waiting client is only ever offered their own clinician's hour. It books nothing and has no "handled" control — an hour leaves the list when it is filled, when the clinician stops working it, or when it starts. See `src/scheduling/openings.ts` and WRITEUP §13.
 - Multi-language message bodies (the deny-list is English-only and would need one per language — a real gap, named).
 
 ## Success Metrics (evaluated against synthetic seeded data)
