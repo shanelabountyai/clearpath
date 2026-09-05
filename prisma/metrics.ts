@@ -173,6 +173,21 @@ export async function seedMetrics(): Promise<Metric[]> {
     optedOut.length >= 1 && stillMessaged === 0,
     `${optedOut.length} opted out, ${stillMessaged} still on a channel`);
 
+  // P1-5. One vocabulary for one question, exercised across the quarter: every
+  // decline carries a code from the reschedule request's list, and none of them
+  // carries anything a client typed.
+  const declines = await prisma.appointment.findMany({
+    where: { confirmation: 'declined' },
+    select: { cancelReason: true },
+  });
+  const REASON_CODES = [
+    'cannot_make_it', 'need_a_different_time', 'prefer_earlier', 'prefer_later', 'client declined',
+  ];
+  const offCode = declines.filter((d) => !REASON_CODES.includes(d.cancelReason ?? ''));
+  check('every decline carries a reason code and no free text',
+    declines.length >= 1 && offCode.length === 0,
+    `${declines.length} declines, ${offCode.length} off the list`);
+
   // P1-2, exercised by data rather than asserted in the abstract. A quarter in
   // which nobody ever earns the quieter cadence would leave the cap untested by
   // the one thing that tests it end to end.

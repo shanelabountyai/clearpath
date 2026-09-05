@@ -99,6 +99,101 @@ export async function utilizationReport(
 const rate = (n: number, of: number) => (of === 0 ? 0 : round2(n / of));
 const round2 = (n: number) => Math.round(n * 10_000) / 10_000;
 
+/**
+ * P1-4. What the confirmation policy actually did, per clinician and across the
+ * practice.
+ *
+ * The counts are the point, and so is the last column. A practice that turns on
+ * an automatic fee should be able to see, in one place and without asking
+ * anybody, how many sessions it charged for and how much that came to — because
+ * the argument against this policy (Risk 1: non-response in counseling
+ * correlates with the reason people attend) is answerable only from data, and a
+ * number nobody can find is a number nobody will check.
+ *
+ * `notRequired` is a column rather than a footnote for the same reason. It is
+ * the count of sessions the practice was never allowed to charge for, and a
+ * report that hid it would make the exemption invisible in exactly the place
+ * somebody is deciding whether the policy is working.
+ */
+export async function confirmationReport(
+  actor: Actor,
+  range: { from: LocalDate; to: LocalDate },
+) {
+  return guarded(
+    { actor, action: 'read', resource: 'attendance_history' },
+    async (tx) => {
+      const appointments = await tx.appointment.findMany({
+        where: {
+          startAt: { gte: zonedToUtc(range.from, 0), lt: zonedToUtc(addDays(range.to, 1), 0) },
+        },
+        select: {
+          clinicianId: true, confirmation: true, status: true, chargeFeeCents: true,
+          feeWaivedAt: true,
+          clinician: { select: { id: true, name: true, role: true } },
+        },
+      });
+
+      const blank = () => ({
+        confirmed: 0, declined: 0, noResponse: 0, notRequired: 0, pending: 0,
+        /** Sessions this policy charged for: silent, absent, and not waived. */
+        charged: 0, feeCents: 0, waived: 0,
+      });
+      type Row = ReturnType<typeof blank> & { id: string; name: string; role: string };
+
+      const byClinician = new Map<string, Row>();
+      const totals = blank();
+
+      for (const a of appointments) {
+        const row = byClinician.get(a.clinicianId)
+          ?? { id: a.clinicianId, name: a.clinician.name, role: a.clinician.role, ...blank() };
+
+        const bucket = {
+          confirmed: 'confirmed', declined: 'declined',
+          no_response: 'noResponse', not_required: 'notRequired', pending: 'pending',
+        }[a.confirmation] as keyof ReturnType<typeof blank>;
+        row[bucket]++;
+        totals[bucket]++;
+
+        // The fee this feature produced, and only that one: a no-show somebody
+        // marked by hand is the practice's ordinary policy and is already in
+        // the utilization report.
+        if (a.confirmation === 'no_response' && a.status === 'no_show') {
+          if (a.feeWaivedAt) {
+            row.waived++;
+            totals.waived++;
+          } else {
+            row.charged++;
+            totals.charged++;
+            row.feeCents += a.chargeFeeCents ?? 0;
+            totals.feeCents += a.chargeFeeCents ?? 0;
+          }
+        }
+        byClinician.set(a.clinicianId, row);
+      }
+
+      // Sessions the practice was allowed to ask about. Every rate below is
+      // against this rather than against everything booked, because a client on
+      // "no messages" was never in the denominator of a question nobody put.
+      const asked = totals.confirmed + totals.declined + totals.noResponse + totals.pending;
+
+      return {
+        range,
+        totals,
+        asked,
+        rates: {
+          confirmed: asked ? totals.confirmed / asked : 0,
+          declined: asked ? totals.declined / asked : 0,
+          noResponse: asked ? totals.noResponse / asked : 0,
+          /** Of everything booked — the share the policy could never touch. */
+          notRequired: appointments.length ? totals.notRequired / appointments.length : 0,
+          charged: asked ? totals.charged / asked : 0,
+        },
+        byClinician: [...byClinician.values()].sort((a, b) => a.name.localeCompare(b.name)),
+      };
+    },
+  );
+}
+
 function countWeekdays(from: LocalDate, to: LocalDate): number {
   let count = 0;
   for (let d = from; d <= to; d = addDays(d, 1)) {

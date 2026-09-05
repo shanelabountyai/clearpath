@@ -4,14 +4,14 @@ import { fixedClock, DAY, HOUR } from '../clock';
 import { prisma } from '../db';
 import { Forbidden } from '../errors';
 import { bookAppointment } from '../scheduling/booking';
-import { cancelAppointment, setStatus } from '../scheduling/lifecycle';
+import { cancelAppointment, setStatus, waiveFee } from '../scheduling/lifecycle';
 import { continuityQueue, unconfirmedSoon, vacationImpact, waitlistMatches } from '../scheduling/worklists';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { confirmationTrail, noResponseFees, queryAuditLog, toCsv } from './audit';
 import { runReminderHorizon } from '../scheduling/reminders';
 import { runNonResponseSweep } from '../scheduling/nonresponse';
-import { confirmAppointment } from '../portal/service';
-import { utilizationReport, weeklyVolume, weekStart } from './utilization';
+import { confirmAppointment, declineAppointment } from '../portal/service';
+import { confirmationReport, utilizationReport, weeklyVolume, weekStart } from './utilization';
 
 let desk: Awaited<ReturnType<typeof makeUser>>;
 let therapist: Awaited<ReturnType<typeof makeUser>>;
@@ -313,6 +313,151 @@ describe('the unconfirmed work-list', () => {
     expect(await unconfirmedSoon(actor(therapist), { clock: DAY_BEFORE() })).toHaveLength(1);
 
     await expect(unconfirmedSoon(actor(auditorUser), { clock: DAY_BEFORE() })).rejects.toBeInstanceOf(Forbidden);
+  });
+});
+
+/**
+ * P1-4. What the policy did, for the person who has to decide whether it should
+ * keep doing it. Risk 1 is answerable only from data, and a number nobody can
+ * find is a number nobody will check.
+ */
+describe('the confirmation report', () => {
+  const START = new Date('2026-09-01T19:00:00Z');
+  const RANGE = { from: '2026-08-25', to: '2026-09-08' };
+
+  /** One session, walked to whichever ending the test needs. */
+  async function session(startMinute: number, ending: 'confirmed' | 'declined' | 'silent' | 'never_asked') {
+    const client = await makeClient(therapist.id);
+    await prisma.client.update({
+      where: { id: client.id },
+      data: ending === 'never_asked'
+        ? { reminderPreference: 'none' }
+        : { email: 'tc@example.test' },
+    });
+    const appt = await bookAppointment(actor(desk), {
+      clientId: client.id, clinicianId: therapist.id, date: '2026-09-01', startMinute,
+      type: 'standard', modality: 'in_person',
+      clock: fixedClock(new Date(START.getTime() - 30 * DAY)),
+    });
+    await runReminderHorizon(fixedClock(new Date(START.getTime() - 2 * DAY)));
+
+    if (ending === 'confirmed' || ending === 'declined') {
+      const link = await prisma.portalLink.findFirstOrThrow({ where: { clientId: client.id } });
+      const at = fixedClock(new Date(appt.startAt.getTime() - 2 * DAY));
+      if (ending === 'confirmed') await confirmAppointment(link.token, appt.id, { clock: at });
+      else await declineAppointment(link.token, appt.id, { clock: at, reason: 'cannot_make_it' });
+    }
+    if (ending === 'silent') {
+      await runNonResponseSweep(fixedClock(new Date(appt.startAt.getTime() + 30 * 60_000)));
+    }
+    return appt;
+  }
+
+  it('counts every answer, and the silence, and the sessions nobody was asked', async () => {
+    await session(9 * 60, 'confirmed');
+    await session(10 * 60, 'declined');
+    await session(11 * 60, 'silent');
+    await session(12 * 60, 'never_asked');
+
+    const report = await confirmationReport(actor(admin), RANGE);
+    expect(report.totals).toMatchObject({
+      confirmed: 1, declined: 1, noResponse: 1, notRequired: 1,
+    });
+    // Rates are against what the practice was allowed to ask, not against
+    // everything booked: a client on "no messages" was never in the
+    // denominator of a question nobody put to them.
+    expect(report.asked).toBe(3);
+    expect(report.rates.confirmed).toBeCloseTo(1 / 3);
+  });
+
+  it('reports the money the policy generated, and only that money', async () => {
+    await session(9 * 60, 'silent');
+    // A no-show a person marked, which is the practice's ordinary policy and
+    // belongs to the utilization report rather than to this one.
+    const byHand = await session(10 * 60, 'confirmed');
+    await setStatus(actor(desk), byHand.id, 'no_show');
+
+    const report = await confirmationReport(actor(admin), RANGE);
+    expect(report.totals.charged).toBe(1);
+    expect(report.totals.feeCents).toBe(9000);
+  });
+
+  it('takes a waived fee out of the total and keeps the count of it', async () => {
+    const silent = await session(9 * 60, 'silent');
+    await waiveFee(actor(admin), silent.id, 'practice_error');
+
+    const report = await confirmationReport(actor(admin), RANGE);
+    expect(report.totals).toMatchObject({ charged: 0, waived: 1, feeCents: 0 });
+  });
+
+  it('splits by clinician, because the question is usually about one caseload', async () => {
+    await session(9 * 60, 'confirmed');
+    const report = await confirmationReport(actor(admin), RANGE);
+    expect(report.byClinician).toHaveLength(1);
+    expect(report.byClinician[0]).toMatchObject({ name: therapist.name, confirmed: 1 });
+  });
+
+  it('is the practice manager\'s, and names no client anywhere in it', async () => {
+    const appt = await session(9 * 60, 'silent');
+    const client = await prisma.client.findUniqueOrThrow({ where: { id: appt.clientId } });
+
+    const report = await confirmationReport(actor(admin), RANGE);
+    const text = JSON.stringify(report);
+    for (const secret of [client.firstName, client.lastName, client.code]) {
+      expect(text).not.toContain(secret);
+    }
+    await expect(confirmationReport(actor(desk), RANGE)).rejects.toBeInstanceOf(Forbidden);
+  });
+});
+
+/**
+ * P1-5. One vocabulary for one question. The decline reuses the reschedule
+ * request's four codes rather than inventing a parallel list.
+ */
+describe('why a client declined', () => {
+  const START = new Date('2026-09-01T19:00:00Z');
+
+  it('records the code the client chose, with no free text anywhere', async () => {
+    const client = await makeClient(therapist.id);
+    await prisma.client.update({ where: { id: client.id }, data: { email: 'tc@example.test' } });
+    const appt = await bookAppointment(actor(desk), {
+      clientId: client.id, clinicianId: therapist.id, date: '2026-09-01', startMinute: 9 * 60,
+      type: 'standard', modality: 'in_person',
+      clock: fixedClock(new Date(START.getTime() - 30 * DAY)),
+    });
+    await runReminderHorizon(fixedClock(new Date(START.getTime() - 2 * DAY)));
+    const link = await prisma.portalLink.findFirstOrThrow({ where: { clientId: client.id } });
+
+    const out = await declineAppointment(link.token, appt.id, {
+      clock: fixedClock(new Date(appt.startAt.getTime() - 2 * DAY)),
+      reason: 'need_a_different_time',
+    });
+    expect(out.cancelReason).toBe('need_a_different_time');
+    expect(out.confirmation).toBe('declined');
+
+    // And it stays out of the audit log, which carries the answer as a code
+    // and never the operational text beside it.
+    const rows = await prisma.auditEvent.findMany({ where: { resourceId: appt.id } });
+    expect(rows.map((r) => r.reason)).toContain('declined');
+    expect(JSON.stringify(rows)).not.toContain('need_a_different_time');
+  });
+
+  it('still declines without one, because a keyword reply carries none', async () => {
+    const client = await makeClient(therapist.id);
+    await prisma.client.update({ where: { id: client.id }, data: { email: 'tc2@example.test' } });
+    const appt = await bookAppointment(actor(desk), {
+      clientId: client.id, clinicianId: therapist.id, date: '2026-09-01', startMinute: 10 * 60,
+      type: 'standard', modality: 'in_person',
+      clock: fixedClock(new Date(START.getTime() - 30 * DAY)),
+    });
+    await runReminderHorizon(fixedClock(new Date(START.getTime() - 2 * DAY)));
+    const link = await prisma.portalLink.findFirstOrThrow({ where: { clientId: client.id } });
+
+    const out = await declineAppointment(link.token, appt.id, {
+      clock: fixedClock(new Date(appt.startAt.getTime() - 2 * DAY)),
+    });
+    expect(out.status).toBe('cancelled');
+    expect(out.cancelReason).toBe('client declined');
   });
 });
 

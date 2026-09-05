@@ -226,6 +226,19 @@ const tokenRequest = (link: { clientId: string }, appointmentId: string, reason:
 });
 
 /**
+ * Why a client cannot come, from a fixed list.
+ *
+ * Shared by the reschedule request and the decline: they are the same question
+ * — "why not this hour" — asked by two buttons, and a parallel vocabulary for
+ * the second would be two places to add a fifth reason and two things for a
+ * report to union. Never free text, for the reason the whole client-facing
+ * surface has none: a box on a client's page is a channel for clinical content
+ * to arrive at the one desk that must never see it.
+ */
+export type RescheduleReason =
+  | 'cannot_make_it' | 'need_a_different_time' | 'prefer_earlier' | 'prefer_later';
+
+/**
  * "Yes, I am coming." One tap, and it answers the practice's question without
  * touching the practice's own record of what happened.
  *
@@ -265,7 +278,7 @@ export async function confirmAppointment(
 export async function declineAppointment(
   token: string,
   appointmentId: string,
-  opts: { clock?: Clock; acknowledgeFee?: boolean } = {},
+  opts: { clock?: Clock; acknowledgeFee?: boolean; reason?: RescheduleReason } = {},
 ) {
   const clock = opts.clock ?? systemClock;
   const link = await liveLink(token, clock);
@@ -287,13 +300,18 @@ export async function declineAppointment(
 
   return cancelAppointment(tokenActor(link), appt.id, {
     clock,
-    reason: 'client declined',
+    // P1-5. The same four codes the reschedule request uses, rather than a
+    // parallel vocabulary invented for the same question asked twice. Two of
+    // them — "earlier" and "later" — read a little oddly on a cancellation,
+    // and that is the smaller cost: a second list would mean two places to add
+    // a fifth reason, two things for a report to union, and a client answering
+    // the same question with different words depending on which button they
+    // reached it from. A decline with no reason stays legal, because a keyword
+    // reply carries none.
+    reason: opts.reason ?? 'client declined',
     confirmation: 'declined',
   });
 }
-
-export type RescheduleReason =
-  | 'cannot_make_it' | 'need_a_different_time' | 'prefer_earlier' | 'prefer_later';
 
 /**
  * Ask for a different time. It books nothing.

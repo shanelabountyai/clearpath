@@ -108,6 +108,10 @@ export default async function ClientPortalPage({
                         <input type="hidden" name="token" value={token} />
                         <input type="hidden" name="appointmentId" value={a.id} />
                         <input type="hidden" name="acknowledgeFee" value="1" />
+                        {/* Carried through the interstitial rather than asked
+                            again: the client answered this before they were
+                            shown the fee, and the fee is not a new question. */}
+                        <input type="hidden" name="reason" value={q.reason ?? 'cannot_make_it'} />
                         <button
                           className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
                           style={{ background: 'var(--danger)', color: 'var(--on-solid)', borderColor: 'var(--danger)' }}
@@ -132,9 +136,22 @@ export default async function ClientPortalPage({
                         Yes, I will be there
                       </button>
                     </form>
-                    <form action={sayNo}>
+                    {/* P1-5. The same four codes as the reschedule request —
+                        one question, one vocabulary, and still no box to type
+                        in. It defaults to the plainest of them, so declining
+                        stays one tap for a client who does not want to say. */}
+                    <form action={sayNo} className="flex flex-wrap items-center gap-2">
                       <input type="hidden" name="token" value={token} />
                       <input type="hidden" name="appointmentId" value={a.id} />
+                      <label className="sr-only" htmlFor={`decline-reason-${a.id}`}>Reason</label>
+                      <select
+                        id={`decline-reason-${a.id}`}
+                        name="reason"
+                        className="rounded-[var(--radius)] border px-2 py-1.5 text-body"
+                        style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
+                      >
+                        {REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                      </select>
                       <button
                         className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
                         style={{ borderColor: 'var(--border-strong)' }}

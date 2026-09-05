@@ -269,6 +269,11 @@ async function main() {
     'confirm_early', 'decline_late', 'confirm_late', 'silent_present', 'silent_absent',
   ];
 
+  /** P1-5. The portal's four, reused rather than duplicated for the decline. */
+  const DECLINE_REASONS = [
+    'cannot_make_it', 'need_a_different_time', 'prefer_earlier', 'prefer_later',
+  ] as const;
+
   const eligibleClients = new Map(
     (await prisma.client.findMany({
       select: { id: true, reminderPreference: true, email: true, phone: true },
@@ -366,7 +371,12 @@ async function main() {
         } else {
           // Through the real door, so `classifyCancellation` — not this seed —
           // decides whether it was late, and the fee follows from the clock.
-          await declineAppointment(token, appt.id, { clock, acknowledgeFee: true });
+          // P1-5: with one of the four codes the reschedule request uses, dealt
+          // round-robin so the report has all of them to show.
+          await declineAppointment(token, appt.id, {
+            clock, acknowledgeFee: true,
+            reason: DECLINE_REASONS[answered.declined % DECLINE_REASONS.length]!,
+          });
           answered.declined++;
         }
       }

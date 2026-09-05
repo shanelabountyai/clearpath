@@ -59,12 +59,16 @@ export async function sayNo(formData: FormData) {
   const token = String(formData.get('token'));
   const appointmentId = String(formData.get('appointmentId'));
   const acknowledgeFee = formData.get('acknowledgeFee') === '1';
+  // P1-5. One of the four, and the same four the reschedule request uses.
+  const reason = String(formData.get('reason') ?? 'cannot_make_it') as RescheduleReason;
 
   try {
-    await declineAppointment(token, appointmentId, { acknowledgeFee });
+    await declineAppointment(token, appointmentId, { acknowledgeFee, reason });
   } catch (e) {
     if (e instanceof Conflict && e.code === 'fee_acknowledgement_required') {
-      redirect(`/p/${token}?fee=${appointmentId}`);
+      // The reason survives the interstitial, so the second tap does not ask
+      // the client the same question twice.
+      redirect(`/p/${token}?fee=${appointmentId}&reason=${reason}`);
     }
     redirect(`/p/${token}`);
   }
