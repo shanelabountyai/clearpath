@@ -18,6 +18,15 @@ discipline. It is **not** HIPAA-compliant software and must never hold real clie
 data. Mental-health data is among the most sensitive that exists; modeling the
 protections is the lesson, claiming them would be the credibility-killer.
 
+**Nothing sends and nothing charges.** Every message is a row in an outbox table
+that no carrier reads, and every fee is a flag on an appointment that no payment
+processor sees. The automatic no-show fee — a client who never answers three
+reminders is marked absent and billed — is a *modeled mechanism*, built to show
+what such a rule costs and what it has to refuse. It is not clinical advice, not
+legal advice, and not a policy recommendation: the write-up argues at length
+that a practice should ship the loop, watch a quarter of data, and only then
+decide whether to turn the money on.
+
 ---
 
 ![The calendar as the front desk sees it: five columns of named sessions with times, rooms and clinicians, and a banner reading "Operational — names, times and rooms. Why anyone is here does not appear on this screen at any level of detail."](docs/screenshots/calendar-front-desk.png)
@@ -66,7 +75,11 @@ and a test greps the rest of `src/` to prove no endpoint re-implements a role ch
   tokenized link. The portal shows appointment times and nothing clinical, and a
   reschedule request is a reason code rather than a message — there is no
   free-text channel from a client to the front desk.
-- **All outbound messages are outbox stubs.** Nothing is actually sent.
+- **All outbound messages are outbox stubs.** Nothing is actually sent. This is
+  load-bearing for the confirmation fee: today its precondition is a *queued*
+  message, which proves the practice intended to ask. Attach a real carrier and
+  that precondition has to become a delivery receipt, or the practice charges
+  clients for its own failed sends.
 
 ## Stack
 
@@ -79,8 +92,9 @@ createdb clearpath_dev clearpath_test clearpath_e2e clearpath_shadow
 npm install
 npm run db:setup     # migrate all three, generate the client, seed dev + e2e
 npm run dev          # http://localhost:3700
-npm test             # 1,252 unit + integration tests
-npm run test:e2e     # 19 Playwright tests against a production build
+npm test             # 1,544 unit + integration tests
+npm run test:e2e     # 26 Playwright tests against a production build
+npm run verify:seed  # the seeded quarter, against its own success metrics
 ```
 
 Local Postgres only, three databases and each for one job:
@@ -123,6 +137,21 @@ week of annual leave with the standing sessions it displaces, ~86 form
 submissions including flagged screeners, three break-glass events and a logged
 process-note refusal.
 
+The quarter is **simulated rather than assigned**. Every day of it gets a
+reminder-horizon run, the clients who answer answer through their own tokenized
+link, and the non-response sweep runs at midnight — so the 1,355 reminders, the
+outbox rows and the audit trail are consequences of the shipped code rather than
+fixtures shaped to look like consequences. Client behaviour is dealt from a fixed
+cycle (70% confirm, 10% decline, 15% silent but present, 5% silent and absent)
+so the totals are hand-tallyable rather than sampled.
+
+The seed then checks itself. Fifteen success metrics run as queries at the end
+of `npm run db:seed`, and it refuses to finish if any fails — no fee for a client
+on `reminderPreference: 'none'`, no fee without a queued message behind it, no
+more than 5% of eligible sessions charged, and every one of the 102 clients who
+attended without ever answering charged the session fee rather than the no-show
+fee. That last group is the row the confirmation feature is judged on.
+
 ## Design
 
 `DESIGN-BRIEF.md` is the brief the interface was built from — personas, the
@@ -142,4 +171,7 @@ means replacing that file's values and nothing else.
 | Scoring, thresholds and critical items | [`src/forms/scoring.ts`](src/forms/scoring.ts) |
 | Two-tier notes and co-signature | [`src/notes/service.ts`](src/notes/service.ts) |
 | The discretion deny-list | [`src/messaging/outbox.ts`](src/messaging/outbox.ts) |
+| Whether the practice may ask, and when | [`src/scheduling/confirmation.ts`](src/scheduling/confirmation.ts) |
+| What silence means, and what it does not | [`src/scheduling/nonresponse.ts`](src/scheduling/nonresponse.ts) |
+| The seed's own success metrics | [`prisma/metrics.ts`](prisma/metrics.ts) |
 | Why any of it is shaped this way | [`WRITEUP.md`](WRITEUP.md) |

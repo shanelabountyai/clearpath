@@ -64,7 +64,7 @@ Builder-side, this targets the feature families demo apps always skip: **RBAC wi
 ### Must-Have (P0)
 
 > **Status.** Every box below is ticked against a named test, not against a
-> memory of building it — the permission matrix asserts all 455 cells including
+> memory of building it — the permission matrix asserts all 546 cells including
 > the denials, and the e2e sweep walks the capstone flow. The P1 items shipped
 > in the same phase. `npm test` runs a typecheck first, so the boxes cannot
 > quietly stop being true.
