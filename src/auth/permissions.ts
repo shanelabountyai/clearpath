@@ -30,7 +30,17 @@ export type Resource =
   | 'audit_log'
   | 'user'; // accounts, roles, supervision relationships
 
-export type Action = 'read' | 'create' | 'update' | 'sign' | 'cosign';
+/**
+ * `waive` is deliberately not `update`.
+ *
+ * Reversing a charge the practice made automatically is a different decision
+ * from correcting a fee, and it is the practice manager's alone — front desk
+ * runs the calendar and takes the phone call from the client who is upset
+ * about the charge, which is exactly why they must not be the one who can make
+ * it go away. Modelling it as its own action is what lets the matrix say that
+ * in one cell instead of an `if` in the handler.
+ */
+export type Action = 'read' | 'create' | 'update' | 'sign' | 'cosign' | 'waive';
 
 export const ROLES: readonly Role[] = [
   'front_desk', 'therapist', 'associate', 'supervisor', 'admin', 'auditor', 'client',
@@ -40,7 +50,7 @@ export const RESOURCES: readonly Resource[] = [
   'process_note', 'form_template', 'form_request', 'form_submission',
   'alert', 'portal_link', 'audit_log', 'user',
 ];
-export const ACTIONS: readonly Action[] = ['read', 'create', 'update', 'sign', 'cosign'];
+export const ACTIONS: readonly Action[] = ['read', 'create', 'update', 'sign', 'cosign', 'waive'];
 
 export interface Actor {
   id: string;
@@ -179,7 +189,10 @@ const MATRIX: Record<Role, RoleMatrix> = {
   admin: {
     // Practice manager. Clinical reach only through logged break-glass.
     client: { read: 'breakGlass', update: 'breakGlass' },
-    fee: { read: 'always', update: 'always' },
+    // The only `waive` cell in the matrix. An automatic charge without a
+    // reversal is not shippable, and a reversal anybody can reach is not a
+    // policy — so it lands on exactly one role, and every refusal is logged.
+    fee: { read: 'always', update: 'always', waive: 'always' },
     appointment: { read: 'always', create: 'always', update: 'always' },
     attendance_history: { read: 'always' },
     progress_note: { read: 'breakGlass' },

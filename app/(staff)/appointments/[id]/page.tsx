@@ -8,7 +8,7 @@ import { may } from '../../../../src/auth/guard';
 import { localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../../src/time';
 import { Badge, Card, Field, PageHeader, STATUS_META, StatusChip, money } from '../../../../src/ui/primitives';
 import { BreakGlassPrompt } from '../../break-glass';
-import { advanceStatus, cancelSession, moveSession, startProgressNote } from '../actions';
+import { advanceStatus, cancelSession, moveSession, startProgressNote, waiveSessionFee } from '../actions';
 import { systemClock } from '@/src/clock';
 import { Button } from '@/src/ui/primitives';
 
@@ -40,6 +40,9 @@ export default async function AppointmentPage({
   const canWriteNote = may({
     actor, action: 'create', resource: 'progress_note', target: { clinicianId: appt.clinicianId },
   });
+  // The matrix decides whether the affordance is drawn, and decides again when
+  // the form is submitted. Drawing it is not the permission.
+  const canWaive = may({ actor, action: 'waive', resource: 'fee' });
 
   return (
     <>
@@ -83,7 +86,15 @@ export default async function AppointmentPage({
                     : <Badge tone="info" glyph="↻">{appt.series.frequency}, {WEEKDAYS[appt.series.weekday]}</Badge>
                   : <span className="text-subtle">One-off</span>}
               </Field>
-              <Field label="Charge">{money(appt.chargeFeeCents)}</Field>
+              <Field label="Charge">
+                {appt.feeWaivedAt ? (
+                  <>
+                    {money(0)} <Badge tone="info" glyph="↩">Waived</Badge>
+                  </>
+                ) : (
+                  money(appt.chargeFeeCents)
+                )}
+              </Field>
             </dl>
           </Card>
 
@@ -106,6 +117,48 @@ export default async function AppointmentPage({
                     </form>
                   ))}
               </div>
+            </Card>
+          )}
+
+          {canWaive && appt.chargeFeeCents !== null && (
+            <Card>
+              <h2 className="font-semibold">Waive this fee</h2>
+              {appt.feeWaivedAt ? (
+                /* Once, and on the record. A second waiver would put two
+                   decisions in the trail where the practice made one. */
+                <p className="mt-2 text-body text-subtle">
+                  Waived on {localDateOf(appt.feeWaivedAt)} · {appt.feeWaiveReason?.replace('_', ' ')}
+                </p>
+              ) : (
+                <>
+                  <p className="mt-2 text-body text-subtle">
+                    The charge goes to zero and what was charged stays on the record. This
+                    changes nothing about whether the client attended.
+                  </p>
+                  <form action={waiveSessionFee} className="mt-3 flex flex-wrap items-end gap-2">
+                    <input type="hidden" name="appointmentId" value={appt.id} />
+                    <div className="min-w-[220px] flex-1">
+                      <label htmlFor="waive-reason" className="block text-micro font-medium tracking-wide text-subtle uppercase">
+                        Reason
+                      </label>
+                      {/* A fixed list, not a text box: a free-text field on a
+                          money decision collects, sooner or later, a sentence
+                          about why the client was struggling. */}
+                      <select
+                        id="waive-reason" name="reason" defaultValue="practice_error"
+                        className="mt-1 w-full rounded-[var(--radius)] border px-2 py-1.5 text-body"
+                        style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
+                      >
+                        <option value="practice_error">Practice error</option>
+                        <option value="client_disputed">Client disputed</option>
+                        <option value="emergency">Emergency</option>
+                        <option value="goodwill">Goodwill</option>
+                      </select>
+                    </div>
+                    <Button>Waive {money(appt.chargeFeeCents)}</Button>
+                  </form>
+                </>
+              )}
             </Card>
           )}
 

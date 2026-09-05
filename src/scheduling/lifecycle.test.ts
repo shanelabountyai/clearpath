@@ -5,7 +5,7 @@ import { prisma } from '../db';
 import { Forbidden } from '../errors';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { bookAppointment } from './booking';
-import { attendanceSummary, canTransition, cancelAppointment, classifyCancellation, setStatus, TRANSITIONS, type Status } from './lifecycle';
+import { attendanceSummary, canTransition, cancelAppointment, classifyCancellation, setStatus, waiveFee, TRANSITIONS, type Status } from './lifecycle';
 
 const TUESDAY = '2026-09-01';
 const THREE_PM = 15 * 60;
@@ -270,6 +270,120 @@ describe('against the database', () => {
       expect(out.confirmation).toBe('no_response');
       expect(out.chargeFeeCents).toBe(18000); // the session, not the no-show policy
     });
+  });
+});
+
+/**
+ * P0-7. An automatic charge without a reversal is not shippable, so the two
+ * ship together. What makes the reversal honest rather than cosmetic is that
+ * the amount survives it: the flag goes to zero so every existing total is
+ * right without a change, and what was charged stays on the record.
+ */
+describe('waiving a fee', () => {
+  let desk: Awaited<ReturnType<typeof makeUser>>;
+  let manager: Awaited<ReturnType<typeof makeUser>>;
+  let therapist: Awaited<ReturnType<typeof makeUser>>;
+  let client: Awaited<ReturnType<typeof makeClient>>;
+
+  beforeEach(async () => {
+    await resetDb();
+    await settings({ lateCancelWindowHours: 24, noShowFeeCents: 9000, standardFeeCents: 18000 });
+    await makeRoom('Room 1');
+    desk = await makeUser('front_desk');
+    manager = await makeUser('admin');
+    therapist = await makeUser('therapist');
+    client = await makeClient(therapist.id);
+    await prisma.availability.create({ data: { userId: therapist.id, weekday: 2, startMinute: 540, endMinute: 1020 } });
+  });
+
+  /** A missed session carrying the policy fee — the thing there is to waive. */
+  async function charged() {
+    const appt = await bookAppointment(actor(desk), {
+      clientId: client.id, clinicianId: therapist.id, date: TUESDAY,
+      startMinute: THREE_PM, type: 'standard', modality: 'in_person',
+    });
+    return setStatus(actor(desk), appt.id, 'no_show');
+  }
+
+  const WAIVED_AT = fixedClock('2026-09-02T14:00:00Z');
+
+  it('zeroes the charge and records who decided and why', async () => {
+    const appt = await charged();
+    expect(appt.chargeFeeCents).toBe(9000);
+
+    const out = await waiveFee(actor(manager), appt.id, 'practice_error', { clock: WAIVED_AT });
+    expect(out.chargeFeeCents).toBe(0);
+    expect(out.feeWaivedById).toBe(manager.id);
+    expect(out.feeWaiveReason).toBe('practice_error');
+    expect(out.feeWaivedAt?.toISOString()).toBe('2026-09-02T14:00:00.000Z');
+  });
+
+  it('leaves what happened alone — the client still did not turn up', async () => {
+    const appt = await charged();
+    await prisma.appointment.update({ where: { id: appt.id }, data: { confirmation: 'no_response' } });
+
+    const out = await waiveFee(actor(manager), appt.id, 'goodwill', { clock: WAIVED_AT });
+    expect(out.status).toBe('no_show');
+    expect(out.confirmation).toBe('no_response');
+  });
+
+  it('drops the waived fee out of the chargeable total', async () => {
+    const appt = await charged();
+    await waiveFee(actor(manager), appt.id, 'emergency', { clock: WAIVED_AT });
+
+    const summary = await attendanceSummary(actor(manager), client.id);
+    expect(summary.noShow).toBe(1);
+    expect(summary.chargeableFeeCents).toBe(0);
+  });
+
+  it('keeps the original amount recoverable from the trail', async () => {
+    const appt = await charged();
+    await waiveFee(actor(manager), appt.id, 'client_disputed', { clock: WAIVED_AT });
+
+    const [row] = await prisma.auditEvent.findMany({
+      where: { resourceId: appt.id, action: 'waive' },
+    });
+    expect(row).toMatchObject({ resource: 'fee', actorId: manager.id, allowed: true });
+    expect(row!.reason).toContain('client_disputed');
+    expect(row!.reason).toContain('9000');
+  });
+
+  it('is denied to front desk, and the denial is logged', async () => {
+    const appt = await charged();
+    await expect(waiveFee(actor(desk), appt.id, 'goodwill')).rejects.toBeInstanceOf(Forbidden);
+
+    const [row] = await prisma.auditEvent.findMany({ where: { resource: 'fee', allowed: false } });
+    expect(row).toMatchObject({ actorRole: 'front_desk', action: 'waive', clientId: client.id });
+    expect((await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } })).chargeFeeCents).toBe(9000);
+  });
+
+  it('is denied to the treating clinician', async () => {
+    const appt = await charged();
+    await expect(waiveFee(actor(therapist), appt.id, 'goodwill')).rejects.toBeInstanceOf(Forbidden);
+  });
+
+  it('refuses a session that was never charged', async () => {
+    const appt = await bookAppointment(actor(desk), {
+      clientId: client.id, clinicianId: therapist.id, date: TUESDAY,
+      startMinute: 16 * 60, type: 'standard', modality: 'in_person',
+    });
+    await expect(waiveFee(actor(manager), appt.id, 'goodwill')).rejects.toMatchObject({ code: 'no_fee' });
+  });
+
+  it('refuses a second waiver, so the trail carries one decision and not two', async () => {
+    const appt = await charged();
+    await waiveFee(actor(manager), appt.id, 'goodwill', { clock: WAIVED_AT });
+    await expect(waiveFee(actor(manager), appt.id, 'emergency', { clock: WAIVED_AT }))
+      .rejects.toMatchObject({ code: 'already_waived' });
+  });
+
+  it('carries no client name into the trail', async () => {
+    const appt = await charged();
+    await waiveFee(actor(manager), appt.id, 'goodwill', { clock: WAIVED_AT });
+
+    const trail = JSON.stringify(await prisma.auditEvent.findMany({ where: { clientId: client.id } }));
+    expect(trail).not.toContain(client.lastName);
+    expect(trail).not.toContain(client.code);
   });
 });
 

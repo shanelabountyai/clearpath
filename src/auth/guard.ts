@@ -24,6 +24,13 @@ interface GuardRequest {
   resourceId?: string;
   /** The client whose record this belongs to. Indexed for auditor queries. */
   clientId?: string;
+  /**
+   * An operational note for the trail — a reason code, and the figure a
+   * reversal reversed. Never content, never a name, never an answer: the same
+   * bar the break-glass justification passes, which is the other thing that
+   * writes this column.
+   */
+  reason?: string;
 }
 
 async function record(db: Tx | typeof prisma, req: GuardRequest, decision: Decision) {
@@ -38,7 +45,9 @@ async function record(db: Tx | typeof prisma, req: GuardRequest, decision: Decis
       allowed: decision.allowed,
       rule: decision.rule,
       breakGlass: decision.breakGlass,
-      reason: req.actor.breakGlass?.reason ?? null,
+      // An explicit note wins over the break-glass justification, and in
+      // practice they never both apply: break-glass reaches records, not money.
+      reason: req.reason ?? req.actor.breakGlass?.reason ?? null,
     },
   });
 }
@@ -126,7 +135,7 @@ export async function auditEvent(
   actor: Actor,
   action: Action,
   resource: Resource,
-  opts: { resourceId?: string; clientId?: string; rule?: string } = {},
+  opts: { resourceId?: string; clientId?: string; rule?: string; reason?: string } = {},
   tx?: Tx,
 ): Promise<void> {
   await record(tx ?? prisma, { actor, action, resource, ...opts }, {

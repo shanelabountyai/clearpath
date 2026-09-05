@@ -69,7 +69,7 @@ const ALLOWED: Record<Role, Set<string>> = {
   }),
   admin: spec({
     client: 'read update', // break-glass only
-    fee: 'read update',
+    fee: 'read update waive',
     appointment: 'read create update',
     attendance_history: 'read',
     progress_note: 'read', // break-glass only
@@ -104,7 +104,7 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
     form_request: 'read create',
   }),
   admin: spec({
-    fee: 'read update',
+    fee: 'read update waive',
     appointment: 'read create update',
     attendance_history: 'read',
     form_template: 'read create update',
@@ -150,7 +150,7 @@ describe('permission matrix — every cell', () => {
     RESOURCES.flatMap((res) => ACTIONS.map((a) => [role, res, a] as [Role, Resource, Action])),
   );
 
-  it('covers 455 cells', () => expect(cells).toHaveLength(ROLES.length * RESOURCES.length * ACTIONS.length));
+  it('covers 546 cells', () => expect(cells).toHaveLength(ROLES.length * RESOURCES.length * ACTIONS.length));
 
   it.each(cells)('%s / %s / %s', (role, resource, action) => {
     const key = `${resource}:${action}`;
@@ -320,6 +320,39 @@ describe('caseload scoping', () => {
   it('does not narrow the roles that work across the practice', () => {
     for (const role of ['front_desk', 'admin', 'auditor', 'client'] as Role[]) {
       expect(ownCaseloadOnly({ id: ME, role })).toBe(false);
+    }
+  });
+});
+
+/**
+ * P0-7. The waiver is a matrix cell, not an `if` in a handler — which is the
+ * only reason "who can undo an automatic charge" is answerable by reading one
+ * file. The existing comment in `lifecycle.ts` said waiving a fee is a
+ * management decision rather than a data-entry one; this is what makes it true.
+ */
+describe('waiving a fee', () => {
+  it('is the practice manager\'s alone', () => {
+    expect(can({ id: ME, role: 'admin' }, 'waive', 'fee').allowed).toBe(true);
+  });
+
+  it('is denied to every other role, relationship or not', () => {
+    for (const role of ROLES.filter((r) => r !== 'admin')) {
+      const [actor, target] = insider(role);
+      expect(can(actor, 'waive', 'fee', target).allowed, role).toBe(false);
+    }
+  });
+
+  it('is denied to front desk in particular — they take the call about the charge', () => {
+    const [actor, target] = insider('front_desk');
+    expect(can(actor, 'waive', 'fee', target).allowed).toBe(false);
+  });
+
+  it('exists on the fee resource and nowhere else', () => {
+    for (const role of ROLES) {
+      const [actor, target] = insider(role);
+      for (const resource of RESOURCES.filter((r) => r !== 'fee')) {
+        expect(can(actor, 'waive', resource, target).allowed, `${role}/${resource}`).toBe(false);
+      }
     }
   });
 });

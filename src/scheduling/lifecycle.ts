@@ -136,6 +136,73 @@ export async function cancelAppointment(
 }
 
 /**
+ * The four reasons a practice waives a fee. A fixed list, not a text box.
+ *
+ * Same discipline as the portal's reschedule reasons: a free-text field on a
+ * money decision collects explanations nobody reads and, sooner or later, a
+ * sentence about why the client was struggling — clinical content on an
+ * operational surface, which is hard rule 3.
+ */
+export type FeeWaiveReason = 'practice_error' | 'client_disputed' | 'emergency' | 'goodwill';
+
+/**
+ * Undo a charge. The practice manager's decision and nobody else's.
+ *
+ * An automatic charge without a reversal is not shippable, which is why this
+ * ships in the same phase as the sweep rather than after it. Two things make
+ * the reversal honest rather than cosmetic:
+ *
+ *   - The flag goes to zero, so every total that already sums `chargeFeeCents`
+ *     is right with no change to any of them.
+ *   - What was charged goes into the audit row, so the amount is recoverable
+ *     from the trail rather than overwritten out of existence. The reason is a
+ *     code from a fixed list, and the row carries nothing else.
+ *
+ * It does not touch `status` or `confirmation`. The client still did not turn
+ * up; the practice chose not to charge for it, and those are two facts.
+ */
+export async function waiveFee(
+  actor: Actor,
+  appointmentId: string,
+  reason: FeeWaiveReason,
+  opts: { clock?: Clock } = {},
+) {
+  const clock = opts.clock ?? systemClock;
+  const appt = await prisma.appointment.findUnique({ where: { id: appointmentId } });
+  if (!appt) throw new NotFound('Appointment');
+
+  // Waiving nothing would leave a decision on the record that never happened,
+  // and waiving twice would leave two. Both refuse rather than no-op, because
+  // the trail is the product here.
+  if (appt.chargeFeeCents === null) {
+    throw new Conflict('That session carries no fee to waive', 'no_fee');
+  }
+  if (appt.feeWaivedAt !== null) {
+    throw new Conflict('That fee has already been waived', 'already_waived');
+  }
+
+  return guarded(
+    {
+      actor, action: 'waive', resource: 'fee',
+      resourceId: appointmentId, clientId: appt.clientId,
+      // The figure and the code, which is what "recoverable from the audit
+      // trail" means. Money is operational; a name or an answer would not be.
+      reason: `${reason}; waived ${appt.chargeFeeCents} cents`,
+    },
+    (tx) =>
+      tx.appointment.update({
+        where: { id: appointmentId },
+        data: {
+          chargeFeeCents: 0,
+          feeWaivedById: actor.id,
+          feeWaivedAt: clock.now(),
+          feeWaiveReason: reason,
+        },
+      }),
+  );
+}
+
+/**
  * Attendance record. Visible to the client's clinician and to the practice
  * manager; front desk is denied, because a no-show count is a clinical-adjacent
  * pattern rather than a scheduling fact.
