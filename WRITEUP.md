@@ -410,6 +410,64 @@ exactly like a form submission. The `client` role that P0-1 put in the matrix
 was not built for, which is usually the sign a boundary was drawn in the right
 place.
 
+### The door gains the one destructive thing it can do
+
+The confirmation feature needed a place for a client to answer "am I coming",
+and the honest options were a `YES` texted back to a short code or a tap on a
+link. The keyword reply is the one the ask described and it is the worse
+product: a message that *demands* a reply is more conspicuous on a lock screen
+than one that does not, and conspicuousness is not vocabulary — the deny-list
+can keep the words neutral and cannot make a compulsory answer discreet. It also
+opens an inbound channel, and a client can reply to an inbound channel with
+anything, including the most acute thing they have ever written, to a number
+front desk monitors. So the response is a tap, and it lands on the door that
+already existed.
+
+**No second token type.** A per-appointment token would be a second expiry
+policy, a second revocation story, a second audit rule and a second thing to get
+wrong. The reminder carries the client's live `PortalLink`, minted once if they
+have none — not one per stage, and not one per week.
+
+**A decline cancels; a reschedule request still only asks.** These look
+inconsistent and are not. The request *creates* a commitment, and the rule there
+is that a person should see one being made. A decline *destroys* one, and an
+hour the client has said they will not attend has to free the room or the whole
+loop is theatre. The safety rail is that the decline goes through the same
+`cancelAppointment` front desk uses, so `classifyCancellation` decides late or
+advance from the clock and the practice's existing late-cancel fee applies —
+this feature adds no money logic to the decline path at all.
+
+**Inside the 24-hour window, the fee is a thing the client is told.** The first
+tap changes nothing: the server decides from the clock whether a charge would
+apply and answers with an interstitial naming it in dollars, and the
+cancellation happens only on the second tap. Outside the window there is nothing
+to disclose, so there is nothing to ask, and the decline is one tap. The two
+paths are the same code with the disclosure in front of one of them.
+
+**The capability is stated in `permissions.ts`, not assumed by the door.** The
+`client` role stopped being empty. It has exactly one cell — `appointment:
+update`, under a `token` rule that requires the row to be the token holder's —
+because "what can a forwarded link do" should be answerable from the file that
+is the policy, rather than from three functions in `portal/service.ts`. Reading
+behind the link and asking for a different time stay outside the matrix; they
+change nothing. Confirming and declining change something, so they are written
+down.
+
+**Confirming is idempotent, and it is not `status`.** A second tap is the same
+confirmation, not a second one — one audit row, not two — for the same reason
+the open reschedule request is. And it writes `confirmation`, never
+`status: 'confirmed'`: a client saying yes is a communication fact, and a
+front-desk check-in is an attendance fact. That separation is the whole feature
+(see the decisions log), and the door is the surface where it would have been
+easiest to quietly collapse.
+
+**The token is re-rolled until it is discreet.** Putting a link in a
+client-facing body means the random token is scanned by `assertDiscreet` along
+with everything else, and 32 base64url characters land on a four-letter
+deny-list term about once in 36,000 — at three reminders a week for seventy
+standing clients, a send that throws in the middle of a horizon run a couple of
+times a year. The whole failure class costs one `while` in the generator.
+
 ---
 
 ## 9. Where authentication would attach
@@ -494,6 +552,13 @@ opens.
 | The horizon is one transaction per appointment, not one per stage | The messages, their reminder rows, the promotion to `pending` and the audit row are one fact: the practice asked. Committing the outbox row and failing before the reminder row would leave a message a client received with nothing recording that it was sent, and committing the promotion without the messages would make `no_response` — and the fee — reachable with no evidence behind it. Losing a race to a concurrent run costs that appointment one cycle, which is the cheap half of the trade |
 | The `@@unique([appointmentId, stage])` key is the idempotency guarantee; the pre-filter is only an optimisation | Reading the existing reminder rows and skipping the stages already there makes a second run cheap, but it decides on data read before the transaction opened — two runs a millisecond apart both read zero rows and both queue. So the constraint is what actually holds, and a `P2002` is read as "the other run got there first" rather than as a failure. The same discipline as `Appointment.occurrenceKey`, for the same reason |
 | Switching to `none` mid-cadence pulls a live `pending` back to `not_required` | Stopping the remaining stages is not enough. A row left at `pending` is a row the non-response sweep will find, and it would charge a client for not answering a question the practice had already agreed to stop asking. The safety setting has to reach backwards into the state the cadence already wrote, or it is only a setting about future messages |
+| The e2e fixture for the door is built through Prisma, not as raw SQL | The pg adapter stores a `Date` as its UTC wall clock labelled in the session's zone. Write and read cancel out, so the application is self-consistent and every unit spec passes — but a fixture row inserted by hand with `now()` reads back skewed by the machine's UTC offset, and an appointment two hours away came back as already past and vanished from the client's door. The same skew reaches any column the *database* clock fills: `createdAt` defaults to `CURRENT_TIMESTAMP`, and `createdAt` is what `dueStages` calls the notice a booking had. On a machine west of Greenwich that reads too early, which widens eligibility rather than narrowing it — the wrong direction for a rule a fee depends on. Named here and carried into the money phase; it is invisible on a UTC box, which is exactly why it is worth writing down |
+| The required response is a tap on a link, not a `YES` texted back | A message demanding a reply is more conspicuous on a lock screen than one that does not, and conspicuousness is not vocabulary — the deny-list governs words and cannot make a compulsory answer discreet. A keyword reply also opens an inbound channel front desk monitors, which a client can answer with a crisis disclosure. A link is one tap, works the same on SMS and email, needs no inbound channel at all, and puts the fee disclosure on a page where it can be read before it applies |
+| The reminder carries the existing `PortalLink`, not a new per-appointment token | A second token type is a second expiry policy, a second revocation story, a second audit rule and a second thing to get wrong. The blast radius grows honestly instead: a forwarded link can now see appointment times, request a reschedule, **and** cancel — bounded by `classifyCancellation`, unable to reach another client's row, and every use on the record with the client as the actor |
+| A decline cancels, though the reschedule request only asks | The portal's "it requests, it never books" rule is about creating commitments a person should see being made. A decline destroys one, and the practice's goal is a calendar that tells the truth — an hour the client has said they will not attend has to free the room, or the feature is theatre. The rail is that it routes through the same `cancelAppointment` front desk uses, so the 24-hour policy applies identically whoever clicked |
+| The `client` role's one matrix cell, instead of a check inside the door | "What can a forwarded link do" should be answerable from the file that *is* the policy. Reading behind the link and asking for a different time change nothing and stay outside the matrix; confirming and declining change something, so they are a cell — `appointment: update` under a `token` rule that requires the row to belong to the token holder. The door still resolves ownership first, and still answers `NotFound` rather than `Forbidden`, so the second no never has to be given |
+| The fee interstitial is a second tap, and the first tap changes nothing | Declining inside the late-cancel window is chargeable, so the first tap asks the server, the server decides from the clock, and the client is shown the amount in dollars before anything is cancelled. Outside the window there is nothing to disclose and the decline is one tap. Same code path, disclosure in front of one of them — the policy becomes something the client is told rather than something they discover |
+| The portal token is re-rolled until it passes the deny-list | Once a link is substituted into a client-facing body, `assertDiscreet` scans the random token too, and 32 base64url characters hit a four-letter term like `ptsd` about once in 36,000 — roughly twice a year at this feature's volume, as a throw in the middle of a horizon run. One `while` in the generator removes the class for every template rather than for the one that surfaced it |
 | The cadence is a script and a function, with no scheduler dependency | Due times derive from `startAt` and the injected clock, so the job is idempotent and the schedule is an implementation detail of whatever calls it — cron, a timer, a hosted trigger, or a person typing `npm run reminders:run`. A missed hour costs lateness and nothing else, and the whole five-day cadence runs in a test in a millisecond because the clock is an argument |
 
 ## What this project deliberately is not

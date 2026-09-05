@@ -79,7 +79,10 @@ const ALLOWED: Record<Role, Set<string>> = {
     user: 'read create update',
   }),
   auditor: spec({ audit_log: 'read' }),
-  client: new Set<string>(),
+  // The tokenized door, and nothing else in the matrix. `update` is confirm and
+  // decline; reading behind the link and asking for a different time change
+  // nothing and stay outside this file.
+  client: spec({ appointment: 'update' }),
 };
 
 /** Cells allowed with NO relationship and NO break-glass. */
@@ -110,7 +113,8 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
     user: 'read create update',
   }),
   auditor: ALLOWED.auditor,
-  client: ALLOWED.client,
+  // Never unconditional: without a row that is theirs, a token decides `never`.
+  client: new Set<string>(),
 };
 
 const ME = 'u-me';
@@ -119,17 +123,26 @@ const OTHER = 'u-other';
 /** Actor holds every relationship to the target it possibly could. */
 const insider = (role: Role): [Actor, Target] => [
   { id: ME, role, breakGlass: { reason: 'client in crisis' } },
-  { authorId: ME, authorSupervisorId: ME, clinicianId: ME, recipientId: ME, treatingSupervisorId: ME },
+  {
+    authorId: ME, authorSupervisorId: ME, clinicianId: ME, recipientId: ME,
+    treatingSupervisorId: ME, ownerClientId: ME,
+  },
 ];
 /** Actor supervises the target's author but wrote nothing. */
 const oversight = (role: Role): [Actor, Target] => [
   { id: ME, role },
-  { authorId: OTHER, authorSupervisorId: ME, clinicianId: OTHER, recipientId: OTHER, treatingSupervisorId: ME },
+  {
+    authorId: OTHER, authorSupervisorId: ME, clinicianId: OTHER, recipientId: OTHER,
+    treatingSupervisorId: ME, ownerClientId: OTHER,
+  },
 ];
 /** Actor holds no relationship at all. */
 const stranger = (role: Role): [Actor, Target] => [
   { id: ME, role },
-  { authorId: OTHER, authorSupervisorId: OTHER, clinicianId: OTHER, recipientId: OTHER, treatingSupervisorId: OTHER },
+  {
+    authorId: OTHER, authorSupervisorId: OTHER, clinicianId: OTHER, recipientId: OTHER,
+    treatingSupervisorId: OTHER, ownerClientId: OTHER,
+  },
 ];
 
 describe('permission matrix — every cell', () => {
@@ -311,14 +324,41 @@ describe('caseload scoping', () => {
   });
 });
 
-it('the client role can do nothing through the staff matrix', () => {
-  for (const resource of RESOURCES) {
-    for (const action of ACTIONS) {
-      const [a, t] = [{ id: ME, role: 'client' as Role, breakGlass: { reason: 'x' } },
-        { authorId: ME, authorSupervisorId: ME, clinicianId: ME, recipientId: ME }];
-      expect(can(a, action, resource, t).allowed, `${resource}:${action}`).toBe(false);
+describe('the client role reaches exactly one cell, and only their own row', () => {
+  const holder = { id: ME, role: 'client' as Role };
+
+  it('confirms and declines their own appointment', () => {
+    expect(can(holder, 'update', 'appointment', { ownerClientId: ME }).allowed).toBe(true);
+  });
+
+  it('cannot touch an appointment that is not theirs', () => {
+    expect(can(holder, 'update', 'appointment', { ownerClientId: OTHER }).allowed).toBe(false);
+    // The door answers NotFound before it ever asks, but the matrix has to be
+    // the second no as well — a forwarded link is exactly this case.
+    expect(can(holder, 'update', 'appointment', {}).allowed).toBe(false);
+  });
+
+  it('cannot be talked into it by a relationship or by break-glass', () => {
+    const dressed = { id: ME, role: 'client' as Role, breakGlass: { reason: 'x' } };
+    const everything: Target = {
+      authorId: ME, authorSupervisorId: ME, clinicianId: ME, recipientId: ME,
+      treatingSupervisorId: ME,
+    };
+    for (const resource of RESOURCES) {
+      for (const action of ACTIONS) {
+        if (resource === 'appointment' && action === 'update') continue;
+        expect(can(dressed, action, resource, { ...everything, ownerClientId: ME }).allowed,
+          `${resource}:${action}`).toBe(false);
+      }
     }
-  }
+  });
+
+  it('gives a staff role nothing extra from a row being somebody\'s', () => {
+    // `ownerClientId` is set on every appointment write, so it must decide
+    // nothing for the roles that already have a rule.
+    expect(can({ id: ME, role: 'auditor' }, 'update', 'appointment', { ownerClientId: ME }).allowed)
+      .toBe(false);
+  });
 });
 
 describe("a supervisor's reach over a supervisee's caseload", () => {

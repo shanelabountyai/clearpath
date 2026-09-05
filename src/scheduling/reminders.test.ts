@@ -3,6 +3,7 @@ import { DAY, HOUR, fixedClock } from '../clock';
 import { prisma } from '../db';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { bookAppointment } from './booking';
+import { indiscreetTerms } from '../messaging/outbox';
 import { runReminderHorizon } from './reminders';
 
 /** 2026-09-01 15:00 America/New_York, as everywhere else in this suite. */
@@ -201,11 +202,31 @@ describe('the audit trail', () => {
 });
 
 describe('the reminder body', () => {
-  it('says when, and never why', async () => {
-    await appointmentBooked(30 * DAY);
+  it('says when, carries the door, and never says why', async () => {
+    const appt = await appointmentBooked(30 * DAY);
     await runReminderHorizon(fixedClock(new Date(START.getTime() - 5 * DAY)));
 
+    const link = await prisma.portalLink.findFirstOrThrow({ where: { clientId: appt.clientId } });
     const msg = await prisma.outboxMessage.findFirstOrThrow({ where: { templateKey: 'appointment_reminder' } });
-    expect(msg.body).toBe('Appointment reminder: Tuesday 15:00, Stillwater. Reply to this message to change it.');
+    expect(msg.body).toBe(
+      `Appointment reminder: Tuesday 15:00, Stillwater. Please let us know if you are coming: http://localhost:3700/p/${link.token}. The link is personal to you — please do not forward it.`,
+    );
+    expect(indiscreetTerms(msg.body)).toEqual([]);
+  });
+
+  it('reuses the client\'s live door rather than minting one per stage', async () => {
+    const appt = await appointmentBooked(30 * DAY);
+    // Two stages queue in one run; a third a day later.
+    await runReminderHorizon(fixedClock(new Date(START.getTime() - 20 * HOUR)));
+    await runReminderHorizon(fixedClock(new Date(START.getTime() - 2 * HOUR)));
+
+    expect(await prisma.appointmentReminder.count({ where: { appointmentId: appt.id } })).toBe(3);
+    expect(await prisma.portalLink.count({ where: { clientId: appt.clientId } })).toBe(1);
+
+    const link = await prisma.portalLink.findFirstOrThrow({ where: { clientId: appt.clientId } });
+    const bodies = (await prisma.outboxMessage.findMany({ where: { templateKey: 'appointment_reminder' } }))
+      .map((m) => m.body);
+    expect(bodies).toHaveLength(3);
+    for (const body of bodies) expect(body).toContain(`/p/${link.token}`);
   });
 });

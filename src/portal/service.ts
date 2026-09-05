@@ -5,7 +5,8 @@ import { clientTarget } from '../clients/repository';
 import { systemClock, DAY, type Clock } from '../clock';
 import { prisma, type Tx } from '../db';
 import { Conflict, NotFound } from '../errors';
-import { queueToClient } from '../messaging/outbox';
+import { indiscreetTerms, queueToClient } from '../messaging/outbox';
+import { cancelAppointment, classifyCancellation } from '../scheduling/lifecycle';
 
 /**
  * The client's own door.
@@ -21,7 +22,22 @@ import { queueToClient } from '../messaging/outbox';
  * times of one person, and the audit log knows the link was opened.
  */
 
-const newPortalToken = () => randomBytes(24).toString('base64url');
+/**
+ * Opaque, and re-rolled until it is also discreet.
+ *
+ * The token is substituted into a client-facing body, so `assertDiscreet` scans
+ * it along with everything else — and 32 random base64url characters land on a
+ * four-letter deny-list term about once in 36,000. At three reminders a week
+ * for seventy standing clients that is a send that throws, in the middle of a
+ * horizon run, a couple of times a year. One re-roll costs nothing and takes
+ * the whole class of failure off the table for every template.
+ */
+const newPortalToken = (): string => {
+  for (;;) {
+    const token = randomBytes(24).toString('base64url');
+    if (!indiscreetTerms(token).length) return token;
+  }
+};
 
 interface IssuePortalLink {
   clientId: string;
@@ -30,11 +46,43 @@ interface IssuePortalLink {
   clock?: Clock;
 }
 
+const PORTAL_LINK_DAYS = 90;
+
+/**
+ * The client's live link, minted if they have none.
+ *
+ * The cadence needs a link in every reminder and must not mint a fourth one
+ * every week, so it asks for the door rather than for a new door. Reusing the
+ * live link is also what makes the reminder and the portal message the same
+ * link: a client with two tokens has two revocation stories, which is the very
+ * thing D-05 refused a second token type over.
+ */
+export async function ensurePortalLink(
+  clientId: string,
+  clock: Clock,
+  db: Tx | typeof prisma = prisma,
+) {
+  const now = clock.now();
+  const live = await db.portalLink.findFirst({
+    where: { clientId, expiresAt: { gt: now } },
+    orderBy: { expiresAt: 'desc' },
+  });
+  if (live) return live;
+
+  return db.portalLink.create({
+    data: {
+      clientId,
+      token: newPortalToken(),
+      expiresAt: new Date(now.getTime() + PORTAL_LINK_DAYS * DAY),
+    },
+  });
+}
+
 /** Issue (or re-issue) a client their link, and message it to them. */
 export async function issuePortalLink(actor: Actor, input: IssuePortalLink) {
   const clock = input.clock ?? systemClock;
   const token = newPortalToken();
-  const expiresAt = new Date(clock.now().getTime() + (input.expiresInDays ?? 90) * DAY);
+  const expiresAt = new Date(clock.now().getTime() + (input.expiresInDays ?? PORTAL_LINK_DAYS) * DAY);
 
   return guarded(
     {
@@ -98,6 +146,9 @@ export async function openPortal(token: string, opts: { clock?: Clock } = {}) {
       },
       select: {
         id: true, startAt: true, endAt: true, modality: true, status: true,
+        // The client's own answer, so the door can show what they already said
+        // rather than asking again. Not `chargeFeeCents`, not the type.
+        confirmation: true,
         clinician: { select: { name: true } },
         room: { select: { name: true } },
         rescheduleRequests: {
@@ -129,6 +180,115 @@ export async function openPortal(token: string, opts: { clock?: Clock } = {}) {
   };
 }
 
+/**
+ * The one appointment a token may act on, or nothing.
+ *
+ * Shared by every write behind the door so the three refusals stay identical:
+ * a token naming somebody else's appointment learns only that there is nothing
+ * there, and a cancelled or past session is a conflict rather than a silent
+ * no-op.
+ */
+async function ownAppointment(
+  link: { clientId: string },
+  appointmentId: string,
+  clock: Clock,
+) {
+  const appt = await prisma.appointment.findUnique({
+    where: { id: appointmentId },
+    select: { id: true, clientId: true, status: true, startAt: true, confirmation: true },
+  });
+  // Not "forbidden": a token that names someone else's appointment should learn
+  // nothing about whether it exists.
+  if (!appt || appt.clientId !== link.clientId) throw new NotFound('Appointment');
+  if (appt.status === 'cancelled' || appt.status === 'late_cancelled') {
+    throw new Conflict('That appointment is already cancelled', 'already_cancelled');
+  }
+  if (appt.startAt < clock.now()) {
+    throw new Conflict('That appointment has already happened', 'in_the_past');
+  }
+  return appt;
+}
+
+/** The actor a token stands for. Honest in the trail: the client did this. */
+const tokenActor = (link: { clientId: string }): Actor =>
+  ({ id: link.clientId, role: 'client' });
+
+const tokenRequest = (link: { clientId: string }, appointmentId: string) => ({
+  actor: tokenActor(link),
+  action: 'update' as const,
+  resource: 'appointment' as const,
+  resourceId: appointmentId,
+  clientId: link.clientId,
+  target: { ownerClientId: link.clientId },
+});
+
+/**
+ * "Yes, I am coming." One tap, and it answers the practice's question without
+ * touching the practice's own record of what happened.
+ *
+ * `confirmation` is not `status`: a client saying yes is a communication fact,
+ * and `status: 'confirmed'` is a staff-side lifecycle step somebody at the
+ * front desk decided. Collapsing them is how a client who answered ends up
+ * counted as having arrived.
+ */
+export async function confirmAppointment(
+  token: string,
+  appointmentId: string,
+  opts: { clock?: Clock } = {},
+) {
+  const clock = opts.clock ?? systemClock;
+  const link = await liveLink(token, clock);
+  const appt = await ownAppointment(link, appointmentId, clock);
+
+  // A second tap is the same confirmation, not a second one — the same rule as
+  // an already-open reschedule request, and it keeps the audit trail a record
+  // of answers rather than of taps.
+  if (appt.confirmation === 'confirmed') return appt;
+
+  return guarded(tokenRequest(link, appt.id), (tx) =>
+    tx.appointment.update({ where: { id: appt.id }, data: { confirmation: 'confirmed' } }));
+}
+
+/**
+ * "No, I cannot make it." Unlike the reschedule request, this one destroys
+ * something — and that is deliberate (D-06): an hour the client has said they
+ * will not attend has to free the room, or the whole loop is theatre.
+ *
+ * The money is not this function's. `cancelAppointment` decides late or
+ * advance from the clock and applies the practice's existing late-cancel fee,
+ * exactly as it does when front desk clicks it. All this adds is the answer
+ * riding in the same write, and the second tap in front of a charge.
+ */
+export async function declineAppointment(
+  token: string,
+  appointmentId: string,
+  opts: { clock?: Clock; acknowledgeFee?: boolean } = {},
+) {
+  const clock = opts.clock ?? systemClock;
+  const link = await liveLink(token, clock);
+  const appt = await ownAppointment(link, appointmentId, clock);
+
+  const settings = await prisma.practiceSettings.findUnique({ where: { id: 1 } });
+  const windowHours = settings?.lateCancelWindowHours ?? 24;
+  const late = classifyCancellation(appt.startAt, clock.now(), windowHours) === 'late_cancelled';
+
+  // Inside the window the fee is a thing the client is told, not a thing they
+  // discover. The interstitial names it and asks again; outside the window
+  // there is nothing to disclose and nothing to ask.
+  if (late && !opts.acknowledgeFee) {
+    throw new Conflict(
+      `Cancelling this close to the appointment is chargeable`,
+      'fee_acknowledgement_required',
+    );
+  }
+
+  return cancelAppointment(tokenActor(link), appt.id, {
+    clock,
+    reason: 'client declined',
+    confirmation: 'declined',
+  });
+}
+
 export type RescheduleReason =
   | 'cannot_make_it' | 'need_a_different_time' | 'prefer_earlier' | 'prefer_later';
 
@@ -148,20 +308,7 @@ export async function requestReschedule(
 ) {
   const clock = opts.clock ?? systemClock;
   const link = await liveLink(token, clock);
-
-  const appt = await prisma.appointment.findUnique({
-    where: { id: appointmentId },
-    select: { id: true, clientId: true, status: true, startAt: true },
-  });
-  // Not "forbidden": a token that names someone else's appointment should learn
-  // nothing about whether it exists.
-  if (!appt || appt.clientId !== link.clientId) throw new NotFound('Appointment');
-  if (appt.status === 'cancelled' || appt.status === 'late_cancelled') {
-    throw new Conflict('That appointment is already cancelled', 'already_cancelled');
-  }
-  if (appt.startAt < clock.now()) {
-    throw new Conflict('That appointment has already happened', 'in_the_past');
-  }
+  await ownAppointment(link, appointmentId, clock);
 
   const existing = await prisma.rescheduleRequest.findFirst({
     where: { appointmentId, status: 'open' },

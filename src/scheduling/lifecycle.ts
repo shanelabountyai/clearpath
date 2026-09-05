@@ -4,6 +4,7 @@ import { systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
 import { clientTarget } from '../clients/repository';
 import { Conflict, NotFound } from '../errors';
+import type { Confirmation } from './confirmation';
 
 export type Status =
   | 'scheduled' | 'confirmed' | 'arrived' | 'in_session'
@@ -65,7 +66,7 @@ export async function setStatus(
   actor: Actor,
   appointmentId: string,
   to: Status,
-  opts: { reason?: string; clock?: Clock } = {},
+  opts: { reason?: string; clock?: Clock; confirmation?: Confirmation } = {},
 ) {
   const clock = opts.clock ?? systemClock;
   const appt = await prisma.appointment.findUnique({ where: { id: appointmentId } });
@@ -92,9 +93,19 @@ export async function setStatus(
     const client = await prisma.client.findUnique({ where: { id: appt.clientId }, select: { feeCents: true } });
     data.chargeFeeCents = client?.feeCents ?? settings.standardFeeCents;
   }
+  // The client's door declines through here, so the answer and the cancellation
+  // it causes land in one write with one audit row. Nothing else passes it: a
+  // status write never infers a confirmation, which is the whole of D-02.
+  if (opts.confirmation) data.confirmation = opts.confirmation;
 
   return guarded(
-    { actor, action: 'update', resource: 'appointment', resourceId: appointmentId, clientId: appt.clientId },
+    {
+      actor, action: 'update', resource: 'appointment',
+      resourceId: appointmentId, clientId: appt.clientId,
+      // Whose row this is. Staff roles decide on `always` and ignore it; it is
+      // what lets the token door reach one appointment and no other.
+      target: { ownerClientId: appt.clientId },
+    },
     (tx) => tx.appointment.update({ where: { id: appointmentId }, data }),
   );
 }
@@ -106,7 +117,7 @@ export async function setStatus(
 export async function cancelAppointment(
   actor: Actor,
   appointmentId: string,
-  opts: { reason?: string; clock?: Clock } = {},
+  opts: { reason?: string; clock?: Clock; confirmation?: Confirmation } = {},
 ) {
   const clock = opts.clock ?? systemClock;
   const appt = await prisma.appointment.findUnique({ where: { id: appointmentId } });

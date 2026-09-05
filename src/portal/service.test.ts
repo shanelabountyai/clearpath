@@ -1,14 +1,16 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../db';
 import { Conflict, Forbidden, NotFound } from '../errors';
-import { fixedClock, DAY } from '../clock';
+import { fixedClock, DAY, HOUR } from '../clock';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { bookAppointment } from '../scheduling/booking';
-import { cancelAppointment } from '../scheduling/lifecycle';
+import { bookGroupSession } from '../scheduling/groups';
+import { cancelAppointment, setStatus } from '../scheduling/lifecycle';
+import { runReminderHorizon } from '../scheduling/reminders';
 import { DENY_LIST } from '../messaging/outbox';
 import {
-  issuePortalLink, openPortal, openRescheduleRequests, requestReschedule,
-  resolveRescheduleRequest,
+  confirmAppointment, declineAppointment, ensurePortalLink, issuePortalLink,
+  openPortal, openRescheduleRequests, requestReschedule, resolveRescheduleRequest,
 } from './service';
 
 const TUESDAY = '2026-09-01';
@@ -264,4 +266,247 @@ describe('the door is narrow on purpose', () => {
     // The whole surface: a first name, a practice name, and appointment times.
     expect(Object.keys(view).sort()).toEqual(['appointments', 'firstName', 'practice']);
   });
+});
+
+/**
+ * P0-4: the client's door gains the one destructive thing it can do.
+ *
+ * The appointment is the standing Tuesday 3pm; the clock moves around it rather
+ * than the appointment moving, so "five days out" and "two hours out" are the
+ * same row seen from two moments.
+ */
+describe('confirming and declining', () => {
+  const START = new Date('2026-09-01T19:00:00Z');
+  const fiveDaysOut = fixedClock(new Date(START.getTime() - 5 * DAY));
+  const twoHoursOut = fixedClock(new Date(START.getTime() - 2 * HOUR));
+
+  /** Booked, asked, and sitting at `pending` — the state the door acts on. */
+  async function asked(at = fiveDaysOut) {
+    const appt = await bookOne(client.id, mine.id);
+    await prisma.client.update({
+      where: { id: client.id }, data: { email: 'tc@example.test' },
+    });
+    await prisma.appointment.update({
+      where: { id: appt.id }, data: { confirmation: 'pending' },
+    });
+    const token = (await issuePortalLink(actor(desk), { clientId: client.id, clock: at })).token;
+    return { appt, token };
+  }
+
+  it('records the answer without touching the practice\'s own record of the session', async () => {
+    const { appt, token } = await asked();
+    await confirmAppointment(token, appt.id, { clock: fiveDaysOut });
+
+    const after = await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } });
+    expect(after.confirmation).toBe('confirmed');
+    // `status: 'confirmed'` is a front-desk lifecycle step, and a client saying
+    // yes is not front desk saying they arrived. D-02, in one assertion.
+    expect(after.status).toBe('scheduled');
+    expect(after.chargeFeeCents).toBeNull();
+  });
+
+  it('is the same confirmation however many times it is tapped', async () => {
+    const { appt, token } = await asked();
+    await confirmAppointment(token, appt.id, { clock: fiveDaysOut });
+    await confirmAppointment(token, appt.id, { clock: fiveDaysOut });
+    await confirmAppointment(token, appt.id, { clock: fiveDaysOut });
+
+    expect(await prisma.auditEvent.count({
+      where: { actorRole: 'client', action: 'update', resource: 'appointment' },
+    })).toBe(1);
+  });
+
+  it('logs the open, the confirm and the decline as the client, by token', async () => {
+    const { appt, token } = await asked();
+    await openPortal(token, { clock: fiveDaysOut });
+    await confirmAppointment(token, appt.id, { clock: fiveDaysOut });
+
+    const second = await bookOne(client.id, mine.id, 16 * 60);
+    await prisma.appointment.update({ where: { id: second.id }, data: { confirmation: 'pending' } });
+    await declineAppointment(token, second.id, { clock: fiveDaysOut });
+
+    const rows = await prisma.auditEvent.findMany({ where: { actorRole: 'client' } });
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      expect(row.actorId).toBe(client.id);
+      expect(row.rule).toBe('token');
+      expect(row.allowed).toBe(true);
+    }
+  });
+
+  it('declining outside the window cancels, free, in one write', async () => {
+    const { appt, token } = await asked();
+    await declineAppointment(token, appt.id, { clock: fiveDaysOut });
+
+    const after = await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } });
+    expect(after.status).toBe('cancelled');
+    expect(after.confirmation).toBe('declined');
+    expect(after.chargeFeeCents).toBeNull();
+    expect(after.cancelledById).toBe(client.id);
+  });
+
+  it('declining inside the window asks a second time before it charges', async () => {
+    const { appt, token } = await asked(twoHoursOut);
+
+    await expect(declineAppointment(token, appt.id, { clock: twoHoursOut }))
+      .rejects.toMatchObject({ code: 'fee_acknowledgement_required' });
+
+    // Nothing happened. The interstitial is a question, not a receipt.
+    const untouched = await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } });
+    expect(untouched.status).toBe('scheduled');
+    expect(untouched.confirmation).toBe('pending');
+
+    await declineAppointment(token, appt.id, { clock: twoHoursOut, acknowledgeFee: true });
+    const after = await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } });
+    expect(after.status).toBe('late_cancelled');
+    expect(after.confirmation).toBe('declined');
+    // The practice's existing late-cancel fee, decided by `classifyCancellation`
+    // — this feature adds no money logic of its own to the decline.
+    expect(after.chargeFeeCents).toBe(9_000);
+  });
+
+  it('acknowledging a fee that does not apply buys nothing', async () => {
+    const { appt, token } = await asked();
+    await declineAppointment(token, appt.id, { clock: fiveDaysOut, acknowledgeFee: true });
+
+    const after = await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } });
+    expect(after.status).toBe('cancelled');
+    expect(after.chargeFeeCents).toBeNull();
+  });
+
+  it('will not let a token reach another client\'s appointment', async () => {
+    const neighbour = await makeClient(mine.id);
+    const theirs = await bookOne(neighbour.id, mine.id, 16 * 60);
+    const { token } = await asked();
+
+    await expect(confirmAppointment(token, theirs.id, { clock: fiveDaysOut }))
+      .rejects.toBeInstanceOf(NotFound);
+    await expect(declineAppointment(token, theirs.id, { clock: fiveDaysOut, acknowledgeFee: true }))
+      .rejects.toBeInstanceOf(NotFound);
+
+    const after = await prisma.appointment.findUniqueOrThrow({ where: { id: theirs.id } });
+    expect(after.status).toBe('scheduled');
+    expect(after.confirmation).toBe('not_required');
+  });
+
+  it('refuses an expired link and leaves the answer where it was', async () => {
+    const appt = await bookOne(client.id, mine.id);
+    await prisma.appointment.update({ where: { id: appt.id }, data: { confirmation: 'pending' } });
+    const link = await issuePortalLink(actor(desk), {
+      clientId: client.id, expiresInDays: 1, clock: fiveDaysOut,
+    });
+    const later = fixedClock(new Date(fiveDaysOut.now().getTime() + 3 * DAY));
+
+    await expect(confirmAppointment(link.token, appt.id, { clock: later }))
+      .rejects.toMatchObject({ code: 'expired' });
+
+    const after = await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } });
+    expect(after.confirmation).toBe('pending');
+  });
+
+  it('refuses an appointment that is already cancelled or already past', async () => {
+    const { appt, token } = await asked();
+    await cancelAppointment(actor(desk), appt.id, { clock: fiveDaysOut });
+    await expect(confirmAppointment(token, appt.id, { clock: fiveDaysOut }))
+      .rejects.toMatchObject({ code: 'already_cancelled' });
+
+    const past = await bookOne(client.id, mine.id, 16 * 60);
+    const afterwards = fixedClock(new Date(past.startAt.getTime() + DAY));
+    await expect(confirmAppointment(token, past.id, { clock: afterwards }))
+      .rejects.toMatchObject({ code: 'in_the_past' });
+  });
+
+  it('does not move a session the front desk has already checked in', async () => {
+    const { appt, token } = await asked();
+    await setStatus(actor(desk), appt.id, 'arrived', { clock: fiveDaysOut });
+    await confirmAppointment(token, appt.id, { clock: fiveDaysOut });
+
+    const after = await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } });
+    expect(after.status).toBe('arrived');
+    expect(after.confirmation).toBe('confirmed');
+  });
+});
+
+/** P0-8: five people's answers are five facts. */
+describe('a group session confirms per attendee', () => {
+  const START = new Date('2026-09-01T19:00:00Z');
+  const fiveDaysOut = fixedClock(new Date(START.getTime() - 5 * DAY));
+
+  it('one attendee declining leaves every co-attendee untouched', async () => {
+    const others = [await makeClient(mine.id), await makeClient(mine.id)];
+    const group = await bookGroupSession(actor(desk), {
+      clinicianId: mine.id,
+      clientIds: [client.id, ...others.map((c) => c.id)],
+      date: TUESDAY,
+      startMinute: THREE_PM,
+      topic: 'Tuesday skills group',
+    });
+    const mineAppt = group.appointments.find((a) => a.clientId === client.id)!;
+    await prisma.appointment.updateMany({
+      where: { groupSessionId: group.id }, data: { confirmation: 'pending' },
+    });
+
+    const token = (await issuePortalLink(actor(desk), { clientId: client.id, clock: fiveDaysOut })).token;
+    await declineAppointment(token, mineAppt.id, { clock: fiveDaysOut });
+
+    const rows = await prisma.appointment.findMany({ where: { groupSessionId: group.id } });
+    expect(rows).toHaveLength(3);
+    expect(rows.filter((r) => r.status === 'cancelled')).toHaveLength(1);
+    expect(rows.filter((r) => r.confirmation === 'declined')).toHaveLength(1);
+    // The room and the clinician stay reserved for the people still coming.
+    for (const row of rows.filter((r) => r.id !== mineAppt.id)) {
+      expect(row.status).toBe('scheduled');
+      expect(row.confirmation).toBe('pending');
+      expect(row.roomId).toBe(mineAppt.roomId);
+    }
+  });
+
+  it('gives every attendee their own reminders and their own door', async () => {
+    const others = [await makeClient(mine.id), await makeClient(mine.id)];
+    for (const c of [client, ...others]) {
+      await prisma.client.update({ where: { id: c.id }, data: { email: 'tc@example.test' } });
+    }
+    const group = await bookGroupSession(actor(desk), {
+      clinicianId: mine.id,
+      clientIds: [client.id, ...others.map((c) => c.id)],
+      date: TUESDAY,
+      startMinute: THREE_PM,
+      topic: 'Tuesday skills group',
+    });
+    await prisma.appointment.updateMany({
+      where: { groupSessionId: group.id },
+      data: { createdAt: new Date(START.getTime() - 30 * DAY) },
+    });
+
+    await runReminderHorizon(fiveDaysOut);
+
+    for (const attendee of group.appointments) {
+      expect(await prisma.appointmentReminder.count({ where: { appointmentId: attendee.id } })).toBe(1);
+    }
+    expect(await prisma.portalLink.count()).toBe(3);
+    // Three separate doors, and none of the bodies names the group.
+    const bodies = (await prisma.outboxMessage.findMany({ where: { templateKey: 'appointment_reminder' } }))
+      .map((m) => m.body);
+    expect(bodies).toHaveLength(3);
+    for (const body of bodies) expect(body).not.toContain('skills group');
+    expect(new Set(bodies).size).toBe(3);
+  });
+});
+
+it('the cadence reuses a door the practice already issued', async () => {
+  const clock = fixedClock('2026-08-25T12:00:00Z');
+  const existing = await issuePortalLink(actor(desk), { clientId: client.id, clock });
+  const again = await ensurePortalLink(client.id, clock);
+  expect(again.id).toBe(existing.id);
+  expect(await prisma.portalLink.count({ where: { clientId: client.id } })).toBe(1);
+});
+
+it('mints a fresh door once the old one has expired', async () => {
+  const clock = fixedClock('2026-08-25T12:00:00Z');
+  await issuePortalLink(actor(desk), { clientId: client.id, expiresInDays: 1, clock });
+  const later = fixedClock(new Date(clock.now().getTime() + 3 * DAY));
+
+  const fresh = await ensurePortalLink(client.id, later);
+  expect(fresh.expiresAt.getTime()).toBeGreaterThan(later.now().getTime());
+  expect(await prisma.portalLink.count({ where: { clientId: client.id } })).toBe(2);
 });

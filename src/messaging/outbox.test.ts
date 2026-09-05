@@ -12,9 +12,13 @@ afterAll(() => prisma.$disconnect());
 describe('the discretion lint', () => {
   it('passes a reminder that says when and where and nothing else', () => {
     const { body } = CLIENT_TEMPLATES.appointment_reminder!({
-      practice: 'Stillwater', startAt: new Date('2026-09-01T19:00:00Z'),
+      practice: 'Stillwater',
+      startAt: new Date('2026-09-01T19:00:00Z'),
+      link: 'http://localhost:3700/p/abc123',
     });
-    expect(body).toBe('Appointment reminder: Tuesday 15:00, Stillwater. Reply to this message to change it.');
+    expect(body).toBe(
+      'Appointment reminder: Tuesday 15:00, Stillwater. Please let us know if you are coming: http://localhost:3700/p/abc123. The link is personal to you — please do not forward it.',
+    );
     expect(() => assertDiscreet(body)).not.toThrow();
   });
 
@@ -61,6 +65,7 @@ describe('queueing to a client', () => {
     const msg = await queueToClient({
       clientId: c.id, templateKey: 'appointment_reminder',
       scheduledFor: new Date('2026-08-31T19:00:00Z'), startAt: new Date('2026-09-01T19:00:00Z'),
+      link: 'http://localhost:3700/p/abc123',
     });
     expect(msg?.channel).toBe('email');
     expect(msg?.body).toContain('Stillwater');

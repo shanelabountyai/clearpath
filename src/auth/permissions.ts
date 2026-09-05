@@ -65,6 +65,14 @@ export interface Target {
   recipientId?: string;
   /** Supervisor of the treating clinician, at read time. */
   treatingSupervisorId?: string;
+  /**
+   * The client a row belongs to, resolved from the token that reached it.
+   *
+   * Only the tokenized door ever sets this: it is how a client's own link
+   * becomes an authorization fact this file can decide on, rather than a check
+   * living in `portal/service.ts` where nobody reviewing policy would find it.
+   */
+  ownerClientId?: string;
 }
 
 type RuleName = keyof typeof RULES;
@@ -102,6 +110,17 @@ const RULES = {
   /** Addressed to exactly one person. Never a shared inbox, never front desk. */
   recipient: (a: Actor, t: Target) =>
     t.recipientId !== undefined && a.id === t.recipientId,
+  /**
+   * A client reaching their own row through their own link.
+   *
+   * The token is the authentication — exactly as strong as the email it
+   * arrived in — and the door resolves whose row it names before asking. What
+   * lives here is the *capability*, so "what can a forwarded link do" is
+   * answerable from this file: confirm or cancel one appointment belonging to
+   * one client, and nothing else in the matrix.
+   */
+  token: (a: Actor, t: Target) =>
+    a.role === 'client' && t.ownerClientId !== undefined && a.id === t.ownerClientId,
   /** Admin emergency access. Reaches demographics and progress notes only. */
   breakGlass: (a: Actor) => !!a.breakGlass?.reason.trim(),
 } satisfies Record<string, (a: Actor, t: Target) => boolean>;
@@ -177,12 +196,16 @@ const MATRIX: Record<Role, RoleMatrix> = {
   },
 
   /**
-   * Empty on purpose. Clients never authenticate into the staff application;
-   * they reach exactly one form through a tokenized link, and that door is
-   * guarded by the token rather than by this matrix. The role exists so a
-   * submission has an honest actor in the audit trail.
+   * One cell, and it is the whole client-facing surface.
+   *
+   * Clients never authenticate into the staff application; they hold a link.
+   * Reading behind that link and asking for a different time stay outside the
+   * matrix, because neither changes anything. Confirming and declining do —
+   * a decline cancels a session — so the capability is stated here rather than
+   * assumed by whoever wrote the door. `token` still requires the row to be
+   * theirs, so a link that names somebody else's appointment decides `never`.
    */
-  client: {},
+  client: { appointment: { update: 'token' } },
 };
 
 /**

@@ -3,6 +3,7 @@ import type { Actor } from '../auth/permissions';
 import { DAY, systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
 import { queueToClient } from '../messaging/outbox';
+import { ensurePortalLink } from '../portal/service';
 import {
   confirmationRequired,
   dueStages,
@@ -61,7 +62,7 @@ export interface HorizonResult {
  */
 export async function runReminderHorizon(
   clock: Clock = systemClock,
-  opts: { horizonDays?: number } = {},
+  opts: { horizonDays?: number; baseUrl?: string } = {},
 ): Promise<HorizonResult> {
   const now = clock.now();
   const s = await prisma.practiceSettings.findUnique({ where: { id: 1 } });
@@ -117,12 +118,18 @@ export async function runReminderHorizon(
     // Losing a race leaves the work to the run that won it.
     try {
       await guarded(auditFor(appt), async (tx) => {
+        // The response the reminder asks for is a tap, so the body needs the
+        // client's own door in it. Their live link, or a first one — never a
+        // second token type, and never a fresh token per stage.
+        const link = await ensurePortalLink(appt.clientId, clock, tx);
+
         for (const stage of due) {
           const message = await queueToClient({
             clientId: appt.clientId,
             templateKey: 'appointment_reminder',
             scheduledFor: now,
             startAt: appt.startAt,
+            link: `${opts.baseUrl ?? 'http://localhost:3700'}/p/${link.token}`,
           }, tx);
           // Unreachable after `confirmationRequired`, and a hard stop rather
           // than a skip if it ever is: a reminder row without its outbox row

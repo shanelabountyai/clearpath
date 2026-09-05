@@ -2,7 +2,8 @@ import { openPortal } from '../../../src/portal/service';
 import { prisma } from '../../../src/db';
 import { Conflict, NotFound } from '../../../src/errors';
 import { minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
-import { askToReschedule } from './actions';
+import { money } from '../../../src/ui/primitives';
+import { askToReschedule, sayNo, sayYes } from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,9 +27,12 @@ export default async function ClientPortalPage({
   const { token } = await params;
   const q = await searchParams;
   const settings = await prisma.practiceSettings.findUnique({
-    where: { id: 1 }, select: { messagingName: true },
+    where: { id: 1 },
+    select: { messagingName: true, lateCancelWindowHours: true, lateCancelFeeCents: true },
   });
   const practice = settings?.messagingName ?? 'Stillwater';
+  const windowHours = settings?.lateCancelWindowHours ?? 24;
+  const lateFee = money(settings?.lateCancelFeeCents ?? 9000);
 
   let view;
   try {
@@ -55,11 +59,9 @@ export default async function ClientPortalPage({
         call you — nothing moves until you have spoken to them.
       </p>
 
-      {q.asked && (
-        <p className="mt-4 rounded-[var(--radius)] border px-3 py-2 text-body" style={{ borderColor: 'var(--border-strong)' }}>
-          Thank you — someone will be in touch about that appointment.
-        </p>
-      )}
+      {q.asked && <Notice>Thank you — someone will be in touch about that appointment.</Notice>}
+      {q.confirmed && <Notice>Thank you — we have you down for that one.</Notice>}
+      {q.declined && <Notice>That is cancelled. Reply to the message you received to rebook.</Notice>}
 
       <hr className="my-6" style={{ borderColor: 'var(--border)' }} />
 
@@ -82,6 +84,66 @@ export default async function ClientPortalPage({
                   With {a.clinician.name}
                   {a.modality === 'telehealth' ? ' · by video' : a.room ? ` · ${a.room.name}` : ''}
                 </p>
+
+                {/*
+                  The required response, and the whole of it: two buttons and no
+                  box to type in. Only shown where the practice actually asked —
+                  a client on `none` never sees a question they were never sent.
+                */}
+                {a.confirmation === 'confirmed' && (
+                  <p className="mt-3 text-body text-subtle">You have confirmed this one.</p>
+                )}
+
+                {a.confirmation === 'pending' && q.fee === a.id && (
+                  <div
+                    className="mt-3 rounded-[var(--radius)] border px-3 py-3"
+                    style={{ borderColor: 'var(--danger)' }}
+                  >
+                    <p className="text-body">
+                      Cancelling within {windowHours} hours of the appointment is
+                      charged at {lateFee}. Do you still want to cancel it?
+                    </p>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <form action={sayNo}>
+                        <input type="hidden" name="token" value={token} />
+                        <input type="hidden" name="appointmentId" value={a.id} />
+                        <input type="hidden" name="acknowledgeFee" value="1" />
+                        <button
+                          className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
+                          style={{ background: 'var(--danger)', color: 'var(--on-solid)', borderColor: 'var(--danger)' }}
+                        >
+                          Yes, cancel it
+                        </button>
+                      </form>
+                      <a href={`/p/${token}`} className="text-body underline">Keep the appointment</a>
+                    </div>
+                  </div>
+                )}
+
+                {a.confirmation === 'pending' && q.fee !== a.id && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <form action={sayYes}>
+                      <input type="hidden" name="token" value={token} />
+                      <input type="hidden" name="appointmentId" value={a.id} />
+                      <button
+                        className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
+                        style={{ background: 'var(--accent)', color: 'var(--accent-contrast)', borderColor: 'var(--accent)' }}
+                      >
+                        Yes, I will be there
+                      </button>
+                    </form>
+                    <form action={sayNo}>
+                      <input type="hidden" name="token" value={token} />
+                      <input type="hidden" name="appointmentId" value={a.id} />
+                      <button
+                        className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
+                        style={{ borderColor: 'var(--border-strong)' }}
+                      >
+                        I cannot make it
+                      </button>
+                    </form>
+                  </div>
+                )}
 
                 {pending ? (
                   <p className="mt-3 text-body text-subtle">
@@ -114,6 +176,17 @@ export default async function ClientPortalPage({
         </ul>
       )}
     </Shell>
+  );
+}
+
+function Notice({ children }: { children: React.ReactNode }) {
+  return (
+    <p
+      className="mt-4 rounded-[var(--radius)] border px-3 py-2 text-body"
+      style={{ borderColor: 'var(--border-strong)' }}
+    >
+      {children}
+    </p>
   );
 }
 

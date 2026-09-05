@@ -64,12 +64,17 @@ interface ClientMessageContext {
 
 /** Neutral by construction. Editable by the practice; still lint-gated on send. */
 export const CLIENT_TEMPLATES: Record<string, (c: ClientMessageContext) => { subject?: string; body: string }> = {
-  appointment_reminder: ({ practice, startAt }) => {
+  // The cadence's body. It carries the client's own door, because the required
+  // response is one tap on a link rather than a `YES` texted back to a short
+  // code: a compulsory reply is conspicuous on a lock screen in a way the
+  // deny-list cannot fix, and it would open an inbound channel nobody here can
+  // safely read. Says when, where, and what to tap. Never why.
+  appointment_reminder: ({ practice, startAt, link }) => {
     const when = startAt ? utcToZoned(startAt) : null;
     const label = when ? `${WEEKDAYS[when.weekday]} ${minutesToHHMM(when.minutes)}` : 'your appointment';
     return {
       subject: 'Appointment reminder',
-      body: `Appointment reminder: ${label}, ${practice}. Reply to this message to change it.`,
+      body: `Appointment reminder: ${label}, ${practice}. Please let us know if you are coming: ${link}. The link is personal to you — please do not forward it.`,
     };
   },
   appointment_confirmed: ({ practice, startAt }) => {
