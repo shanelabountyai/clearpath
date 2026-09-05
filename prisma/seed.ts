@@ -318,33 +318,45 @@ async function main() {
   // leave everybody booked into early June unanswered for no reason but the
   // simulation's own edge, and that lands as silence in a fee count.
   for (let date = addDays(QUARTER_START, -5); date <= TODAY; date = addDays(date, 1)) {
-    // Morning: the cadence queues whatever came due overnight.
-    clock.set(zonedToUtc(date, 8 * 60));
-    await runReminderHorizon(clock);
-
-    // Just after the morning run: the clients who are going to answer, answer.
+    // The cadence runs hourly through the practice's day, not once at dawn.
     //
-    // The offsets are four days out and the morning of, and they are not
-    // arbitrary. A stage falls due at the appointment's own hour, so a client
-    // answering "off the five-day message" can only do it the day after that
-    // message went — the first draft had them tapping a link that did not
-    // exist yet, and the seed said so by throwing. Early answers are worth the
-    // trouble for their own sake: an early confirmation is the case where the
-    // two remaining messages never queue at all, and an early decline is the
-    // one that frees the hour with notice and no fee.
-    // 08:30 local, not midday: the practice's earliest session is at 10:00,
-    // and answering "on the day" has to mean before the session, not after it.
-    clock.set(zonedToUtc(date, 8 * 60 + 30));
-    for (const [offset, early] of [[4, true], [0, false]] as const) {
-      for (const appt of startsOn.get(addDays(date, offset)) ?? []) {
+    // A stage falls due at the appointment's *own* hour, so a single morning
+    // run keeps missing the day-of message for an afternoon session and would
+    // have queued it after the client had already been and gone. Running it
+    // hourly is also what a real deployment does — the job is idempotent and
+    // due-date driven, so how often it runs is the caller's business and not
+    // the cadence's.
+    for (let hour = 8; hour <= 20; hour++) {
+      clock.set(zonedToUtc(date, hour * 60));
+      await runReminderHorizon(clock);
+
+      // People answer the message they just got. Which is the whole reason
+      // this is inside the hourly loop rather than pinned to an offset: a
+      // client under the cadence cap has exactly one message, the day before,
+      // and an "answers early" rule keyed to five days out finds nothing to
+      // answer — the first draft of this loop silently turned every capped
+      // client into a silent one and inflated the non-response count by a
+      // third.
+      const askedAndWaiting = await prisma.appointment.findMany({
+        where: {
+          confirmation: 'pending',
+          startAt: { gt: clock.now() },
+          reminders: { some: {} },
+        },
+        select: { id: true, clientId: true, startAt: true },
+        orderBy: { startAt: 'asc' },
+      });
+
+      for (const appt of askedAndWaiting) {
         const b = behaviour.get(appt.id);
-        if (!b) continue;
-        if (early ? !b.endsWith('_early') : !b.endsWith('_late')) continue;
-        // Nobody answers a message they were not sent, and nobody taps a link
-        // that has expired. Both are guards rather than filters: if either
-        // starts firing in bulk, the cadence has stopped reaching people.
-        const asked = await prisma.appointmentReminder.count({ where: { appointmentId: appt.id } });
-        const token = asked ? await liveTokenFor(appt.clientId, clock.now()) : null;
+        if (!b || b.startsWith('silent')) continue;
+        // The late half waits until the day of, which is what puts a decline
+        // inside the late-cancel window and gives the fee something to apply
+        // to. The early half answers the first message they get.
+        const withinADay = appt.startAt.getTime() - clock.now().getTime() < DAY;
+        if (b.endsWith('_late') && !withinADay) continue;
+
+        const token = await liveTokenFor(appt.clientId, clock.now());
         if (!token) { unanswerable++; continue; }
 
         if (b.startsWith('confirm')) {
@@ -359,11 +371,11 @@ async function main() {
       }
     }
 
-    // Late afternoon: what actually happened in the rooms. Written before the
-    // sweep, because a client who turned up must be off `scheduled` by the time
-    // it runs — that ordering *is* the guarantee, not a convenience.
+    // Evening: what actually happened in the rooms. Written before the sweep,
+    // because a client who turned up must be off `scheduled` by the time it
+    // runs — that ordering *is* the guarantee, not a convenience.
     if (date < TODAY) {
-      clock.set(zonedToUtc(date, 20 * 60));
+      clock.set(zonedToUtc(date, 21 * 60));
       for (const appt of startsOn.get(date) ?? []) {
         const b = behaviour.get(appt.id);
         // The 5% who said nothing and did not come are left exactly as they

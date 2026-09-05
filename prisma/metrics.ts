@@ -147,6 +147,19 @@ export async function seedMetrics(): Promise<Metric[]> {
   const waived = await prisma.appointment.count({ where: { feeWaivedAt: { not: null } } });
   check('at least one fee has been waived', waived >= 1, `${waived} waived`);
 
+  // P1-2, exercised by data rather than asserted in the abstract. A quarter in
+  // which nobody ever earns the quieter cadence would leave the cap untested by
+  // the one thing that tests it end to end.
+  const asked = await prisma.appointment.findMany({
+    where: { reminders: { some: {} }, startAt: { lt: zonedToUtc(TODAY, 0) } },
+    select: { reminders: { select: { stage: true } } },
+  });
+  const capped = asked.filter(
+    (a) => a.reminders.length === 1 && a.reminders[0]!.stage === 'd1',
+  );
+  check('the cadence cap is reached by real clients in the quarter', capped.length >= 1,
+    `${capped.length} of ${asked.length} sessions got the day-before message alone`);
+
   // ── audit completeness ───────────────────────────────────────────────
   //
   // Hard rule 3, checked against the log rather than argued from the code. If

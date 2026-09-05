@@ -8,6 +8,6 @@ import { runReminderHorizon } from '../src/scheduling/reminders';
  * driven rather than tick driven. Running it twice is the same as running it
  * once, so a missed hour costs nothing but lateness.
  */
-const { queued, promoted, exempted } = await runReminderHorizon(systemClock);
-console.log(`queued ${queued.length}, promoted ${promoted.length}, exempted ${exempted.length}`);
+const { queued, promoted, exempted, capped } = await runReminderHorizon(systemClock);
+console.log(`queued ${queued.length}, promoted ${promoted.length}, exempted ${exempted.length}, capped ${capped.length}`);
 await prisma.$disconnect();

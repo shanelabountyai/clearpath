@@ -139,6 +139,11 @@ async function PracticePage() {
                 <Field label="Reminder stages">5 days, 1 day, day-of</Field>
                 <Field label="Day-of lead">{data.settings.dayOfLeadHours} hours before the start</Field>
                 <Field label="Grace period">{data.settings.graceMinutes} minutes</Field>
+                <Field label="Quiet cadence after">
+                  {data.settings.confirmationStreakCap > 0
+                    ? `${data.settings.confirmationStreakCap} confirmations in a row`
+                    : <Badge glyph="○">Off — every client gets all three</Badge>}
+                </Field>
                 <Field label="Mark no-show automatically">
                   {data.settings.autoNoShowOnNoResponse
                     ? <Badge tone="warning" glyph="●">On</Badge>
@@ -150,6 +155,12 @@ async function PracticePage() {
                 there was no time to ask, and that far past the start, silence is an
                 answer. Turning the transition off keeps every record of who did not
                 reply and stops the charge — the evidence is never the optional part.
+              </p>
+              <p className="mt-2 text-caption text-subtle">
+                A client who confirms that many times running drops to the day-before
+                message alone until they miss one. Earning the quieter cadence takes
+                several answers; losing it takes one, so a client drifting out of the
+                habit has their reminders back before the drift can cost them.
               </p>
             </Card>
           )}

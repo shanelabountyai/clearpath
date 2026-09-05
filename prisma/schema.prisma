@@ -132,6 +132,11 @@ model PracticeSettings {
   /// Gates only the automatic `no_show` transition and its fee. With it off,
   /// non-response is still recorded — the evidence is never optional.
   autoNoShowOnNoResponse Boolean @default(true)
+  /// P1-2. Consecutive confirmations after which a client drops to the
+  /// day-before reminder alone, until they miss one. 0 turns the cap off and
+  /// every client gets all three stages, forever, which is the volume problem
+  /// this field exists to bound.
+  confirmationStreakCap  Int     @default(4)
 }
 
 model Room {

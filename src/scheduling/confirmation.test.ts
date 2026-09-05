@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { DAY, HOUR } from '../clock';
 import {
+  cadenceCapped,
   confirmationRequired,
   dueStages,
   stageDueAt,
   STAGES,
+  type Confirmation,
   type ConfirmationSettings,
   type ReminderStage,
 } from './confirmation';
@@ -95,6 +97,49 @@ describe('stage due times', () => {
   });
 });
 
+/**
+ * P1-2. The mitigation for the risk this feature creates rather than solves:
+ * ~70 standing clients x 3 messages x 52 weeks is ~11,000 messages a year, and
+ * the failure mode is not cost — it is that the reminder stops being read,
+ * which degrades the very signal the fee depends on.
+ */
+describe('cadenceCapped — the client who has earned fewer messages', () => {
+  const confirmed = (n: number): Confirmation[] => Array(n).fill('confirmed');
+
+  it('needs a full run of confirmations, not merely a majority', () => {
+    expect(cadenceCapped(confirmed(4), 4)).toBe(true);
+    expect(cadenceCapped(['confirmed', 'confirmed', 'no_response', 'confirmed'], 4)).toBe(false);
+    expect(cadenceCapped(['confirmed', 'confirmed', 'confirmed', 'declined'], 4)).toBe(false);
+  });
+
+  it('reads only the most recent run, so an old lapse stops counting', () => {
+    expect(cadenceCapped(['confirmed', 'confirmed', 'confirmed', 'confirmed', 'no_response'], 4)).toBe(true);
+  });
+
+  it('is broken by one miss, immediately', () => {
+    // The newest answer is first. A single `no_response` at the head takes the
+    // client back to the full cadence on the very next horizon run, which is
+    // the half of the rule that matters: a client drifting out of the habit
+    // gets the reminders back before the drift costs them a fee.
+    expect(cadenceCapped(['no_response', ...confirmed(10)], 4)).toBe(false);
+    expect(cadenceCapped(['declined', ...confirmed(10)], 4)).toBe(false);
+  });
+
+  it('waits for enough evidence rather than assuming it', () => {
+    expect(cadenceCapped(confirmed(3), 4)).toBe(false);
+    expect(cadenceCapped([], 4)).toBe(false);
+  });
+
+  it('is off entirely at a cap of zero', () => {
+    expect(cadenceCapped(confirmed(50), 0)).toBe(false);
+  });
+
+  it('follows the configured cap', () => {
+    expect(cadenceCapped(confirmed(2), 2)).toBe(true);
+    expect(cadenceCapped(confirmed(2), 8)).toBe(false);
+  });
+});
+
 describe('dueStages — what a horizon run at `now` should have queued', () => {
   const booked30d = appt(30 * DAY);
 
@@ -131,5 +176,31 @@ describe('dueStages — what a horizon run at `now` should have queued', () => {
   it('is a set, not a counter — running it twice asks for the same stages', () => {
     const now = new Date(START.getTime() - HOUR);
     expect(dueStages(booked30d, now, SETTINGS)).toEqual(dueStages(booked30d, now, SETTINGS));
+  });
+
+  /** P1-2 again, on the other side of the seam: what the cap actually removes. */
+  describe('under the cadence cap', () => {
+    const capped = { ...SETTINGS, capped: true };
+    const at = (ms: number, s = capped) => dueStages(booked30d, new Date(START.getTime() - ms), s);
+
+    it('sends the day before and nothing else', () => {
+      expect(at(5 * DAY)).toEqual([]);
+      expect(at(DAY)).toEqual(['d1']);
+      expect(at(0)).toEqual(['d1']);
+    });
+
+    it('still leaves the client fee-eligible — one message is still asking', () => {
+      // The cap is about volume, not about exemption. A capped client who says
+      // nothing has still been asked, and `confirmationRequired` is untouched.
+      expect(at(DAY).length).toBeGreaterThan(0);
+    });
+
+    it('asks a capped client nothing when the booking beat the one stage', () => {
+      // Booked twelve hours out, the only stage the cap allows was never
+      // sendable — so nothing queues, the row is never promoted, and the fee
+      // stays out of reach. The cap narrows the window; it does not create a
+      // charge with no message behind it.
+      expect(dueStages(appt(12 * HOUR), START, capped)).toEqual([]);
+    });
   });
 });

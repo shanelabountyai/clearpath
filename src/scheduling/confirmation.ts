@@ -27,6 +27,39 @@ export interface ConfirmationSettings {
   graceMinutes: number;
   /** How far before the start the day-of stage is due. */
   dayOfLeadHours: number;
+  /**
+   * P1-2. Set for a client who has earned the shorter cadence — the day-before
+   * message and nothing else. A property of the client at this moment rather
+   * than of the practice, which is why it rides here instead of being a second
+   * argument nobody remembers to pass.
+   */
+  capped?: boolean;
+}
+
+/** The stages a capped client still gets. Deliberately one. */
+const CAPPED_STAGES: readonly ReminderStage[] = ['d1'];
+
+/**
+ * Whether a client has earned fewer messages.
+ *
+ * This feature's own risk, mitigated: seventy standing clients at three
+ * messages a week is eleven thousand messages a year, and the failure mode is
+ * not the cost. It is that the reminder stops being read — which degrades the
+ * exact signal the fee depends on, so the policy would erode its own evidence
+ * and then bill people for the erosion.
+ *
+ * `history` is the client's decided answers, newest first: `confirmed`,
+ * `declined` or `no_response`. `not_required` and `pending` are not answers and
+ * the caller leaves them out. A cap of zero turns the whole rule off.
+ *
+ * One miss restores the full cadence immediately, and that asymmetry is the
+ * point: earning the quieter cadence takes four answers, losing it takes one.
+ * A client drifting out of the habit gets their reminders back before the
+ * drift can cost them a fee.
+ */
+export function cadenceCapped(history: readonly Confirmation[], cap: number): boolean {
+  if (cap <= 0 || history.length < cap) return false;
+  return history.slice(0, cap).every((c) => c === 'confirmed');
 }
 
 interface EligibleClient {
@@ -94,7 +127,14 @@ export function dueStages(
   now: Date,
   settings: ConfirmationSettings,
 ): ReminderStage[] {
-  return STAGES.filter((stage) => {
+  // The cap narrows which stages exist for this client; it does not change
+  // when they fall due, and it does not touch eligibility. One message is
+  // still asking, so a capped client who says nothing is still fee-eligible —
+  // and a capped client booked inside the day-before window gets nothing at
+  // all, which keeps `no_response` unreachable with no message behind it.
+  const stages = settings.capped ? CAPPED_STAGES : STAGES;
+
+  return stages.filter((stage) => {
     const dueAt = stageDueAt(appointment.startAt, stage, settings);
     return dueAt >= appointment.createdAt && dueAt <= now;
   });

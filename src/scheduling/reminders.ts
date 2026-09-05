@@ -5,9 +5,11 @@ import { prisma } from '../db';
 import { queueToClient } from '../messaging/outbox';
 import { ensurePortalLink } from '../portal/service';
 import {
+  cadenceCapped,
   confirmationRequired,
   dueStages,
   stageDueAt,
+  type Confirmation,
   type ConfirmationSettings,
   type ReminderStage,
 } from './confirmation';
@@ -31,6 +33,60 @@ import {
 const MAX_LEAD_DAYS = 5;
 
 /**
+ * How far back a confirmation streak is worth reading, per session of it.
+ *
+ * The cap rewards a client's *current* habit, so the run has to be recent as
+ * well as unbroken: three weeks apiece covers weekly and biweekly standing
+ * clients with slack, and a client whose last four confirmations are older than
+ * that is not a standing client with an earned cadence — they are somebody
+ * coming back, and somebody coming back should get all three messages.
+ *
+ * It also bounds the query, which matters more every year the practice runs.
+ */
+const STREAK_LOOKBACK_DAYS_PER_SESSION = 21;
+
+/** Values that are an answer. `not_required` and `pending` are not. */
+const DECIDED: readonly Confirmation[] = ['confirmed', 'declined', 'no_response'];
+
+/**
+ * Each client's recent answers, newest first.
+ *
+ * Derived rather than counted. A `confirmationStreak` column on `Client` would
+ * be one read instead of this query, and it would be a second copy of a fact
+ * the appointments already hold — so a corrected row, a backfill or a
+ * hand-edited status would leave the two disagreeing, silently, in the
+ * direction of sending people fewer messages than they should get.
+ */
+async function recentAnswers(
+  clientIds: string[],
+  now: Date,
+  cap: number,
+): Promise<Map<string, Confirmation[]>> {
+  const answers = new Map<string, Confirmation[]>();
+  if (cap <= 0 || clientIds.length === 0) return answers;
+
+  const rows = await prisma.appointment.findMany({
+    where: {
+      clientId: { in: clientIds },
+      startAt: {
+        lt: now,
+        gte: new Date(now.getTime() - cap * STREAK_LOOKBACK_DAYS_PER_SESSION * DAY),
+      },
+      confirmation: { in: [...DECIDED] },
+    },
+    select: { clientId: true, confirmation: true },
+    orderBy: { startAt: 'desc' },
+  });
+
+  for (const r of rows) {
+    const seen = answers.get(r.clientId) ?? [];
+    // Only the head of the run decides, so there is no reason to carry more.
+    if (seen.length < cap) answers.set(r.clientId, [...seen, r.confirmation]);
+  }
+  return answers;
+}
+
+/**
  * Two runs racing on the same stage. The `@@unique([appointmentId, stage])` key
  * is the idempotency guarantee — the pre-filter below is only an optimisation —
  * so losing the race means the work is already done, not that anything failed.
@@ -44,6 +100,8 @@ export interface HorizonResult {
   promoted: string[];
   /** Live `pending` rows returned to `not_required` because the practice may no longer ask. */
   exempted: string[];
+  /** Appointments whose client has earned the shorter cadence (P1-2). */
+  capped: string[];
 }
 
 /**
@@ -62,6 +120,7 @@ export async function runReminderHorizon(
     graceMinutes: s?.graceMinutes ?? 20,
     dayOfLeadHours: s?.dayOfLeadHours ?? 3,
   };
+  const streakCap = s?.confirmationStreakCap ?? 4;
 
   const candidates = await prisma.appointment.findMany({
     where: {
@@ -84,7 +143,14 @@ export async function runReminderHorizon(
     orderBy: { startAt: 'asc' },
   });
 
-  const result: HorizonResult = { queued: [], promoted: [], exempted: [] };
+  // One query for the whole run rather than one per appointment: a standing
+  // client has several sessions in the window and they all ask the same
+  // question about the same history.
+  const answers = await recentAnswers(
+    [...new Set(candidates.map((a) => a.clientId))], now, streakCap,
+  );
+
+  const result: HorizonResult = { queued: [], promoted: [], exempted: [], capped: [] };
 
   for (const appt of candidates) {
     if (!confirmationRequired(appt.client, appt, settings)) {
@@ -101,9 +167,16 @@ export async function runReminderHorizon(
       continue;
     }
 
+    // P1-2. A client who has confirmed the last `cap` times running gets the
+    // day-before message and nothing else, until they miss one. Decided per
+    // appointment from the client's history at this moment, so it follows them
+    // rather than being a mode somebody switched on.
+    const capped = cadenceCapped(answers.get(appt.clientId) ?? [], streakCap);
+
     const already = new Set(appt.reminders.map((r) => r.stage));
-    const due = dueStages(appt, now, settings).filter((stage) => !already.has(stage));
+    const due = dueStages(appt, now, { ...settings, capped }).filter((stage) => !already.has(stage));
     if (!due.length) continue;
+    if (capped) result.capped.push(appt.id);
 
     // One transaction for the whole appointment: the messages, their reminder
     // rows, the promotion and the audit row commit together or not at all.
