@@ -137,7 +137,11 @@ describe('permission matrix — every cell', () => {
     RESOURCES.flatMap((res) => ACTIONS.map((a) => [role, res, a] as [Role, Resource, Action])),
   );
 
-  it('covers 455 cells', () => expect(cells).toHaveLength(ROLES.length * RESOURCES.length * ACTIONS.length));
+  // The literal, not `ROLES.length * RESOURCES.length * ACTIONS.length` — `cells`
+  // is built from exactly that product, so the assertion agreed with itself at
+  // any size and the only place 455 appeared was this test's name. Three
+  // documents quote the number; `src/docs/claims.test.ts` holds them to it.
+  it('covers 455 cells', () => expect(cells).toHaveLength(455));
 
   it.each(cells)('%s / %s / %s', (role, resource, action) => {
     const key = `${resource}:${action}`;

@@ -14,7 +14,9 @@ export default defineConfig({
   workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? 'list' : [['list']],
+  // `./docs-reporter` holds README's Playwright count to the sweep; no test can
+  // count the sweep it is in.
+  reporter: [['list'], ['./e2e/docs-reporter.ts']],
   use: {
     baseURL: `http://localhost:${PORT}`,
     trace: 'retain-on-failure',

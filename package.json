@@ -13,7 +13,7 @@
     "test:watch": "dotenv -e .env.test -- vitest",
     "test:e2e": "npm run db:migrate:e2e && npm run db:seed:e2e && dotenv -e .env.e2e -- playwright test",
     "shots": "npm run db:migrate:e2e && npm run db:seed:e2e && SHOTS=1 dotenv -e .env.e2e -- playwright test screenshots",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.e2e.json",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:migrate:test": "dotenv -e .env.test -- prisma migrate deploy",

@@ -1,0 +1,9 @@
+{
+  // The e2e tree is outside `tsconfig.json`'s `include`, and stays outside it:
+  // that config is what `next build` typechecks, and the sweep's Playwright
+  // imports are dev-only. So it gets its own pass, run by `npm run typecheck`.
+  // Nothing checked `e2e/` until a reporter that can fail the sweep landed there
+  // with a wrong `onEnd` signature that only the sweep itself would have caught.
+  "extends": "./tsconfig.json",
+  "include": ["e2e", "playwright.config.ts"]
+}
