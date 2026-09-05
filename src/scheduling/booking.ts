@@ -192,6 +192,12 @@ interface BookInput {
   occurrenceKey?: string | null;
   /** Try this room first; fall through to any other free one. */
   preferredRoomId?: string | null;
+  /**
+   * When the booking is being made. Stamped onto `createdAt` rather than left
+   * to the column default, because the confirmation cadence reads it as the
+   * notice the client had — see the comment on the insert below.
+   */
+  clock?: Clock;
 }
 
 /**
@@ -202,6 +208,7 @@ interface BookInput {
  * collision stop, because there is no second clinician to fall through to.
  */
 export async function bookAppointment(actor: Actor, input: BookInput) {
+  const clock = input.clock ?? systemClock;
   const duration = DURATION_MINUTES[input.type];
   const startAt = zonedToUtc(input.date, input.startMinute);
   const endAt = zonedToUtc(input.date, input.startMinute + duration);
@@ -234,6 +241,14 @@ export async function bookAppointment(actor: Actor, input: BookInput) {
             joinLink: input.joinLink ?? null,
             seriesId: input.seriesId ?? null,
             occurrenceKey: input.occurrenceKey ?? null,
+            // Written, not defaulted. `dueStages` treats this as the notice the
+            // booking had, so it decides which reminder stages were ever
+            // sendable and therefore whether silence can become a fee. Left to
+            // `@default(now())` it would come from the database clock, which
+            // the pg adapter labels in the session's timezone — self-consistent
+            // for everything the application writes, and skewed for the one
+            // column it does not. Hard rule 7 has no exception for defaults.
+            createdAt: clock.now(),
           },
         });
       },
@@ -308,6 +323,7 @@ export async function materialiseSeries(
         seriesId,
         occurrenceKey: occurrenceKey(seriesId, date),
         preferredRoomId: series.roomId,
+        clock,
       });
       created.push(appt.id);
     } catch (e) {

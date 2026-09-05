@@ -1,4 +1,6 @@
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { fixedClock } from '../clock';
 import { guarded } from '../auth/guard';
 import { prisma } from '../db';
 import { Conflict } from '../errors';
@@ -264,3 +266,102 @@ it('every booking is audit-logged against the client', async () => {
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({ action: 'create', resource: 'appointment', allowed: true });
 });
+
+/**
+ * When a booking was made is not decoration: `dueStages` treats `createdAt` as
+ * the notice the client had, so it decides which reminder stages were ever
+ * sendable — and therefore whether silence can become a fee.
+ *
+ * Left to `@default(now())` the value comes from the *database* clock, which
+ * the pg adapter labels in the session's timezone rather than in UTC. Write and
+ * read cancel out for every column the application writes, so the app stays
+ * self-consistent and every spec passes; a column Postgres fills does not go
+ * through that lens. West of Greenwich it therefore reads back earlier than it
+ * truly is, which *widens* stage eligibility — the wrong direction for a rule
+ * with money on it, and invisible on a UTC box. So the injected clock writes it,
+ * like every other instant in this application.
+ */
+describe('when the booking was made comes from the clock, not the database', () => {
+  const BOOKED_AT = new Date('2026-08-01T14:30:00Z');
+
+  it('stamps a single booking', async () => {
+    await makeRoom('Room 1');
+    const t = await clinicianWorkingTuesdays();
+    const c = await makeClient(t.id);
+
+    const appt = await bookAppointment(actor(desk), {
+      clientId: c.id, clinicianId: t.id, date: TUESDAY, startMinute: 540,
+      type: 'standard', modality: 'in_person', clock: fixedClock(BOOKED_AT),
+    });
+    expect(appt.createdAt.toISOString()).toBe(BOOKED_AT.toISOString());
+  });
+
+  it('stamps every instance a series materialises', async () => {
+    await makeRoom('Room 1');
+    const t = await clinicianWorkingTuesdays();
+    const c = await makeClient(t.id);
+    const series = await prisma.appointmentSeries.create({
+      data: {
+        clientId: c.id, clinicianId: t.id, weekday: 2, startMinute: THREE_PM,
+        frequency: 'weekly', startDate: new Date(`${TUESDAY}T12:00:00Z`),
+        type: 'standard', modality: 'in_person',
+      },
+    });
+
+    await materialiseSeries(actor(desk), series.id, {
+      from: TUESDAY, horizonDays: 14, clock: fixedClock(BOOKED_AT),
+    });
+
+    const made = await prisma.appointment.findMany({ where: { seriesId: series.id } });
+    expect(made.length).toBeGreaterThan(1);
+    for (const a of made) expect(a.createdAt.toISOString()).toBe(BOOKED_AT.toISOString());
+  });
+
+  it('defaults to now when no clock is passed', async () => {
+    await makeRoom('Room 1');
+    const t = await clinicianWorkingTuesdays();
+    const c = await makeClient(t.id);
+    const appt = await bookAppointment(actor(desk), {
+      clientId: c.id, clinicianId: t.id, date: TUESDAY, startMinute: 540,
+      type: 'standard', modality: 'in_person',
+    });
+    expect(Math.abs(appt.createdAt.getTime() - Date.now())).toBeLessThan(10_000);
+  });
+});
+
+/**
+ * The behavioural specs above cover the two inserts that exist. This covers the
+ * one written next month: an `appointment.create` that omits `createdAt` gets
+ * the database's clock back, and nothing in the suite would notice until a fee
+ * landed on the wrong side of a stage boundary.
+ */
+it('every appointment insert names createdAt', () => {
+  const offenders: string[] = [];
+  for (const dir of ['src', 'app']) {
+    for (const f of readdirSync(dir, { recursive: true, encoding: 'utf8' })) {
+      const path = `${dir}/${f}`;
+      if (!/\.tsx?$/.test(f) || f.endsWith('.test.ts')) continue;
+      if (path.startsWith('src/generated/')) continue;
+      if (!statSync(path).isFile()) continue;
+      const src = readFileSync(path, 'utf8');
+      for (const m of src.matchAll(/\bappointment\.create(?:Many)?\b/g)) {
+        if (!callArgs(src, (m.index ?? 0) + m[0].length).includes('createdAt')) {
+          offenders.push(`${path}: ${m[0]}`);
+        }
+      }
+    }
+  }
+  expect(offenders).toEqual([]);
+});
+
+/** The argument text of the call starting at `from`, parens balanced. */
+function callArgs(src: string, from: number): string {
+  const open = src.indexOf('(', from);
+  if (open === -1) return '';
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '(') depth++;
+    else if (src[i] === ')' && --depth === 0) return src.slice(open, i + 1);
+  }
+  return src.slice(open);
+}

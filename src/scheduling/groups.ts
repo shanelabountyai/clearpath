@@ -36,6 +36,8 @@ interface GroupBooking {
   topic?: string | null;
   joinLink?: string | null;
   preferredRoomId?: string | null;
+  /** When the booking is being made. See the insert in `booking.ts`. */
+  clock?: Clock;
 }
 
 /**
@@ -46,6 +48,7 @@ interface GroupBooking {
  * attempt and a room conflict moves all of them to the next room together.
  */
 export async function bookGroupSession(actor: Actor, input: GroupBooking) {
+  const bookedAt = (input.clock ?? systemClock).now();
   const clientIds = [...new Set(input.clientIds)];
   if (clientIds.length === 0) throw new Conflict('A group session needs at least one attendee', 'no_attendees');
 
@@ -88,6 +91,9 @@ export async function bookGroupSession(actor: Actor, input: GroupBooking) {
             type,
             modality,
             joinLink: input.joinLink ?? null,
+            // From the clock, for the reason spelled out in `booking.ts`: an
+            // attendee's reminder stages are derived from it.
+            createdAt: bookedAt,
           })),
         });
         return group.id;
