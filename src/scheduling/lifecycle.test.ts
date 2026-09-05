@@ -1,3 +1,4 @@
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { fixedClock, HOUR } from '../clock';
 import { prisma } from '../db';
@@ -165,4 +166,61 @@ describe('against the database', () => {
       await expect(attendanceSummary(actor(other), client.id)).rejects.toBeInstanceOf(Forbidden);
     });
   });
+
+  /**
+   * P0-1. Confirmation and attendance are separate facts, and an attendance
+   * write never speaks for the client. The second test here is the row the
+   * whole confirmation feature is judged on: silent, present, charged for the
+   * session and nothing more.
+   */
+  describe('confirmation is untouched by a status write', () => {
+    it('survives the walk to completed', async () => {
+      const appt = await book();
+      await prisma.appointment.update({ where: { id: appt.id }, data: { confirmation: 'pending' } });
+
+      for (const to of ['arrived', 'in_session', 'completed'] as Status[]) {
+        const out = await setStatus(actor(desk), appt.id, to);
+        expect(out.confirmation, to).toBe('pending');
+      }
+    });
+
+    it('does not let silence become a no-show fee for a client who turned up', async () => {
+      const appt = await bookAppointment(actor(desk), {
+        clientId: client.id, clinicianId: therapist.id, date: TUESDAY,
+        startMinute: 16 * 60, type: 'standard', modality: 'in_person',
+      });
+      await prisma.appointment.update({ where: { id: appt.id }, data: { confirmation: 'no_response' } });
+
+      await setStatus(actor(desk), appt.id, 'arrived');
+      await setStatus(actor(desk), appt.id, 'in_session');
+      const out = await setStatus(actor(desk), appt.id, 'completed');
+
+      expect(out.status).toBe('completed');
+      expect(out.confirmation).toBe('no_response');
+      expect(out.chargeFeeCents).toBe(18000); // the session, not the no-show policy
+    });
+  });
+});
+
+/**
+ * P0-1. `no_show` is the one status a job can now reach on its own, and it
+ * carries money. So the write lives in exactly one function, where the
+ * `scheduled`-only guard and the audit row are, rather than wherever the next
+ * feature finds it convenient. Files with no database handle are not a way to
+ * write a status, so the design gallery's chip fixture is not a violation.
+ */
+it('nothing outside lifecycle.ts writes a no-show status', () => {
+  const offenders: string[] = [];
+  for (const dir of ['src', 'app']) {
+    for (const f of readdirSync(dir, { recursive: true, encoding: 'utf8' })) {
+      const path = `${dir}/${f}`;
+      if (!/\.tsx?$/.test(f) || f.endsWith('.test.ts')) continue;
+      if (path === 'src/scheduling/lifecycle.ts' || path.startsWith('src/generated/')) continue;
+      if (!statSync(path).isFile()) continue;
+      const src = readFileSync(path, 'utf8');
+      if (!/prisma\.|tx\./.test(src)) continue;
+      if (/status:\s*['"`]no_show/.test(src)) offenders.push(path);
+    }
+  }
+  expect(offenders).toEqual([]);
 });

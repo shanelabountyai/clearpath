@@ -119,6 +119,19 @@ model PracticeSettings {
   recurrenceHorizonDays Int    @default(90)
   /// P1-1: a client is "continuity at risk" after this long with nothing booked.
   continuityGapDays     Int    @default(21)
+
+  /// A no-show is its own policy. Ships at the late-cancel figure so the field
+  /// changes no behaviour on the day it lands; the practice raises it without a
+  /// code change. Integer cents.
+  noShowFeeCents        Int    @default(9000)
+  /// Lead time for the day-of confirmation stage.
+  dayOfLeadHours        Int    @default(3)
+  /// Below this much notice there was no time to ask, and after this much of
+  /// the session has passed, silence is an answer.
+  graceMinutes          Int    @default(20)
+  /// Gates only the automatic `no_show` transition and its fee. With it off,
+  /// non-response is still recorded — the evidence is never optional.
+  autoNoShowOnNoResponse Boolean @default(true)
 }
 
 model Room {
@@ -222,6 +235,28 @@ enum AppointmentStatus {
   late_cancelled
 }
 
+/// A communication fact, and never an attendance fact. `status` says whether
+/// the client was in the room; this says whether they answered the question.
+/// Collapsing the two makes charging somebody who turned up reachable by
+/// writing no code at all.
+enum AppointmentConfirmation {
+  not_required
+  pending
+  confirmed
+  declined
+  no_response
+}
+
+/// A fixed list, not free text: a waiver reason is a category the practice
+/// reports on, and free text on a money reversal becomes a place to write
+/// something clinical.
+enum FeeWaiveReason {
+  practice_error
+  client_disputed
+  emergency
+  goodwill
+}
+
 model Appointment {
   id             String             @id @default(cuid())
   seriesId       String?
@@ -262,12 +297,23 @@ model Appointment {
   /// no-show. Chargeable flag only — no payment processing here.
   chargeFeeCents Int?
 
+  /// Written by the cadence job and the client's own door, by nothing else.
+  confirmation   AppointmentConfirmation @default(not_required)
+
+  /// A waiver zeroes the flag and records who decided. The original amount
+  /// stays recoverable from the audit trail rather than being overwritten out
+  /// of existence. Practice manager only.
+  feeWaivedById  String?
+  feeWaivedAt    DateTime?
+  feeWaiveReason FeeWaiveReason?
+
   /// Idempotency key for recurrence materialisation: series + occurrence date.
   occurrenceKey String? @unique
 
   progressNote       ProgressNote?
   processNotes       ProcessNote[]
   rescheduleRequests RescheduleRequest[]
+  reminders          AppointmentReminder[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -277,6 +323,34 @@ model Appointment {
   @@index([roomId, startAt])
   @@index([status, startAt])
   @@index([groupSessionId])
+  @@index([confirmation, startAt])
+}
+
+enum ReminderStage {
+  d5
+  d1
+  d0
+}
+
+/// One row per appointment per stage, under a unique index — the same
+/// idempotency-key discipline as `Appointment.occurrenceKey`. A second horizon
+/// run over the same window sees the row and skips, so a cadence cannot double
+/// -send by being run twice.
+model AppointmentReminder {
+  id              String        @id @default(cuid())
+  appointmentId   String
+  appointment     Appointment   @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  stage           ReminderStage
+  dueAt           DateTime      @db.Timestamptz(3)
+  sentAt          DateTime?
+  /// The proof the practice asked. The fee rule depends on one of these
+  /// existing, which is why it is a row and not a boolean.
+  outboxMessageId String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([appointmentId, stage])
+  @@index([dueAt, sentAt])
 }
 
 /// The shared half of a group session, and deliberately only that.
