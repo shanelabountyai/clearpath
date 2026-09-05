@@ -88,7 +88,47 @@ describe('the conditional resource', () => {
       type: 'standard' as const, modality: 'in_person' as const,
     };
     await bookAppointment(actor(desk), base);
-    await expect(bookAppointment(actor(desk), base)).rejects.toMatchObject({ code: 'clinician_busy' });
+    // The message matters as much as the code: a second room stands empty, so
+    // "no room is free" would send the front desk hunting for a room when the
+    // thing that is unavailable is the clinician.
+    await expect(bookAppointment(actor(desk), base)).rejects.toMatchObject({
+      code: 'clinician_busy',
+      message: 'That clinician is already booked at this time',
+    });
+  });
+
+  it('falls back to another room when the preferred one is taken', async () => {
+    // The preference reorders the candidates; it must not become the whole
+    // list. Dropping the rest turns "your usual room is busy" into "the
+    // practice is full", with a room standing empty.
+    const room1 = await makeRoom('Room 1');
+    const room2 = await makeRoom('Room 2');
+    const mine = await clinicianWorkingTuesdays();
+    const theirs = await clinicianWorkingTuesdays();
+    const c = await makeClient(mine.id);
+    const other = await makeClient(theirs.id);
+
+    const shared = { date: TUESDAY, startMinute: THREE_PM, type: 'standard' as const,
+                     modality: 'in_person' as const, preferredRoomId: room2.id };
+    await bookAppointment(actor(desk), { ...shared, clientId: other.id, clinicianId: theirs.id });
+
+    const appt = await bookAppointment(actor(desk), { ...shared, clientId: c.id, clinicianId: mine.id });
+    expect(appt.roomId).toBe(room1.id);
+  });
+
+  it('books the preferred room rather than the first one free', async () => {
+    // Rooms are offered in name order, so preferring the last is the only
+    // choice that distinguishes the preference from the default ordering.
+    await makeRoom('Room 1');
+    const room2 = await makeRoom('Room 2');
+    const t = await clinicianWorkingTuesdays();
+    const c = await makeClient(t.id);
+
+    const appt = await bookAppointment(actor(desk), {
+      clientId: c.id, clinicianId: t.id, date: TUESDAY, startMinute: THREE_PM,
+      type: 'standard', modality: 'in_person', preferredRoomId: room2.id,
+    });
+    expect(appt.roomId).toBe(room2.id);
   });
 
   it('refuses telehealth that collides with the clinician, room map notwithstanding', async () => {

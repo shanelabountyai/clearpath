@@ -208,6 +208,18 @@ describe('who can see a client trend', () => {
     expect(trends.every((t) => t.points.length === 1)).toBe(true);
   });
 
+  it('does not mark a series whose instrument never moved', async () => {
+    // The positive case below is the one that was asserted. Without this, a
+    // `spansVersions` that was simply always true would satisfy the suite —
+    // and every trend would then refuse to draw the deltas it exists to draw.
+    await answer(KEY, 3);
+    await answer(KEY, 1);
+
+    const [trend] = await screenerTrends(actor(mine), client.id);
+    expect(trend!.spansVersions).toBe(false);
+    expect(trend!.points[1]!.comparableToPrevious).toBe(true);
+  });
+
   it('marks a series whose instrument was revised underneath it', async () => {
     await answer(KEY, 3);
     await publishTemplate(actor(admin), {

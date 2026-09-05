@@ -119,6 +119,9 @@ describe('fees', () => {
   });
 
   it('refuse anything that is not integer cents', async () => {
+    // Zero is a fee the practice sets on purpose — a pro bono place is not the
+    // same as no fee recorded, and the guard has to let it through.
+    await expect(setFee(actor(admin), client.id, 0)).resolves.toMatchObject({ feeCents: 0 });
     await expect(setFee(actor(admin), client.id, 65.5)).rejects.toBeInstanceOf(TypeError);
     await expect(setFee(actor(admin), client.id, -100)).rejects.toBeInstanceOf(TypeError);
   });

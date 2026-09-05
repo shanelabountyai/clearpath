@@ -117,6 +117,21 @@ describe('one hour, one clinician, one room, N clients', () => {
     expect(await prisma.groupSession.count()).toBe(0);
   });
 
+  it('refuses a group with nobody in it', async () => {
+    // An hour and a room held for no one. The guard exists; nothing asked it.
+    await makeRoom('Room 1');
+    await expect(book([])).rejects.toMatchObject({
+      message: 'A group session needs at least one attendee',
+    });
+  });
+
+  it('books a group of one, which is a group the practice can run', async () => {
+    await makeRoom('Room 1');
+    const [only] = await attendees(1);
+    const group = await book([only!.id]);
+    expect(group.appointments).toHaveLength(1);
+  });
+
   it('takes each client once, however many times they are listed', async () => {
     await makeRoom('Room 1');
     const [a, b] = await attendees(2);

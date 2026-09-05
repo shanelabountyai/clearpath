@@ -237,3 +237,34 @@ describe('a template with no scoring rules', () => {
       .toEqual({ total: 0, band: null, reasons: [], needsReview: false });
   });
 });
+
+/**
+ * The type validators nothing reached.
+ *
+ * `validateSubmission` was tested for a scale out of range and a select option
+ * that does not exist. The date branch was never run at all — no fixture has a
+ * date field — and the number branch was only ever given numbers, so its guard
+ * against a value that is numeric but not finite was doing nothing observable.
+ */
+describe('answers of the wrong shape', () => {
+  const dateForm = { fields: [{ key: 'dob', label: 'Date of birth', type: 'date' as const, required: true }] };
+
+  it('takes an ISO date and refuses anything else calling itself one', () => {
+    expect(validateSubmission(dateForm, { dob: '2026-09-01' })).toEqual([]);
+    for (const bad of ['01/09/2026', '2026-9-1', 'yesterday', 20260901]) {
+      expect(validateSubmission(dateForm, { dob: bad }))
+        .toEqual([{ field: 'dob', message: 'Expected a date' }]);
+    }
+  });
+
+  it('refuses a scale answer that is numeric but not a number', () => {
+    // How a numeric field arrives when the browser sent something unparseable:
+    // `Number('')` and `Number('three')` are both NaN, and NaN passes a
+    // `typeof v === 'number'` check while failing every comparison after it.
+    const complete = answers(0, 0, 0, 0, 0, 0, 0, 0, 0);
+    expect(validateSubmission(schema, { ...complete, item_1: NaN }))
+      .toEqual([{ field: 'item_1', message: 'Expected a number' }]);
+    expect(validateSubmission(schema, { ...complete, item_1: 'three' }))
+      .toEqual([{ field: 'item_1', message: 'Expected a number' }]);
+  });
+});
