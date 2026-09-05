@@ -33,6 +33,7 @@
     "src",
     "app",
     "prisma",
+    "scripts",
     "next-env.d.ts",
     ".next/types/**/*.ts",
     "*.ts",
