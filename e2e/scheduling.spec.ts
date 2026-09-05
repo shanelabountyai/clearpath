@@ -1,4 +1,4 @@
-import { actAs, expect, test, USERS } from './fixtures';
+import { actAs, expect, sql, test, USERS } from './fixtures';
 import { addDays, localDateOf, weekdayOf } from '../src/time';
 
 /**
@@ -21,6 +21,39 @@ test.describe('the calendar', () => {
     }
     await expect(page.getByText('Telehealth', { exact: true })).toBeVisible();
     await expect(page.getByText('No room needed')).toBeVisible();
+  });
+
+  /**
+   * The one column that can hold two sessions at once, and so the one column
+   * where chips can land on top of each other. `toBeVisible` does not catch
+   * this — an element covered by another element is still visible to the DOM —
+   * so the assertion is geometric.
+   */
+  test('sessions sharing an hour sit side by side, and none is hidden', async ({ page }) => {
+    const [date, names] = sql(`
+      select to_char(a."startAt" at time zone 'America/New_York', 'YYYY-MM-DD')
+             || '|' || string_agg(c."lastName", ',' order by c."lastName")
+      from "Appointment" a join "Client" c on c.id = a."clientId"
+      where a.modality = 'telehealth' and a."groupSessionId" is null
+      group by a."startAt" having count(*) > 1
+      order by a."startAt" limit 1`).split('|');
+
+    await actAs(page, USERS.frontDesk);
+    await page.goto(`/calendar?date=${date}`);
+    for (const name of names!.split(',')) {
+      await expect(page.getByText(name, { exact: false })).toBeVisible();
+    }
+
+    const boxes = await page
+      .locator('a[href^="/appointments/"], a[href^="/groups/"]')
+      .evaluateAll((els) => els.map((el) => el.getBoundingClientRect().toJSON()));
+    for (const [i, a] of boxes.entries()) {
+      for (const b of boxes.slice(i + 1)) {
+        const over = a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1;
+        expect(over, `two chips overlap at ${a.left},${a.top}`).toBe(false);
+      }
+    }
+    expect(boxes.length).toBeGreaterThan(names!.split(',').length);
   });
 
   test('a cancellation states its consequence before the click', async ({ page }) => {

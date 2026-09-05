@@ -20,7 +20,7 @@ protections is the lesson, claiming them would be the credibility-killer.
 
 ---
 
-![The calendar as the front desk sees it: five columns of named sessions with times, rooms and clinicians, and a banner reading "Operational — names, times and rooms. Why anyone is here does not appear on this screen at any level of detail."](docs/screenshots/calendar-front-desk.png)
+![The calendar as the front desk sees it: five columns of named sessions with times, rooms and clinicians — the telehealth lane twice the width of a room column, because it is holding two sessions at the same hour and neither may be hidden behind the other — and a banner reading "Operational — names, times and rooms. Why anyone is here does not appear on this screen at any level of detail."](docs/screenshots/calendar-front-desk.png)
 
 ---
 

@@ -1,3 +1,4 @@
+import { layoutTracks } from '@/src/scheduling/dayview';
 import { Logo, Wordmark } from '@/src/ui/logo';
 import {
   AppointmentChip, Badge, Button, Card, EmptyState, Field,
@@ -192,6 +193,61 @@ export default function DesignSystemPage() {
               } as never}
             />
           ))}
+        </div>
+      </Section>
+
+      <Section
+        title="An hour with more than one session in it"
+        note="Room columns cannot need this — the exclusion constraints forbid two bookings of one room at one time — but the telehealth lane exists precisely so that they can overlap, and chips drawn at full width would sit on top of each other. The same layout collapses a group session to one chip carrying the whole roster's status."
+      >
+        <div className="relative h-[150px] max-w-xs">
+          {(() => {
+            const specimens = [
+              { id: 'o1', startMinute: 600, endMinute: 650, lastName: 'Fontaine', status: 'no_show' },
+              { id: 'o2', startMinute: 600, endMinute: 650, lastName: 'Ibarra', status: 'late_cancelled' },
+              { id: 'o3', startMinute: 620, endMinute: 680, lastName: 'Kowalczyk', status: 'confirmed' },
+            ];
+            const tracks = layoutTracks(specimens);
+            return specimens.map((d) => (
+              <AppointmentChip
+                key={d.id}
+                top={(d.startMinute - 600) * 1.15}
+                height={46}
+                track={tracks.get(d.id)}
+                session={{
+                  id: d.id,
+                  status: d.status,
+                  modality: 'telehealth',
+                  seriesId: null,
+                  detached: false,
+                  startMinute: d.startMinute,
+                  endMinute: d.endMinute,
+                  client: { lastName: d.lastName },
+                  clinician: { name: 'Maya Lindqvist' },
+                } as never}
+              />
+            ));
+          })()}
+        </div>
+        <div className="relative mt-6 h-[60px] max-w-xs">
+          <AppointmentChip
+            top={0}
+            height={46}
+            // One person of the six no-showed; the hour still ran, so the chip
+            // is not red and takes no fee.
+            group={{ id: 'g1', topic: 'Adult DBT skills', count: 6, status: 'completed' }}
+            session={{
+              id: 'g-attendee',
+              status: 'no_show',
+              modality: 'in_person',
+              seriesId: 's',
+              detached: false,
+              startMinute: 15 * 60,
+              endMinute: 16 * 60,
+              client: { lastName: 'Okafor' },
+              clinician: { name: 'Maya Lindqvist' },
+            } as never}
+          />
         </div>
       </Section>
     </main>

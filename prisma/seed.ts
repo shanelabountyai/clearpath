@@ -183,10 +183,17 @@ async function main() {
   // Statuses are set directly rather than through the state machine: this is
   // fixture construction, not a simulation of front desk clicking through a
   // quarter, and 900 three-step transitions would make the seed unusable.
+  //
+  // The order matters, because the roll below is drawn per appointment: two
+  // sessions in the same minute sorted by `startAt` alone come back in
+  // whatever order the table hands them over, and the quarter's statuses stop
+  // being a property of the seed. The client code is the tiebreaker rather
+  // than the id, because ids are generated fresh on every seed and sorting by
+  // one is only as stable as the run that made it.
   const past = await prisma.appointment.findMany({
     where: { startAt: { lt: zonedToUtc(TODAY, 0) } },
     select: { id: true, clientId: true, clinicianId: true, startAt: true },
-    orderBy: { startAt: 'asc' },
+    orderBy: [{ startAt: 'asc' }, { client: { code: 'asc' } }],
   });
 
   const settings = await prisma.practiceSettings.findUniqueOrThrow({ where: { id: 1 } });
@@ -377,7 +384,12 @@ async function main() {
       content:
         'Mine only. I think the Sunday thing is about the job, not the sleep — but naming it too early last time made them retreat. Wait for them to say it.',
     });
-    log(`demo client ${demoClient.code}: a note awaiting co-signature and a process note`);
+    // Counted rather than asserted: the demo needs at least one note in the
+    // queue, and the quarter's own associate notes may have left others there.
+    const awaiting = await prisma.progressNote.count({
+      where: { clientId: demoClient.id, signedAt: { not: null }, coSignedAt: null },
+    });
+    log(`demo client ${demoClient.code}: ${awaiting} note${awaiting === 1 ? '' : 's'} awaiting co-signature and a process note`);
   }
 
   // ── three break-glass events, for the auditor to find ─────────────────

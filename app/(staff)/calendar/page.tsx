@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import { requireSession } from '../../../src/session';
 import { daySchedule, type DaySession } from '../../../src/scheduling/calendar';
+import { groupStatus, layoutTracks } from '../../../src/scheduling/dayview';
+import type { Status } from '../../../src/scheduling/lifecycle';
 import { addDays, localDateOf, minutesToHHMM, WEEKDAYS, weekdayOf } from '../../../src/time';
 import { AppointmentChip, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
@@ -122,8 +124,20 @@ function Column({
 }: {
   title: string; subtitle: string; sessions: DaySession[]; hours: number[]; accent?: boolean;
 }) {
+  // Collapse first, then lay out: six attendees of one group are one chip
+  // occupying one hour, and it is the chips that must not land on top of each
+  // other.
+  const chips = collapseGroups(sessions);
+  const tracks = layoutTracks(chips.map(({ session }) => session));
+  // A lane that has to hold two sessions at once gets the width of two, rather
+  // than cutting a name in half to fit. Room columns are always one; only the
+  // telehealth lane can grow, and the grid already scrolls sideways.
+  const lanes = Math.max(1, ...[...tracks.values()].map((t) => t.of));
   return (
-    <div className="min-w-[150px] flex-1 border-r last:border-r-0" style={{ borderColor: 'var(--border)' }}>
+    <div
+      className="flex-1 border-r last:border-r-0"
+      style={{ borderColor: 'var(--border)', minWidth: 150 * lanes, flexGrow: lanes }}
+    >
       <div
         className="flex h-9 flex-col justify-center border-b px-2"
         style={{
@@ -142,11 +156,12 @@ function Column({
             style={{ top: (m - hours[0]!) * PX_PER_MIN, borderColor: 'var(--border)', opacity: 0.55 }}
           />
         ))}
-        {collapseGroups(sessions).map(({ session: s, group }) => (
+        {chips.map(({ session: s, group }) => (
           <AppointmentChip
             key={s.id}
             session={s}
             group={group}
+            track={tracks.get(s.id)}
             top={(s.startMinute - hours[0]!) * PX_PER_MIN}
             height={(s.endMinute - s.startMinute) * PX_PER_MIN - 3}
           />
@@ -165,12 +180,15 @@ function Column({
  * people in it, and open the roster from there.
  */
 function collapseGroups(sessions: DaySession[]) {
-  const seen = new Map<string, number>();
+  const attendees = new Map<string, DaySession[]>();
   for (const s of sessions) {
-    if (s.groupSessionId) seen.set(s.groupSessionId, (seen.get(s.groupSessionId) ?? 0) + 1);
+    if (s.groupSessionId) attendees.set(s.groupSessionId, [...(attendees.get(s.groupSessionId) ?? []), s]);
   }
   const drawn = new Set<string>();
-  const out: { session: DaySession; group?: { id: string; topic: string | null; count: number } }[] = [];
+  const out: {
+    session: DaySession;
+    group?: { id: string; topic: string | null; count: number; status: Status };
+  }[] = [];
   for (const s of sessions) {
     if (!s.groupSessionId) {
       out.push({ session: s });
@@ -178,12 +196,16 @@ function collapseGroups(sessions: DaySession[]) {
     }
     if (drawn.has(s.groupSessionId)) continue;
     drawn.add(s.groupSessionId);
+    const roster = attendees.get(s.groupSessionId) ?? [s];
     out.push({
       session: s,
       group: {
         id: s.groupSessionId,
         topic: s.groupSession?.topic ?? null,
-        count: seen.get(s.groupSessionId) ?? 1,
+        count: roster.length,
+        // Every field the chip paints itself with has to come from the whole
+        // roster, or the hour wears one attendee's morning.
+        status: groupStatus(roster.map((a) => a.status)),
       },
     });
   }

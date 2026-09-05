@@ -273,32 +273,46 @@ export function AppointmentChip({
   session,
   top,
   height,
+  track,
   group,
 }: {
   session: DaySession;
   top: number;
   height: number;
   /**
+   * Which of the column's side-by-side slots this chip occupies. Sessions that
+   * share an hour share the width of the lane rather than the same pixels —
+   * see `layoutTracks`. Absent means the hour is this chip's alone.
+   */
+  track?: { index: number; of: number };
+  /**
    * Set when this chip stands for a whole group session. Six attendees at 3pm
    * are one booking of the room, so they are one chip — six stacked chips would
-   * read as the double-booking the constraints exist to prevent.
+   * read as the double-booking the constraints exist to prevent. The status is
+   * the hour's, derived from all the attendees, not the one row that happened
+   * to be drawn.
    */
-  group?: { id: string; topic: string | null; count: number };
+  group?: { id: string; topic: string | null; count: number; status: string };
 }) {
-  const meta = STATUS_META[session.status] ?? { label: session.status, glyph: '·', tone: 'neutral' as Tone };
-  const statusVar = `var(--status-${session.status.replace('_', '-')})`;
-  const cancelled = session.status === 'cancelled' || session.status === 'late_cancelled';
-  const live = session.status === 'arrived' || session.status === 'in_session';
-  const chargeable = (CHARGEABLE as readonly string[]).includes(session.status);
+  const status = group?.status ?? session.status;
+  const meta = STATUS_META[status] ?? { label: status, glyph: '·', tone: 'neutral' as Tone };
+  const statusVar = `var(--status-${status.replace('_', '-')})`;
+  const cancelled = status === 'cancelled' || status === 'late_cancelled';
+  const live = status === 'arrived' || status === 'in_session';
+  const chargeable = (CHARGEABLE as readonly string[]).includes(status);
   const telehealth = session.modality === 'telehealth';
   const background = cancelled ? 'var(--surface-sunken)' : 'var(--surface-raised)';
+  const { index = 0, of = 1 } = track ?? {};
   return (
     <Link
       href={group ? `/groups/${group.id}` : `/appointments/${session.id}`}
-      className="absolute inset-x-1 block overflow-hidden rounded-[var(--radius)] border px-1.5 py-1 text-micro"
+      className="absolute block overflow-hidden rounded-[var(--radius)] border px-1.5 py-1 text-micro"
       style={{
         top,
         height,
+        // The one-track case is exactly the old `inset-x-1`.
+        left: `calc(0.25rem + (100% - 0.5rem) * ${index} / ${of})`,
+        width: `calc((100% - 0.5rem) / ${of} - ${of > 1 ? 2 : 0}px)`,
         borderColor: statusVar,
         // Cancelled sessions stay visible but recede — the hour is free, and
         // the record of who was meant to be in it still matters.
@@ -326,7 +340,9 @@ export function AppointmentChip({
         <span aria-hidden>{telehealth ? '◠' : '▮'} </span>
         <span className="sr-only">{telehealth ? 'telehealth, ' : 'in person, '}</span>
         {minutesToHHMM(session.startMinute)} · {session.clinician.name.split(' ')[0]}
-        {session.seriesId && (
+        {/* Recurrence belongs to an attendee, not to the hour: one person's
+            standing slot says nothing about the group's. */}
+        {!group && session.seriesId && (
           <>
             {' '}
             <span aria-hidden>{session.detached ? '↷' : '↻'}</span>

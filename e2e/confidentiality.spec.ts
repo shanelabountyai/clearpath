@@ -18,11 +18,14 @@ test.describe('the access story', () => {
     const row = page.locator('li', { hasText: 'Client 006' }).first();
     await expect(row).toBeVisible();
     await expect(row.getByText(/waiting/)).toBeVisible();
+    // The queue is named rather than counted: a client can have more than one
+    // note waiting, and this test is about the one it signs.
+    const note = await row.locator('a[href^="/notes/"]').getAttribute('href');
 
-    // 2. The supervisor co-signs it.
+    // 2. The supervisor co-signs it, and that note leaves the queue.
     await row.getByRole('button', { name: 'Co-sign' }).click();
     await expect(page).toHaveURL(/\/cosign/);
-    await expect(page.locator('li', { hasText: 'Client 006' })).toHaveCount(0);
+    await expect(page.locator(`li:has(a[href="${note}"])`)).toHaveCount(0);
 
     // 3. The same supervisor opens the same client's record. They can read it —
     //    supervision is clinical responsibility — and the process notes are not

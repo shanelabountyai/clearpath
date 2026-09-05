@@ -33,7 +33,11 @@ export async function daySchedule(actor: Actor, date: LocalDate) {
             clinician: { select: { id: true, name: true } },
             room: { select: { id: true, name: true } },
           },
-          orderBy: { startAt: 'asc' },
+          // The id breaks ties, so two sessions in the same minute come back
+          // in the same order every time. Without it the day view is free to
+          // move between identical runs — which is a bug in a project whose
+          // README screenshots are a spec.
+          orderBy: [{ startAt: 'asc' }, { id: 'asc' }],
         }),
         tx.room.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
         tx.user.findMany({
