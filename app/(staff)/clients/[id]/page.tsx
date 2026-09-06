@@ -12,7 +12,7 @@ import { localDateOf, minutesToHHMM, utcToZoned } from '../../../../src/time';
 import {
   Badge, Card, EmptyState, Field, LockedPanel, PageHeader, StatusChip, TierBanner, money,
 } from '../../../../src/ui/primitives';
-import { addProcessNote, saveFee, sendForm, sendPortalLink, saveReminderCadence } from '../actions';
+import { addProcessNote, saveFee, sendForm, sendPortalLink, saveContactPreferences } from '../actions';
 import { BreakGlassPrompt } from '../../break-glass';
 import { systemClock } from '@/src/clock';
 import { Button, CADENCE_LABELS } from '@/src/ui/primitives';
@@ -165,24 +165,50 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
                 "no messages", because that is the channel setting above and it
                 carries an exemption from the fee that this control must never
                 be able to reach. */}
-            {can.edit && client.reminderPreference !== 'none' && (
-              <form action={saveReminderCadence} className="mt-4 flex flex-wrap items-end gap-2 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
+            {/* Not gated on the channel any more, and that was the actual gap:
+                the cadence form only rendered for a client who was *not* on
+                `none`, so setting somebody to "no messages" — by seed, by
+                import, or by texting STOP — made it a one-way door that no
+                screen in the application could open again. */}
+            {can.edit && (
+              <form action={saveContactPreferences} className="mt-4 flex flex-wrap items-end gap-2 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
                 <input type="hidden" name="clientId" value={client.id} />
                 <div>
-                  <label htmlFor="reminderCadence" className="block text-micro font-medium tracking-wide text-subtle uppercase">
-                    Confirmation messages
+                  <label htmlFor="reminderPreference" className="block text-micro font-medium tracking-wide text-subtle uppercase">
+                    Channel
                   </label>
                   <select
-                    id="reminderCadence" name="reminderCadence"
-                    defaultValue={client.reminderCadence}
+                    id="reminderPreference" name="reminderPreference"
+                    defaultValue={client.reminderPreference}
                     className="mt-1 rounded-[var(--radius)] border px-2 py-1 text-body"
                     style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
                   >
-                    {CADENCES.map((c) => (
-                      <option key={c} value={c}>{CADENCE_LABELS[c]}</option>
-                    ))}
+                    <option value="email">Email</option>
+                    <option value="sms">Text message</option>
+                    <option value="none">None — do not message</option>
                   </select>
                 </div>
+                {/* A client the practice never messages has no cadence to
+                    choose, so the control is not drawn — but the channel above
+                    it always is, or turning the messages off would be a door
+                    with no handle on the inside. */}
+                {client.reminderPreference !== 'none' && (
+                  <div>
+                    <label htmlFor="reminderCadence" className="block text-micro font-medium tracking-wide text-subtle uppercase">
+                      Confirmation messages
+                    </label>
+                    <select
+                      id="reminderCadence" name="reminderCadence"
+                      defaultValue={client.reminderCadence}
+                      className="mt-1 rounded-[var(--radius)] border px-2 py-1 text-body"
+                      style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
+                    >
+                      {CADENCES.map((c) => (
+                        <option key={c} value={c}>{CADENCE_LABELS[c]}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <button className="rounded-[var(--radius)] border px-2.5 py-1.5 text-caption font-medium" style={{ borderColor: 'var(--border-strong)' }}>
                   Save
                 </button>
@@ -201,6 +227,13 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
                     ))}
                   </select>
                 </div>
+                <p className="w-full text-caption text-subtle">
+                  <strong>None</strong> is a safety setting, not a volume one: some clients
+                  are on it because a message on a phone somebody else picks up is a
+                  danger. The practice never asks them to confirm, and so can never
+                  charge them for not answering. The two settings beside it only change
+                  how many messages and in what language.
+                </p>
                 <p className="w-full text-caption text-subtle">
                   Every message and the client&rsquo;s own page are written in the language
                   set here. A message with no version in it is not sent at all, and a

@@ -3,8 +3,10 @@
 import { redirect } from 'next/navigation';
 import { Conflict } from '../../../src/errors';
 import {
-  confirmAppointment, declineAppointment, requestReschedule, type RescheduleReason,
+  chooseCadence, confirmAppointment, declineAppointment, requestReschedule,
+  type RescheduleReason,
 } from '../../../src/portal/service';
+import { CADENCES, type ReminderCadence } from '../../../src/scheduling/confirmation';
 
 /**
  * The one thing a client can write.
@@ -73,4 +75,25 @@ export async function sayNo(formData: FormData) {
     redirect(`/p/${token}`);
   }
   redirect(`/p/${token}?declined=1`);
+}
+
+/**
+ * "Send me fewer of these."
+ *
+ * The only thing on this page that changes something about the client rather
+ * than about one appointment. `chooseCadence` is the whole of what the token
+ * may do to their record — the channel is not reachable from here, by the
+ * matrix rather than by this function remembering not to.
+ */
+export async function chooseHowMany(formData: FormData) {
+  const token = String(formData.get('token'));
+  const raw = String(formData.get('reminderCadence') ?? '');
+  if (!(CADENCES as readonly string[]).includes(raw)) redirect(`/p/${token}`);
+
+  try {
+    await chooseCadence(token, raw as ReminderCadence);
+  } catch {
+    redirect(`/p/${token}`);
+  }
+  redirect(`/p/${token}?cadence=1`);
 }

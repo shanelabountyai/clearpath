@@ -27,6 +27,18 @@ export type Resource =
   | 'form_submission' // answers + scores; clinical data
   | 'alert' // private risk notifications, addressed to one clinician
   | 'portal_link' // a client's own tokenized door into their schedule
+  /**
+   * How many confirmation messages a client gets. Not the channel.
+   *
+   * Its own resource because it is the one thing a tokenized link may change
+   * about a person, and "a token may update the client record" would be a
+   * broader statement than the truth — which is the sentence this whole file
+   * exists to refuse. The channel stays inside `client`, where no client-role
+   * cell can reach it: `reminderPreference: 'none'` is a safety setting that
+   * ends the fee, so a leaked link silencing somebody would be harm nobody
+   * notices, because the money would go quiet with them.
+   */
+  | 'reminder_cadence'
   | 'audit_log'
   | 'user'; // accounts, roles, supervision relationships
 
@@ -48,7 +60,7 @@ export const ROLES: readonly Role[] = [
 export const RESOURCES: readonly Resource[] = [
   'client', 'fee', 'appointment', 'attendance_history', 'progress_note',
   'process_note', 'form_template', 'form_request', 'form_submission',
-  'alert', 'portal_link', 'audit_log', 'user',
+  'alert', 'portal_link', 'audit_log', 'user', 'reminder_cadence',
 ];
 export const ACTIONS: readonly Action[] = ['read', 'create', 'update', 'sign', 'cosign', 'waive'];
 
@@ -161,6 +173,7 @@ const CLINICIAN: RoleMatrix = {
   // for a client they treat. It grants nothing the client does not already
   // know: when they are coming in, and with whom.
   portal_link: { read: 'treatingOrSupervising', create: 'treating' },
+  reminder_cadence: { update: 'treatingOrSupervising' },
 };
 
 /**
@@ -174,6 +187,7 @@ const MATRIX: Record<Role, RoleMatrix> = {
     appointment: { read: 'always', create: 'always', update: 'always' },
     form_request: { read: 'always', create: 'always' },
     portal_link: { read: 'always', create: 'always' },
+    reminder_cadence: { update: 'always' },
   },
 
   therapist: CLINICIAN,
@@ -209,7 +223,7 @@ const MATRIX: Record<Role, RoleMatrix> = {
   },
 
   /**
-   * One cell, and it is the whole client-facing surface.
+   * Two cells, and they are the whole client-facing surface.
    *
    * Clients never authenticate into the staff application; they hold a link.
    * Reading behind that link and asking for a different time stay outside the
@@ -217,8 +231,23 @@ const MATRIX: Record<Role, RoleMatrix> = {
    * a decline cancels a session — so the capability is stated here rather than
    * assumed by whoever wrote the door. `token` still requires the row to be
    * theirs, so a link that names somebody else's appointment decides `never`.
+   *
+   * `reminder_cadence` is the second, and the argument for it is that a leaked
+   * link which leaves somebody on one reminder instead of three is strictly
+   * less harmful than one that cancels their session — which this door already
+   * does. It stays fee-eligible, it is logged with the client as the actor, and
+   * it shows on the door, so a client whose link was misused can see it.
+   *
+   * What is deliberately *not* here is the channel. `reminderPreference:
+   * 'none'` ends the fee as well as the messages, so a leaked link reaching it
+   * would silence somebody in a way nothing would notice — no missed charge, no
+   * complaint, just a client who stops being reminded. That one is a staff edit
+   * or nothing.
    */
-  client: { appointment: { update: 'token' } },
+  client: {
+    appointment: { update: 'token' },
+    reminder_cadence: { update: 'token' },
+  },
 };
 
 /**

@@ -5,7 +5,8 @@ import { minutesToHHMM, utcToZoned } from '../../../src/time';
 import { PORTAL_COPY, type PortalCopy } from '../../../src/portal/copy';
 import { LANGUAGES, WEEKDAY_NAMES } from '../../../src/messaging/language';
 import { money } from '../../../src/ui/primitives';
-import { askToReschedule, sayNo, sayYes } from './actions';
+import { askToReschedule, chooseHowMany, sayNo, sayYes } from './actions';
+import { CADENCES } from '../../../src/scheduling/confirmation';
 
 export const dynamic = 'force-dynamic';
 
@@ -68,6 +69,7 @@ export default async function ClientPortalPage({
       {q.asked && <Notice>{copy.askedNotice}</Notice>}
       {q.confirmed && <Notice>{copy.confirmedNotice}</Notice>}
       {q.declined && <Notice>{copy.declinedNotice}</Notice>}
+      {q.cadence && <Notice>{copy.cadenceSaved}</Notice>}
 
       <hr className="my-6" style={{ borderColor: 'var(--border)' }} />
 
@@ -190,6 +192,38 @@ export default async function ClientPortalPage({
           })}
         </ul>
       )}
+      {/*
+        The one control here that changes something about the client rather than
+        about an appointment, and it is at the bottom because it is the least
+        urgent thing on the page. It may narrow how many reminders they get and
+        it may not reach the channel: a forwarded link leaving somebody on one
+        message instead of three is strictly less harmful than one cancelling
+        their session, which this door already does — but a link that could set
+        "no messages" would silence them and end the fee together, so nothing
+        would notice. The copy says where that request goes instead.
+      */}
+      <section className="mt-10 border-t pt-6" style={{ borderColor: 'var(--border)' }}>
+        <h2 className="text-subhead font-medium">{copy.cadenceHeading}</h2>
+        <form action={chooseHowMany} className="mt-3 flex flex-wrap items-center gap-2">
+          <input type="hidden" name="token" value={token} />
+          <label className="sr-only" htmlFor="reminderCadence">{copy.cadenceHeading}</label>
+          <select
+            id="reminderCadence" name="reminderCadence"
+            defaultValue={view.reminderCadence}
+            className="rounded-[var(--radius)] border px-2 py-1.5 text-body"
+            style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
+          >
+            {CADENCES.map((c) => <option key={c} value={c}>{copy.cadences[c]}</option>)}
+          </select>
+          <button
+            className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
+            style={{ borderColor: 'var(--border-strong)' }}
+          >
+            {copy.cadenceSave}
+          </button>
+        </form>
+        <p className="mt-2 max-w-prose text-caption text-subtle">{copy.cadenceHelp}</p>
+      </section>
     </Shell>
   );
 }

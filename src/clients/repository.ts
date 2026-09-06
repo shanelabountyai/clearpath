@@ -133,6 +133,41 @@ type ClientEdit = Partial<{
   treatingClinicianId: string;
 }>;
 
+/**
+ * How many of the three confirmation messages this client gets.
+ *
+ * Its own function because it is its own capability: the client's tokenized
+ * door may call it and may call nothing else that writes to their record. The
+ * narrowness is in the signature — there is no field here to pass a channel
+ * through — and it is stated again in the matrix, which is where somebody
+ * asking "what can a forwarded link do" would look first.
+ *
+ * Staff reach it too, under `always` for front desk and `treatingOrSupervising`
+ * for a clinician. One function per fact: the channel and the language still go
+ * through `updateClient`, which is a broader permission for a broader change.
+ */
+export async function setReminderCadence(
+  actor: Actor,
+  clientId: string,
+  reminderCadence: ReminderCadence,
+) {
+  const target = await clientTarget(clientId);
+
+  return guarded(
+    {
+      actor, action: 'update', resource: 'reminder_cadence',
+      resourceId: clientId, clientId,
+      // `ownerClientId` is what makes a token's own row reachable and every
+      // other row `never`, exactly as it does on an appointment write.
+      target: { ...target, ownerClientId: clientId },
+      reason: `cadence:${reminderCadence}`,
+    },
+    (tx) => tx.client.update({
+      where: { id: clientId }, data: { reminderCadence }, select: DEMOGRAPHICS,
+    }),
+  );
+}
+
 export async function updateClient(actor: Actor, clientId: string, data: ClientEdit) {
   const target = await clientTarget(clientId);
 

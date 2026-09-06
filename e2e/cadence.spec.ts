@@ -66,14 +66,41 @@ test.describe('choosing a cadence', () => {
     for (const label of options) expect(label.toLowerCase()).not.toContain('none');
   });
 
-  /** A client the practice never messages has no cadence to choose. */
-  test('hides the control for a client on no messages at all', async ({ page }) => {
+  /**
+   * A client the practice never messages has no cadence to choose — but the
+   * channel that put them there is still editable, which it was not until this
+   * phase. Hiding the whole form made `none` a one-way door.
+   */
+  test('hides the cadence for a client on no messages, and not the way back', async ({ page }) => {
     const code = sql(`select code from "Client" where "reminderPreference" = 'none' order by code limit 1`);
     await actAs(page, USERS.frontDesk);
     await page.goto(`/clients/${clientId(code)}`);
 
-    await expect(page.getByText('None — do not message')).toBeVisible();
+    await expect(page.locator('dl').getByText('None — do not message')).toBeVisible();
     await expect(page.getByLabel('Confirmation messages')).toHaveCount(0);
+    await expect(page.getByLabel('Channel')).toBeVisible();
+  });
+
+  /**
+   * And submitting that form without a cadence still saves. The controls are
+   * validated one at a time precisely so the submission that turns somebody's
+   * messages back on — which cannot carry a cadence, because the select is not
+   * on the page — is not dropped for missing one.
+   */
+  test('turns the messages back on from a form that has no cadence in it', async ({ page }) => {
+    const code = sql(`select code from "Client" where "reminderPreference" = 'none' order by code limit 1`);
+    const id = clientId(code);
+    await actAs(page, USERS.frontDesk);
+    await page.goto(`/clients/${id}`);
+
+    await page.getByLabel('Channel').selectOption('email');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+
+    expect(sql(`select "reminderPreference" from "Client" where id = '${id}'`)).toBe('email');
+    // And the cadence they had all along is untouched, not reset to a default.
+    await expect(page.getByLabel('Confirmation messages')).toBeVisible();
+
+    sql(`update "Client" set "reminderPreference" = 'none' where id = '${id}'`);
   });
 
   /** An auditor reads the log, never the record. */
@@ -133,5 +160,57 @@ test.describe('what the cadence costs and does not cost', () => {
     await page.goto('/reports');
     await expect(page.getByText('Reached too late', { exact: true })).toBeVisible();
     await expect(page.getByText(/reached with time to answer/)).toBeVisible();
+  });
+});
+
+/**
+ * The channel, which is the setting the cadence control keeps being mistaken
+ * for — and which, until this phase, no screen in the application could change.
+ */
+test.describe('the channel', () => {
+  test('can be turned off, and turned back on again', async ({ page }) => {
+    const code = sql(`select code from "Client" where "reminderPreference" = 'email'`
+      + ` order by code limit 1`);
+    const id = clientId(code);
+
+    await actAs(page, USERS.frontDesk);
+    await page.goto(`/clients/${id}`);
+    await page.getByLabel('Channel').selectOption('none');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+
+    await expect(page.locator('dl').getByText('None — do not message')).toBeVisible();
+    expect(sql(`select "reminderPreference" from "Client" where id = '${id}'`)).toBe('none');
+
+    // The regression this spec exists for. The form used to render only for a
+    // client who was *not* on `none`, so setting somebody to "no messages" —
+    // by seed, by import, or by their own STOP — made it a one-way door that
+    // no screen could open again. The client had to be edited in the database.
+    await expect(page.getByLabel('Channel')).toBeVisible();
+    await page.getByLabel('Channel').selectOption('sms');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    expect(sql(`select "reminderPreference" from "Client" where id = '${id}'`)).toBe('sms');
+
+    sql(`update "Client" set "reminderPreference" = 'email' where id = '${id}'`);
+  });
+
+  test('says what "none" costs the practice, where the choice is made', async ({ page }) => {
+    const id = clientId(sql(`select code from "Client" order by code limit 1`));
+    await actAs(page, USERS.frontDesk);
+    await page.goto(`/clients/${id}`);
+
+    // The consequence, beside the control rather than in a document: a client
+    // on `none` is never asked, and so can never be charged for not answering.
+    await expect(page.getByText(/safety setting, not a volume one/)).toBeVisible();
+    await expect(page.getByText(/can never charge them for not answering/)).toBeVisible();
+  });
+
+  test('is not something a clinician can change for somebody else\'s client', async ({ page }) => {
+    const otherCaseload = sql(
+      `select c.code from "Client" c join "User" u on u.id = c."treatingClinicianId"`
+      + ` where u.name <> '${USERS.therapist}' order by c.code limit 1`,
+    );
+    await actAs(page, USERS.therapist);
+    await page.goto(`/clients/${clientId(otherCaseload)}`);
+    await expect(page.getByLabel('Channel')).toHaveCount(0);
   });
 });

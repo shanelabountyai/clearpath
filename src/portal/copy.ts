@@ -43,6 +43,11 @@ export interface PortalCopy {
   askToChange: string;
   changePending: string;
   footer: string;
+  cadenceHeading: string;
+  cadenceHelp: string;
+  cadenceSave: string;
+  cadenceSaved: string;
+  cadences: Record<'full' | 'day_before' | 'day_of', string>;
   reasons: Record<'cannot_make_it' | 'need_a_different_time' | 'prefer_earlier' | 'prefer_later', string>;
 }
 
@@ -75,6 +80,21 @@ export const PORTAL_COPY: Record<Language, PortalCopy> = {
     askToChange: 'Ask to change this',
     changePending: 'You have asked to change this one. Someone will call you.',
     footer: 'This link is personal to you. Please do not forward it.',
+    cadenceHeading: 'How many reminders you get',
+    // Says what it does *not* do, because the question this control makes
+    // somebody ask is "can I stop them altogether", and the honest answer is a
+    // phone call rather than a setting a forwarded link could reach.
+    cadenceHelp:
+      'You will still get at least one message before each appointment. To stop them '
+      + 'entirely, or to change where they are sent, please call us — that is not '
+      + 'something this page can do.',
+    cadenceSave: 'Save',
+    cadenceSaved: 'Saved — that is how many you will get from now on.',
+    cadences: {
+      full: 'All three: five days, the day before, and the day of',
+      day_before: 'One, the day before',
+      day_of: 'One, on the day',
+    },
     reasons: {
       cannot_make_it: 'I cannot make this time',
       need_a_different_time: 'I need a different time',
@@ -112,6 +132,18 @@ export const PORTAL_COPY: Record<Language, PortalCopy> = {
     askToChange: 'Pedir un cambio',
     changePending: 'Ha pedido cambiar esta cita. Alguien le llamará.',
     footer: 'Este enlace es personal. Por favor no lo reenvíe.',
+    cadenceHeading: 'Cuántos recordatorios recibe',
+    cadenceHelp:
+      'Siempre recibirá al menos un mensaje antes de cada cita. Para dejar de recibirlos '
+      + 'por completo, o para cambiar a dónde se envían, por favor llámenos — eso no es '
+      + 'algo que esta página pueda hacer.',
+    cadenceSave: 'Guardar',
+    cadenceSaved: 'Guardado — así es como los recibirá a partir de ahora.',
+    cadences: {
+      full: 'Los tres: cinco días antes, el día anterior y el mismo día',
+      day_before: 'Uno, el día anterior',
+      day_of: 'Uno, el mismo día',
+    },
     reasons: {
       cannot_make_it: 'No puedo a esta hora',
       need_a_different_time: 'Necesito otra hora',

@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import { auditEvent, guarded } from '../auth/guard';
 import type { Actor } from '../auth/permissions';
-import { clientTarget } from '../clients/repository';
+import { clientTarget, setReminderCadence } from '../clients/repository';
+import type { ReminderCadence } from '../scheduling/confirmation';
 import { systemClock, DAY, type Clock } from '../clock';
 import { prisma, type Tx } from '../db';
 import { Conflict, NotFound } from '../errors';
@@ -137,7 +138,7 @@ export async function openPortal(token: string, opts: { clock?: Clock } = {}) {
       // reminder was written for. A Spanish reminder linking to an English
       // page is a loop the client cannot complete — and the fee rests on them
       // completing it.
-      select: { id: true, firstName: true, language: true },
+      select: { id: true, firstName: true, language: true, reminderCadence: true },
     });
     const settings = await tx.practiceSettings.findUnique({
       where: { id: 1 }, select: { messagingName: true },
@@ -180,6 +181,9 @@ export async function openPortal(token: string, opts: { clock?: Clock } = {}) {
   return {
     firstName: client.firstName,
     language: client.language,
+    // Shown on the door so a client can see what they are set to — and so one
+    // whose link was misused can see it was changed.
+    reminderCadence: client.reminderCadence,
     practice: settings?.messagingName ?? 'Stillwater',
     appointments,
   };
@@ -240,6 +244,31 @@ const tokenRequest = (link: { clientId: string }, appointmentId: string, reason:
  * surface has none: a box on a client's page is a channel for clinical content
  * to arrive at the one desk that must never see it.
  */
+/**
+ * "Send me fewer of these."
+ *
+ * The one thing behind this door that changes something about the client rather
+ * than about an appointment, and the boundary is deliberate: it may narrow the
+ * cadence and it may never touch the channel. A leaked link that leaves
+ * somebody on one reminder instead of three is strictly less harmful than one
+ * that cancels their session, which this door already does — it stays
+ * fee-eligible, it is logged with the client as the actor, and it shows on the
+ * door, so a client whose link was misused can see it happened. A leaked link
+ * reaching `reminderPreference: 'none'` would be a different class: the
+ * messages and the fee would go quiet together, so nothing would notice.
+ *
+ * There is no value here meaning "stop". That is the channel, it is a safety
+ * setting rather than a volume one, and asking for it is a phone call.
+ */
+export async function chooseCadence(
+  token: string,
+  cadence: ReminderCadence,
+  opts: { clock?: Clock } = {},
+) {
+  const link = await liveLink(token, opts.clock ?? systemClock);
+  return setReminderCadence(tokenActor(link), link.clientId, cadence);
+}
+
 export type RescheduleReason =
   | 'cannot_make_it' | 'need_a_different_time' | 'prefer_earlier' | 'prefer_later';
 

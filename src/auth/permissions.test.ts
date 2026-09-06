@@ -27,6 +27,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     appointment: 'read create update',
     form_request: 'read create',
     portal_link: 'read create',
+    reminder_cadence: 'update',
   }),
   therapist: spec({
     client: 'read update',
@@ -40,6 +41,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     form_submission: 'read',
     alert: 'read update',
     portal_link: 'read create',
+    reminder_cadence: 'update',
   }),
   associate: spec({
     client: 'read update',
@@ -53,6 +55,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     form_submission: 'read',
     alert: 'read update',
     portal_link: 'read create',
+    reminder_cadence: 'update',
   }),
   supervisor: spec({
     client: 'read update',
@@ -66,6 +69,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     form_submission: 'read',
     alert: 'read update',
     portal_link: 'read create',
+    reminder_cadence: 'update',
   }),
   admin: spec({
     client: 'read update', // break-glass only
@@ -82,7 +86,7 @@ const ALLOWED: Record<Role, Set<string>> = {
   // The tokenized door, and nothing else in the matrix. `update` is confirm and
   // decline; reading behind the link and asking for a different time change
   // nothing and stay outside this file.
-  client: spec({ appointment: 'update' }),
+  client: spec({ appointment: 'update', reminder_cadence: 'update' }),
 };
 
 /** Cells allowed with NO relationship and NO break-glass. */
@@ -150,7 +154,7 @@ describe('permission matrix — every cell', () => {
     RESOURCES.flatMap((res) => ACTIONS.map((a) => [role, res, a] as [Role, Resource, Action])),
   );
 
-  it('covers 546 cells', () => expect(cells).toHaveLength(ROLES.length * RESOURCES.length * ACTIONS.length));
+  it('covers 588 cells', () => expect(cells).toHaveLength(ROLES.length * RESOURCES.length * ACTIONS.length));
 
   it.each(cells)('%s / %s / %s', (role, resource, action) => {
     const key = `${resource}:${action}`;
@@ -357,11 +361,31 @@ describe('waiving a fee', () => {
   });
 });
 
-describe('the client role reaches exactly one cell, and only their own row', () => {
+describe('the client role reaches exactly two cells, and only their own row', () => {
   const holder = { id: ME, role: 'client' as Role };
 
   it('confirms and declines their own appointment', () => {
     expect(can(holder, 'update', 'appointment', { ownerClientId: ME }).allowed).toBe(true);
+  });
+
+  it('chooses how many reminders it gets, for their own row', () => {
+    expect(can(holder, 'update', 'reminder_cadence', { ownerClientId: ME }).allowed).toBe(true);
+    expect(can(holder, 'update', 'reminder_cadence', { ownerClientId: OTHER }).allowed).toBe(false);
+    expect(can(holder, 'update', 'reminder_cadence', {}).allowed).toBe(false);
+  });
+
+  /**
+   * The line the second cell is drawn on. A leaked link that leaves somebody on
+   * one reminder instead of three is strictly less harmful than one that
+   * cancels their session — which this door already does. A leaked link that
+   * reached the *channel* could set `none`, which ends the messages and the fee
+   * together, so nothing would notice: no missed charge, no complaint, just a
+   * client who stops being reminded.
+   */
+  it('cannot reach the channel, which is the setting that ends the fee', () => {
+    for (const action of ACTIONS) {
+      expect(can(holder, action, 'client', { ownerClientId: ME }).allowed, action).toBe(false);
+    }
   });
 
   it('cannot touch an appointment that is not theirs', () => {
@@ -379,7 +403,7 @@ describe('the client role reaches exactly one cell, and only their own row', () 
     };
     for (const resource of RESOURCES) {
       for (const action of ACTIONS) {
-        if (resource === 'appointment' && action === 'update') continue;
+        if (action === 'update' && (resource === 'appointment' || resource === 'reminder_cadence')) continue;
         expect(can(dressed, action, resource, { ...everything, ownerClientId: ME }).allowed,
           `${resource}:${action}`).toBe(false);
       }

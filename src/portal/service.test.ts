@@ -10,8 +10,10 @@ import { runReminderHorizon } from '../scheduling/reminders';
 import { indiscreetTerms } from '../messaging/outbox';
 import { LANGUAGES } from '../messaging/language';
 import { PORTAL_COPY } from './copy';
+import { CADENCES } from '../scheduling/confirmation';
+import { can } from '../auth/permissions';
 import {
-  confirmAppointment, declineAppointment, ensurePortalLink, issuePortalLink,
+  chooseCadence, confirmAppointment, declineAppointment, ensurePortalLink, issuePortalLink,
   openPortal, openRescheduleRequests, requestReschedule, resolveRescheduleRequest,
 } from './service';
 
@@ -272,7 +274,11 @@ describe('the door is narrow on purpose', () => {
     // about why they attend, and it is a fact they already hold — a leaked link
     // discloses that the holder reads Spanish, which the message that carried
     // the link disclosed first.
-    expect(Object.keys(view).sort()).toEqual(['appointments', 'firstName', 'language', 'practice']);
+    // `reminderCadence` is on the same side of the line, for a sharper reason:
+    // it is the one thing this door can change, so showing it is what lets a
+    // client whose link was misused see that it was.
+    expect(Object.keys(view).sort())
+      .toEqual(['appointments', 'firstName', 'language', 'practice', 'reminderCadence']);
   });
 });
 
@@ -564,6 +570,14 @@ describe('the door speaks the language the message did', () => {
     }
   });
 
+  it('has the cadence copy in every language too', () => {
+    for (const language of LANGUAGES) {
+      for (const c of CADENCES) {
+        expect(PORTAL_COPY[language].cadences[c].length, `${language}.${c}`).toBeGreaterThan(0);
+      }
+    }
+  });
+
   it('has every string in every language, so no screen renders undefined', () => {
     // `Record<Language, PortalCopy>` makes this a type error rather than a
     // runtime one, and this is the runtime half: a key present but empty would
@@ -577,5 +591,70 @@ describe('the door speaks the language the message did', () => {
         expect(label.length, `${language}.reasons.${code}`).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+/**
+ * The second thing the token may do, and the line it stops at.
+ *
+ * A cadence change is the only write behind this door that touches the client
+ * rather than an appointment, so what it *cannot* reach is as much the spec as
+ * what it can.
+ */
+describe('choosing how many reminders, from behind the token', () => {
+  const clock = fixedClock('2026-09-01T12:00:00Z');
+
+  it('narrows the cadence and records the client as the actor', async () => {
+    const link = await issuePortalLink(actor(desk), { clientId: client.id, clock });
+
+    const out = await chooseCadence(link.token, 'day_before', { clock });
+    expect(out.reminderCadence).toBe('day_before');
+
+    const [row] = await prisma.auditEvent.findMany({
+      where: { resource: 'reminder_cadence', clientId: client.id },
+    });
+    // The client did this, and the trail says so rather than borrowing whoever
+    // ran the request. `token` is the rule, exactly as on a confirmation.
+    expect(row).toMatchObject({ actorRole: 'client', actorId: client.id, allowed: true, rule: 'token' });
+    expect(row!.reason).toBe('cadence:day_before');
+  });
+
+  it('cannot reach the channel, which is where the fee exemption lives', async () => {
+    const link = await issuePortalLink(actor(desk), { clientId: client.id, clock });
+    // There is no argument for it: the narrowness is in the signature, and the
+    // matrix says the same thing again for anybody reading policy rather than
+    // code. A client on `none` is never asked and so never charged, which is
+    // why a forwarded link may not put somebody there.
+    await chooseCadence(link.token, 'day_of', { clock });
+    const after = await prisma.client.findUniqueOrThrow({ where: { id: client.id } });
+    expect(after.reminderPreference).not.toBe('none');
+    expect(can({ id: client.id, role: 'client' }, 'update', 'client', { ownerClientId: client.id }).allowed)
+      .toBe(false);
+  });
+
+  it('reaches one client and no other', async () => {
+    const other = await makeClient(mine.id);
+    const link = await issuePortalLink(actor(desk), { clientId: client.id, clock });
+
+    await chooseCadence(link.token, 'day_of', { clock });
+    expect((await prisma.client.findUniqueOrThrow({ where: { id: other.id } })).reminderCadence)
+      .toBe('full');
+  });
+
+  it('refuses an expired link, like every other write behind the door', async () => {
+    const link = await issuePortalLink(actor(desk), { clientId: client.id, expiresInDays: 1, clock });
+    const later = fixedClock('2026-10-01T12:00:00Z');
+
+    await expect(chooseCadence(link.token, 'day_of', { clock: later }))
+      .rejects.toMatchObject({ code: 'expired' });
+    expect((await prisma.client.findUniqueOrThrow({ where: { id: client.id } })).reminderCadence)
+      .toBe('full');
+  });
+
+  it('shows the client what they are set to, so a misused link is visible', async () => {
+    const link = await issuePortalLink(actor(desk), { clientId: client.id, clock });
+    await chooseCadence(link.token, 'day_of', { clock });
+
+    expect((await openPortal(link.token, { clock })).reminderCadence).toBe('day_of');
   });
 });

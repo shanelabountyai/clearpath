@@ -43,34 +43,49 @@ export async function sendPortalLink(formData: FormData) {
 }
 
 /**
- * P2-3. How many of the three confirmation messages this client wants.
+ * How this client is contacted: the channel, the cadence and the language.
  *
- * A client tells the practice this on the phone or in the room — there is no
- * portal control for it, because the portal is a tokenized door with no login
- * behind it, and a forwarded link should not be able to change how somebody is
- * contacted. So it is a staff edit on the record, audited like any other.
+ * One form because it is one decision, and one guard because the dangerous half
+ * is the channel. `none` is not "fewer messages" — it is the safety setting,
+ * and it carries an exemption from the fee, which is why it stays here on a
+ * staff screen and is the one value the client's own door may never reach.
  *
- * An unrecognised value is dropped rather than defaulted. Silently writing
- * `full` for a bad post would be the one direction that sends a client *more*
- * messages than anybody chose.
+ * An unrecognised value is dropped rather than defaulted, in every field.
+ * Silently writing `full` for a bad post would be the one direction that sends
+ * a client *more* messages than anybody chose, and silently writing `email`
+ * would take somebody off `none` — which is the setting people are on because
+ * a message on the wrong phone is a danger rather than an annoyance.
  */
-export async function saveReminderCadence(formData: FormData) {
+export async function saveContactPreferences(formData: FormData) {
   const { actor } = await requireSession();
   const clientId = String(formData.get('clientId'));
-  const raw = String(formData.get('reminderCadence') ?? '');
-  if (!(CADENCES as readonly string[]).includes(raw)) return;
 
-  // The language rides in the same form because it is the same decision: how
-  // this client is written to. Both are validated against their enum rather
-  // than trusted — a hand-posted form is the one input this page cannot see.
+  // Each field is validated and applied on its own, and an absent one is left
+  // alone rather than defaulted. That independence is the fix for a real bug:
+  // the cadence select is not rendered for a client on `none` — there is no
+  // cadence when nothing is sent — so a form that required it would silently
+  // drop the very submission that turns their messages back on.
+  const rawCadence = String(formData.get('reminderCadence') ?? '');
+  const reminderCadence = (CADENCES as readonly string[]).includes(rawCadence)
+    ? (rawCadence as ReminderCadence)
+    : undefined;
+
   const rawLanguage = String(formData.get('language') ?? '');
   const language = (LANGUAGES as readonly string[]).includes(rawLanguage)
     ? (rawLanguage as Language)
     : undefined;
 
+  // The channel. Dropped rather than defaulted for the reason above: there is
+  // no safe value to guess when the wrong guess is "start messaging them".
+  const rawChannel = String(formData.get('reminderPreference') ?? '');
+  const reminderPreference = (['email', 'sms', 'none'] as const).find((c) => c === rawChannel);
+
+  if (!reminderCadence && !language && !reminderPreference) return;
+
   await updateClient(actor, clientId, {
-    reminderCadence: raw as ReminderCadence,
+    ...(reminderCadence ? { reminderCadence } : {}),
     ...(language ? { language } : {}),
+    ...(reminderPreference ? { reminderPreference } : {}),
   });
   revalidatePath(`/clients/${clientId}`);
 }

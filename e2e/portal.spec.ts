@@ -147,3 +147,68 @@ test.describe('the door in the client\'s own language', () => {
     await expect(page.getByText('Este enlace no es válido')).toBeVisible();
   });
 });
+
+/**
+ * The only control on this page that changes something about the client rather
+ * than about one appointment. What it cannot reach is as much the spec as what
+ * it can — a leaked link is the threat model, and "there is no channel control
+ * here" is a claim about a page rather than about a function.
+ */
+test.describe('choosing how many reminders, from the door', () => {
+  test.beforeAll(() => fixture('setup'));
+
+  test('narrows the cadence and shows what it is set to', async ({ page }) => {
+    await page.goto(`/p/${TOKEN}`);
+    await expect(page.getByRole('heading', { name: 'How many reminders you get' })).toBeVisible();
+
+    await page.getByLabel('How many reminders you get').selectOption('day_before');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+
+    await expect(page.getByText('Saved — that is how many')).toBeVisible();
+    expect(sql(`select "reminderCadence" from "Client" where id = '${CLIENT}'`)).toBe('day_before');
+
+    // Reloading shows the choice, which is what lets a client whose link was
+    // forwarded see that somebody else changed it.
+    await page.goto(`/p/${TOKEN}`);
+    await expect(page.getByLabel('How many reminders you get')).toHaveValue('day_before');
+  });
+
+  test('offers no way to stop the messages, and says where that request goes', async ({ page }) => {
+    await page.goto(`/p/${TOKEN}`);
+
+    const options = await page.getByLabel('How many reminders you get').locator('option').allInnerTexts();
+    expect(options).toHaveLength(3);
+    for (const label of options) expect(label.toLowerCase()).not.toContain('none');
+    // The channel is not on this page in any form.
+    await expect(page.getByLabel('Channel')).toHaveCount(0);
+    await expect(page.getByText(/To stop them entirely, or to change where they are sent, please call us/))
+      .toBeVisible();
+  });
+
+  test('leaves the client on a channel and still fee-eligible', async ({ page }) => {
+    await page.goto(`/p/${TOKEN}`);
+    await page.getByLabel('How many reminders you get').selectOption('day_of');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(page.getByText('Saved — that is how many')).toBeVisible();
+
+    // Fewer messages is not fewer obligations, and the door cannot make it so.
+    expect(sql(`select "reminderPreference" from "Client" where id = '${CLIENT}'`)).not.toBe('none');
+  });
+
+  test('is logged as the client, on their own row and nobody else\'s', async ({ page }) => {
+    const before = Number(sql(
+      `select count(*) from "AuditEvent" where resource = 'reminder_cadence'`
+      + ` and "clientId" = '${CLIENT}' and "actorRole" = 'client'`,
+    ));
+
+    await page.goto(`/p/${TOKEN}`);
+    await page.getByLabel('How many reminders you get').selectOption('full');
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(page.getByText('Saved — that is how many')).toBeVisible();
+
+    expect(Number(sql(
+      `select count(*) from "AuditEvent" where resource = 'reminder_cadence'`
+      + ` and "clientId" = '${CLIENT}' and "actorRole" = 'client'`,
+    ))).toBe(before + 1);
+  });
+});
