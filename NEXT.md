@@ -1,105 +1,106 @@
 # Next
 
-**Item:** nothing outstanding. Phase 12 built the largest named gap —
-authentication — and the four directions the last handoff listed are now three.
-The next one is still a choice rather than a queue.
+**Item:** nothing outstanding. Phase 13 built password recovery — the largest
+named gap after authentication itself — and the four directions the last handoff
+listed are now three. The next one is still a choice rather than a queue.
 
-Phase 12 is committed and pushed. What landed on top of Phase 11:
+Phase 13 is committed and pushed. What landed on top of Phase 12:
 
-**`requiresSecondFactor` was policy that nothing read, for five phases.** The
-write-up's section 9 argued at length that this was correct: a login that always
-succeeds, or a TOTP field with a fixed secret, is worse than an absent one
-because it reads as present. That argument was not withdrawn — it was used as
-the specification. The question was never whether there is a login screen. It is
-whether the thing behind it can refuse.
+**The question was never "how does somebody get back in".** It was **what does a
+link prove**. It proves control of a mailbox: one factor, and the weakest one in
+the building. Phase 12 bought the property that a clinical account is never
+reachable with one factor, and a reset flow is the door that undoes that quietly
+if nobody looks — because a reset feels like plumbing and nobody re-reads it.
 
-**The enforcement is a type, not a check.** `resolveSession` returns a
-discriminated union, and only the `ready` stage carries an `Actor`:
+**Three answers, decided as a pure function across seven roles:**
 
 ```ts
-| { stage: 'ready'; sessionId: string; user: SessionUser; actor: Actor }
-| { stage: 'second_factor'; sessionId: string; user: SessionUser }
-| { stage: 'enrol_second_factor'; sessionId: string; user: SessionUser }
+export function resetStage(user: { role: Role; enrolled: boolean }): ResetStage {
+  if (!requiresSecondFactor(user.role)) return 'set_password';
+  if (user.enrolled) return 'second_factor';
+  return 'refused';
+}
 ```
 
-A session that cleared a password and nothing else is representable — it is a
-real state a real person sits in — and there is no way to get an actor out of
-it. No caller can authorize from a half-finished sign-in, and no page written
-next month can either.
+`requiresSecondFactor` is the same policy function the sign-in reads, asked at a
+second moment — not a second copy free to drift.
 
-**The seam held.** `src/session.ts` called itself "the seam where real
-authentication would go", and it was right: roughly fifty pages and server
-actions take `{ actor }` off `requireSession()` and **not one of them changed a
-line** when a cookie naming a user id became a session that has to be proved.
+The third cell is the one worth the table. A clinical account that **never
+enrolled** has no factor to demand, so a link would be a complete takeover on
+mailbox access alone — and worse than the sign-in equivalent, because whoever
+used it would then enrol their own authenticator and hold the factor from then
+on. Those accounts get **no link at all**; the refusal is logged and the screen
+says so, because otherwise somebody waits on an email that is never coming.
 
-What is in it:
+`resolveReset` returns no `Actor` in any variant and has no `ready` stage.
+Completing a reset **signs nobody in** — it sets a password and ends every
+session the account had.
 
-1. **Password** — scrypt from the standard library, salted, cost parameters
-   written into every row so raising them later is a migration. Every refusal
-   that is not a lockout returns one identical sentence, and an address matching
-   no account still pays a full scrypt against `ABSENT_ACCOUNT_HASH`, so the
-   staff list is not readable from a stopwatch.
-2. **Session** — an opaque random token whose SHA-256 is what the database
-   stores. 30-minute idle timeout, 12-hour ceiling. Signing out, deactivating a
-   user and changing a password each end live sessions immediately rather than
-   at the next timeout.
-3. **TOTP** — RFC 6238, verified against the six published test vectors, driven
-   by the injected clock so a spec watches a code expire instead of waiting
-   thirty seconds for one. Fails four distinguishable ways: wrong, stale,
-   replayed, not enrolled.
-4. **Lockout** — escalating, capped at fifteen minutes, never permanent.
-5. **Two structural lints** — no file outside `src/auth/` names a credential
-   column, and nothing outside the sign-in flow touches the session cookie. Plus
-   two smaller ones: the staff shell requires a session, and every route handler
-   behind it authenticates itself, because a Next layout does not wrap a route
-   handler and the two under `(staff)` export a CSV of the audit trail and a
-   superbill.
+**The half it is not shippable without.** Requiring the factor means somebody
+who loses password *and* authenticator cannot get back in by any route the
+system offers, so `clearSecondFactor` is the other half — and what the practice
+manager does is *clear* a factor, never see or set one. The account drops back
+to mandatory enrolment and its owner chooses the new secret. It widens the most
+valuable credential in the building; the mitigation available is that every use
+is one audit row naming who and naming whom, never quiet.
 
-Gate at this commit: unit **1999/1999**, typecheck clean, e2e **78/78** against a
+**Two smaller decisions from the same argument.** A valid link works **during a
+lockout** and clears it — a reset link is not a password guess, and refusing it
+would let anybody who knows a clinician's address close both doors by typing
+wrong passwords at the first. And a code is spent once **across both doors**:
+`totpLastStep` lives on the account, so a code typed at the sign-in will not then
+reset the password.
+
+Gate at this commit: unit **2035/2035**, typecheck clean, e2e **86/86** against a
 production build, seed green on **all forty-eight** metrics.
 
 **Four things worth knowing before building on this.**
 
-1. **The dev switcher is gone, and the brief is left as written.** Item 13 of
-   `DESIGN-BRIEF.md` asked for one. Keeping it beside a real login would be a
-   second door whose only protection is a flag somebody has to set correctly.
-   The departure is argued in WRITEUP §9 rather than edited out of the brief.
-2. **`actAs` in the e2e suite signs people in through the real screens.** It is
-   not a helper that mints sessions behind the login's back — that would leave
-   seventy-odd specs proving the application works for people who never signed
-   in. It caches one token per person, which is not a shortcut but a
-   requirement: a code may be spent once.
-3. **A sign-in waits for an unspent TOTP step, and that is the suite obeying the
-   rule it asked for.** Playwright gives each spec file its own module registry,
-   so the cache is per file, and two files signing the same person in inside one
-   thirty-second window presented a code that person had already spent. The
-   server refused it, correctly. If a spec ever needs to *end* a session, use
-   `signInFresh` — signing out of the shared one revokes the token every later
-   spec is still holding, and the failure lands three files away with nothing
-   connecting it back.
-4. **Nobody is seeded enrolled.** The first sign-in for a clinical role walks
-   through mandatory enrolment, which is the part of the design worth seeing.
-   Front desk and the auditor are in with the password alone — start a demo
-   there if there is no authenticator app to hand.
+1. **`RESET_MAILER` is a new environment variable, and it has to be set.** With
+   it unset the reset flow refuses at the moment somebody asks for a link. The
+   first draft keyed the guard on `NODE_ENV !== 'production'` instead, and the
+   e2e sweep found the hole immediately — that suite runs a production build on
+   purpose, so the guard fired on the one build that most needed exercising. The
+   tempting fix, weakening the check, would leave a deployment one unset
+   variable from a flow that appears to work while every link lands in a folder
+   nobody reads.
+2. **The reset mail never touches `OutboxMessage`.** That table stores `body`, so
+   a link routed through it would be a live credential in a table the
+   confirmation report, the work lists and the delivery job all read. A lint
+   refuses any `src/messaging/` import inside `src/auth/`, so nobody simplifies
+   it back later. `ResetMailer` is an interface with a filesystem driver — the
+   same shape as `Carrier`, and the same amount of work left.
+3. **The e2e reset specs build their own three accounts.** Completing a reset
+   revokes every session the account had, and the sweep caches one token per
+   person for the whole run — resetting a seeded user's password would end a
+   session four spec files are still holding, and the failure would surface as a
+   calendar page redirecting to the login screen with nothing connecting it
+   back. One of the three is a case the seed cannot contain at all: a clinical
+   account that never enrolled.
+4. **Audit rows survive the accounts that made them.** The reset fixture's
+   teardown tried to delete them and the database refused —
+   `AuditEvent is append-only (attempted DELETE)`. `actorId` is a plain column
+   with no foreign key precisely so a trail outlives the account it names.
 
-**The method, again, and it is still the transferable part.** No finding is a
-finding until a spec fails on it. Two specs failed here and both were worth it:
-the first replay spec failed because *enrolment itself spends a step* — the
-implementation was right and stricter than the spec assumed, and that became a
-named spec rather than a silent line in a fixture. The second was the e2e
-collision above. Neither would have been found by reasoning about the code.
+**The method, again.** Pure function and its truth table first, then persistence,
+then the screens — and the two things worth having came from the suite rather
+than from reasoning: the append-only rule catching the fixture, and the
+production-build guard firing on the build that most needed testing. Neither
+would have been found by reading the code.
 
 Where this could go next, in no particular order and none of it queued:
 
-- **Password recovery.** Now the largest named gap, and deliberately unbuilt
-  rather than half-built. A reset link is a second credential with the same
-  power as the first, delivered over email; designing it properly — expiry,
-  single use, what it may reach, what it must re-prove — is its own piece of
-  work, and a careless version would undo the phase that just landed.
-- **Account administration.** No screen sets somebody's first password. The
-  matrix already says `admin` may `create` and `update` a `user`; what is
-  missing is the surface, and the interesting part is that issuing a credential
-  and resetting one are different decisions that look identical in a form.
+- **Account administration.** Now the largest named gap. No screen creates an
+  account or sets somebody's first password; the matrix already says `admin`
+  may, and the surface does not exist. The interesting part is that issuing a
+  credential and resetting one are different decisions that look identical in a
+  form.
+- **Rate-limiting the reset request form.** An unauthenticated form that sends
+  mail is a form somebody can point at a list of addresses. What it cannot do is
+  *answer* — every outcome is one sentence — so today's exposure is mail volume
+  rather than the staff list, which is why this is a direction rather than a
+  hole. A token bucket keyed on nothing in particular would look like an answer
+  without being one.
 - **Record the rendered language, and the hour, on `OutboxMessage`.** Carried
   over from Phase 11 and still the best-argued of these: a client whose record
   is corrected from `en` to `es` still has delivered English reminders counting
@@ -113,7 +114,7 @@ counseling, non-response correlates with the reason people are attending, so
 this policy's fee falls hardest on the clients least able to answer, and the
 practice learns about it as attrition rather than as complaints. The seeded
 quarter reads **29 charged of 677 (4.28%)**, unchanged by this phase — correctly,
-since authentication does not touch scheduling. Six phases of preconditions have
+since signing in and getting back in touch no part of scheduling. Six phases of preconditions have
 removed ways of charging the *wrong* people, and every one of those guards is
 green: 0 charged without a delivered message, 0 charged when never messaged, 0
 charged for a session moved too late to re-ask. **None of them touches capacity,
@@ -135,14 +136,28 @@ attribution only, no credit, no link between client records.
 
 **Local setup notes.**
 
+- **Nobody is seeded enrolled in a second factor.** The first sign-in for a
+  clinical role walks through mandatory enrolment, which is the part of the
+  design worth seeing. Front desk and the auditor are in with the password
+  alone — start a demo there if there is no authenticator app to hand.
+- **`actAs` in the e2e suite signs people in through the real screens** and
+  caches one token per person, which is a requirement rather than a shortcut: a
+  code may be spent once. A spec that needs to *end* a session must use
+  `signInFresh` — signing out of the shared one revokes the token every later
+  spec is still holding, and the failure lands three files away with nothing
+  connecting it back. A sign-in that waits for an unspent TOTP step is the suite
+  obeying the rule it asked for, not padding.
 - **Sign in with `stillwater-demo-passphrase`** — every seeded staff account has
   it, and `npm run db:seed` prints the addresses. It is a constant in
   `src/auth/demo.ts`, which would be indefensible anywhere else and is the only
   honest option for a public demo over invented data.
 - `INBOUND_WEBHOOK_SECRET` **and** `DELIVERY_WEBHOOK_SECRET` must be set in
   `.env`, `.env.test` and `.env.e2e`, or those routes refuse every request. That
-  refusal is deliberate; see the two files under `app/api/`. Authentication
-  added **no new environment variables**.
+  refusal is deliberate; see the two files under `app/api/`.
+- **`RESET_MAILER=dev`** in the same three files. It names the `ResetMailer`
+  driver; unset, asking for a password-reset link throws rather than writing one
+  to a directory nobody reads. Links land in `.dev-mail/`, which is gitignored —
+  that is the mailbox for the demo and for the e2e suite.
 - **Postgres must be running before anything.** `service postgresql start` on a
   fresh container; the databases survive but the server does not.
 - **Playwright browser:** set `PLAYWRIGHT_CHROMIUM_PATH` to a system Chromium and

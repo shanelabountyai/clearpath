@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { sessionStage } from '../../src/session';
 import { ROLE_LABEL } from '../../src/ui/shell';
@@ -15,9 +16,14 @@ export const dynamic = 'force-dynamic';
  * one-line `requireSession()` — nothing downstream knows a second factor
  * exists, because nothing downstream can be reached until it is satisfied.
  */
-export default async function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ reset?: string }>;
+}) {
   const stage = await sessionStage();
   if (stage?.stage === 'ready') redirect('/');
+  const { reset } = await searchParams;
 
   return (
     <main className="mx-auto max-w-xl px-6 py-16">
@@ -33,6 +39,17 @@ export default async function LoginPage() {
           never hold real client data.
         </p>
       </div>
+
+      {reset && !stage ? (
+        <p
+          role="status"
+          className="mt-6 rounded-[var(--radius)] border px-3 py-2 text-caption"
+          style={{ borderColor: 'var(--border)', background: 'var(--surface-sunken)' }}
+        >
+          Your password is set. Sign in with it — and note that every session your account had
+          open has been ended, which is the point of a reset rather than a side effect of one.
+        </p>
+      ) : null}
 
       {stage?.stage === 'second_factor' ? (
         <Challenge name={stage.user.name} />
@@ -53,6 +70,9 @@ async function Password() {
         Clinical roles and the practice manager are asked for a second factor after this.
       </p>
       <PasswordForm />
+      <p className="mt-3 text-caption">
+        <Link href="/reset" className="underline">Forgotten your password?</Link>
+      </p>
       <DemoAccounts />
     </>
   );

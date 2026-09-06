@@ -13,3 +13,6 @@ src/generated/
 # tsc incremental cache — regenerated on every typecheck
 *.tsbuildinfo
 .vercel
+
+# Reset links written by the development mailer. Never a real mailbox.
+.dev-mail/

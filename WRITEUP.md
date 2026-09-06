@@ -1674,6 +1674,162 @@ happened.
 
 ---
 
+## 17. What a link in a mailbox proves
+
+The phase before this one bought one property and wrote it on the schema: a
+clinical account is never reachable with one factor. Password recovery is the
+door that undoes that quietly if nobody looks — and it undoes it through the
+part of the system nobody re-reads, because a reset flow feels like plumbing.
+
+So the question this phase had to answer was not *how does somebody get back
+in*. It was **what does a link prove**. It proves control of a mailbox. That is
+one factor, and it is the weakest one in the building.
+
+### The shape that follows from that
+
+Three answers across seven roles, decided as a pure function before anything
+persists:
+
+```ts
+export function resetStage(user: { role: Role; enrolled: boolean }): ResetStage {
+  if (!requiresSecondFactor(user.role)) return 'set_password';
+  if (user.enrolled) return 'second_factor';
+  return 'refused';
+}
+```
+
+`requiresSecondFactor` is not consulted again in a new form here — it is the
+same policy function the sign-in reads, asked at a second moment. Deciding which
+roles need a second factor is a role-derived rule and `permissions.ts` is where
+every role-derived rule lives; a reset flow that re-decided it would be a second
+copy free to drift, and the drift would be silent.
+
+The first two cells are ordinary. The third is the one worth the table.
+
+### The cell that refuses
+
+A clinical account that has **never enrolled** has no second factor to demand.
+A link to it would therefore be a complete takeover on mailbox access alone —
+and worse than the sign-in equivalent, because whoever used it would then enrol
+their own authenticator and hold the factor from then on.
+
+There is nothing this flow can ask that makes that safe. So no link is sent, at
+all, and the way back for those accounts is a person verifying a person.
+
+It is logged as a refusal rather than dropped silently, which matters more than
+it looks: somebody now cannot get back in, and the practice needs to know that
+rather than hear about it as "I never got the email". The screen says the same
+thing up front, and names the remedy.
+
+### `resolveReset` returns no actor, in any variant
+
+The same discipline as `resolveSession`, and for the same reason:
+
+```ts
+export type ResolvedReset =
+  | { stage: 'second_factor'; resetId: string; user: ResetUser }
+  | { stage: 'set_password'; resetId: string; user: ResetUser };
+```
+
+There is no `ready`. Completing a reset **signs nobody in** — it sets a password
+and ends every session the account had, and the person then goes to the front
+door like anybody else. A flow that handed back a session at the end would make
+the link itself worth a session, which is the property this phase exists to
+keep.
+
+### One code, one use, whichever door
+
+`totpLastStep` lives on the `User` rather than on the session or the reset, and
+sharing it across the two flows is the point rather than an economy. A code
+typed at the sign-in will not then reset the password, and one typed at the
+reset will not then sign anybody in. A phished code is worth one action, not one
+action per door.
+
+Both flows also say the *same sentence* for a replayed code and a mistyped one.
+The difference is worth recording in the audit trail — somebody reusing a code
+is not somebody fumbling one — but telling the person at the keyboard which it
+was would tell an attacker their captured code had already been spent.
+
+### The half this is not shippable without
+
+Requiring the second factor to reset a password means somebody who loses their
+password *and* their authenticator can no longer get back in by any route the
+system offers. That is the correct security answer and an unacceptable
+operational one on its own. Shipping only the first half would have been
+building a known dead end.
+
+So `clearSecondFactor` exists, and three things about its shape are deliberate:
+
+1. **It clears rather than reveals.** An administrator never sees a secret and
+   never sets one. The account drops back to `enrol_second_factor` and its
+   *owner* enrols on the next sign-in — the only version where the person
+   holding the factor is the person it is for. An administrator who could *set*
+   one would be an administrator who could sign in as a clinician, and the audit
+   log would faithfully record it as them.
+2. **It ends their sessions.** Whatever prompted it — a lost phone, a stolen one
+   — a session opened with the old factor is exactly what the clearance is
+   supposed to be closing.
+3. **It is audited as itself.** This widens `admin`, which `permissions.ts`
+   already calls the single most valuable credential in the building. That
+   concentration is real and is not designed away. What is available instead is
+   that every use is one row naming who, naming whom, and never quiet.
+
+### Two smaller decisions from the same argument
+
+**A valid link works while the account is locked out, and clears the lock.** A
+reset link is not a password guess, so throttling it buys nothing — and refusing
+it would hand anybody who knows a clinician's address a way to close both doors
+at once by typing wrong passwords at the first. That is an availability attack
+on a working clinical account, requiring nothing but the address.
+
+**The link never touches the outbox.** `OutboxMessage` stores `body`, so routing
+a reset through it would write a live credential into a table the confirmation
+report, the work lists and the delivery job all read — the same class of mistake
+hard rule 10 exists to prevent, arrived at from the side nobody guards.
+`ResetMailer` is an interface with a filesystem driver, the same shape as
+`Carrier`, and a lint refuses any import from `src/messaging/` inside
+`src/auth/` so nobody simplifies it back later.
+
+### Two things the suite caught that reasoning would not have
+
+**The append-only rule caught the fixture.** The e2e fixture's teardown deleted
+the accounts it made and their audit rows, and the database refused:
+`AuditEvent is append-only (attempted DELETE)`. That is hard rule 5 doing its
+job on the one caller most likely to be waved through, and the fix was to stop
+deleting — `actorId` is a plain column with no foreign key precisely so a trail
+outlives the account it names. A suite that could tidy the log would be a suite
+proving something weaker than one that cannot.
+
+**The production-build guard fired on the build that most needed testing.** The
+mailer's first draft refused to run when `NODE_ENV === 'production'`, which reads
+sensible and is wrong: the e2e sweep runs a production build on purpose, so the
+guard fired there and nowhere else. The tempting fix — weaken the check — would
+have left a real deployment one unset variable from a reset flow that appears to
+work while every link lands in a directory nobody reads, and the first anybody
+would hear of it is a clinician who cannot get back in. Keying it on an explicit
+`RESET_MAILER` instead makes the statement the right way round: a deployment
+with no mail provider fails at the moment somebody asks for a link, saying what
+is missing.
+
+### What this deliberately does not do
+
+- **It does not send mail.** One driver, writing to a gitignored directory. The
+  seam is an interface with a real implementation behind it so that writing a
+  second one changes no policy code — which is the same claim `simulatedCarrier`
+  makes, and the same amount of work left.
+- **It does not create accounts or set a first password.** The matrix already
+  says `admin` may; the surface does not exist. Issuing a credential and
+  resetting one are different decisions that look identical in a form, and that
+  is the interesting part rather than a detail to rush.
+- **It does not rate-limit the request form.** An unauthenticated form that
+  sends mail is a form somebody can point at a list of addresses. What it cannot
+  do is *answer* — every outcome is one sentence — so the exposure is mail
+  volume rather than the staff list. Naming it is the honest position; a token
+  bucket keyed on nothing in particular would look like an answer without being
+  one.
+
+---
+
 ## Decisions log
 
 | Decision | Why |
@@ -1799,6 +1955,15 @@ happened.
 | A lint on `appointment.update`, not only on `appointment.create` | The insert lint catches the booking path written next month; this catches the *move* written next month — a drag-and-drop calendar, a bulk shift for changed availability, a script nudging a day by fifteen minutes. Any update whose `data` writes `startAt` must write `bookedAt`, or every one of those appointments carries delivered reminders about a time that no longer exists |
 | Seeded reschedules move sessions in both directions | Moving later leaves room for the cadence to re-ask, and a client who ignores *that* message is charged like anybody else; moving earlier leaves none, and nobody is charged. A fixture that only did one would prove the rule it happened to exercise and hide the other |
 | The fix sends no "your appointment has changed" message | A reschedule is a phone call in every practice this is modelled on, and inventing that template puts a message in front of a client nobody at the practice decided to send. The guarantee stays narrower and keeps the money in it: ask about the new hour if there is time, and charge nobody if there is not |
+| A reset link is never sufficient on its own for a role that needs a second factor | It proves control of a mailbox, which is one factor and the weakest one in the building. If it were enough to set a clinical password, mailbox access would quietly become clinical access and the previous phase's whole property would still be true and no longer matter |
+| A clinical account that never enrolled is sent no link at all | There is no factor to demand, so the link would be a complete takeover on mailbox access — and worse than the sign-in equivalent, because whoever used it would then enrol their own authenticator and hold the factor from then on. Nothing this flow can ask makes that safe, so the answer is a person verifying a person |
+| The refusal is logged and stated on the screen rather than dropped silently | Somebody now cannot get back in, and an administrator is the only remedy. A silent no-op leaves the practice with a person who "never got the email" and no row anywhere saying why |
+| Completing a reset signs nobody in | `ResolvedReset` has no `ready` variant and carries no `Actor`. A flow that handed back a session at the end would make the link itself worth a session, which is exactly what it must not be worth |
+| `totpLastStep` is shared between the sign-in and the reset | One authenticator, one code, one use, whichever door it was used at. A phished code is then worth one action rather than one action per door — and the two flows say the same sentence for a replay as for a typo, because telling somebody their captured code has been spent is telling an attacker that |
+| A valid link works during a lockout and clears it | A reset link is not a password guess, so throttling it buys nothing. Refusing it hands anybody who knows a clinician's address a way to close both doors at once by typing wrong passwords at the first — an availability attack on a working clinical account, requiring nothing but the address |
+| An administrator clears a second factor and can never see or set one | The account drops back to mandatory enrolment so its *owner* chooses the new secret. An administrator who could set one could sign in as a clinician, and the audit log would faithfully record it as them. It widens the most valuable credential in the building, so every use is one row naming who and whom |
+| The reset mail does not go through `OutboxMessage` | That table stores `body`, so the link would be a live credential in a table the report, the work lists and the delivery job all read — hard rule 10's mistake, reached from the side nobody guards. A lint refuses any `src/messaging/` import inside `src/auth/` |
+| The mailer is chosen by `RESET_MAILER`, not by `NODE_ENV` | The first draft refused in production, and the e2e sweep — which runs a production build on purpose — found the hole immediately. Weakening the check would leave a deployment one unset variable from a reset flow that appears to work while every link lands in a folder nobody reads. An explicit driver name fails at the moment somebody asks for a link, saying what is missing |
 | The cadence is a script and a function, with no scheduler dependency | Due times derive from `startAt` and the injected clock, so the job is idempotent and the schedule is an implementation detail of whatever calls it — cron, a timer, a hosted trigger, or a person typing `npm run reminders:run`. A missed hour costs lateness and nothing else, and the whole five-day cadence runs in a test in a millisecond because the clock is an argument |
 
 ## What this project deliberately is not

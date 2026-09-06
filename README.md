@@ -72,6 +72,44 @@ with an idle timeout and an absolute ceiling. Signing out, deactivating a user
 and changing a password all end live sessions immediately rather than at the
 next timeout.
 
+### Forgetting a password
+
+A reset link is a second credential with the same power as the first, delivered
+over email — so the question is not how somebody gets back in, but **what a link
+proves**. It proves control of a mailbox, which is one factor and the weakest one
+in the building. If that were enough to set a clinical password, mailbox access
+would quietly become clinical access and every argument above would still be
+true and no longer matter.
+
+![The reset challenge, addressed to a clinician: the link proves you can read that mailbox and nothing else, the account reaches client records, so it takes a second factor to change its password — the same code signing in asks for. Below the field, a note that each code works once at whichever door it is used.](docs/screenshots/reset-second-factor.png)
+
+So the link is never the whole way in:
+
+- **A role with no second factor** — front desk, the auditor — sets a password on
+  the link alone. There is nothing else to ask for, and the account reaches no
+  clinical content.
+- **An enrolled clinical role** gets the link *and* the same code challenge the
+  sign-in asks for. `resolveReset` returns no actor in any variant and has no
+  `ready` stage: completing a reset signs nobody in, it sets a password and ends
+  every session the account had.
+- **A clinical account that never enrolled** gets **no link at all**. There would
+  be no factor to demand, and whoever used it would then enrol their own
+  authenticator against somebody else's account. The screen says so rather than
+  leaving somebody waiting on an email that is never coming.
+
+That last case is why the practice manager can **clear** a second factor — never
+see one, never set one. The account drops back to mandatory enrolment and its
+owner chooses the new secret, which is the only version where the person holding
+the factor is the person it is for. It widens the most valuable credential in the
+building, so every use is one audit row naming who and naming whom.
+
+Two smaller decisions, both from the same argument. A valid link works **while
+the account is locked out** and clears the lock, because a reset link is not a
+password guess and refusing it would let anybody who knows a clinician's address
+close both doors by typing wrong passwords at the first. And a code is spent
+once **across both doors**: the accepted step lives on the account, so a code
+typed at the sign-in will not then reset the password.
+
 ## The access rule that shapes everything
 
 Two classes of clinical note, with different rules:
@@ -96,12 +134,15 @@ and a test greps the rest of `src/` to prove no endpoint re-implements a role ch
 
 ## Known limitations (deliberate)
 
-- **No password recovery, and no account administration.** Authentication itself
-  is built — see below — but a clinician who loses their phone has no way back
-  in, and there is no screen for setting somebody's first password. Both are
-  real gaps rather than modelled ones. Recovery is the harder half of any
-  authentication system and the half that most often becomes the way in, so it
-  is unbuilt rather than half-built.
+- **No account administration.** There is no screen for creating an account or
+  setting somebody's first password; the matrix says `admin` may, and the
+  surface does not exist. Issuing a credential and resetting one are different
+  decisions that look identical in a form, which is the interesting part and the
+  reason it is unbuilt rather than half-built.
+- **Nothing actually sends mail.** `ResetMailer` is an interface with one driver,
+  which writes links to a gitignored directory — the same shape as the carrier
+  port. With `RESET_MAILER` unset the reset flow refuses at the moment somebody
+  asks for a link, rather than succeeding quietly into a folder nobody reads.
 - **Demo accounts are listed on the sign-in screen.** With one published
   password, because a public demo over invented data has to be openable. It is
   account enumeration served up voluntarily and a real practice must never do
@@ -173,8 +214,8 @@ createdb clearpath_dev clearpath_test clearpath_e2e clearpath_shadow
 npm install
 npm run db:setup     # migrate all three, generate the client, seed dev + e2e
 npm run dev          # http://localhost:3700
-npm test             # 1,999 unit + integration tests
-npm run test:e2e     # 78 Playwright tests against a production build
+npm test             # 2,035 unit + integration tests
+npm run test:e2e     # 86 Playwright tests against a production build
 npm run verify:seed  # the seeded quarter, against its own success metrics
 ```
 
@@ -327,5 +368,6 @@ means replacing that file's values and nothing else.
 | Two languages, and what neither may say | [`src/messaging/language.ts`](src/messaging/language.ts) |
 | The carrier port, "delivered", and "in time to answer" | [`src/messaging/carrier.ts`](src/messaging/carrier.ts) |
 | The freed hour, and who may be offered it | [`src/scheduling/openings.ts`](src/scheduling/openings.ts) |
+| What a reset link may do, and the case it may not | [`src/auth/recovery.ts`](src/auth/recovery.ts) |
 | The seed's own success metrics | [`prisma/metrics.ts`](prisma/metrics.ts) |
 | Why any of it is shaped this way | [`WRITEUP.md`](WRITEUP.md) |

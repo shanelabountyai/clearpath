@@ -80,7 +80,8 @@ model User {
   lockedUntil      DateTime?
   lastLoginAt      DateTime?
 
-  authSessions AuthSession[]
+  authSessions   AuthSession[]
+  passwordResets PasswordReset[]
 
   createdAt                 DateTime            @default(now())
   rescheduleRequestsHandled RescheduleRequest[]
@@ -133,6 +134,49 @@ model AuthSession {
   revokedReason String?
 
   @@index([userId, revokedAt])
+  @@index([expiresAt])
+}
+
+/// A password reset in flight.
+///
+/// Deliberately not a variant of `AuthSession`. A session is a thing that
+/// authorizes and grows authority by one field; this is a thing that authorizes
+/// nothing and never will — completing it signs nobody in, it sets a password
+/// and ends every session the account had. Folding the two together would put
+/// a row in the session table whose whole job is to not be a session.
+///
+/// Same storage discipline as `AuthSession`: the token exists in the link and
+/// nowhere else, and what is written here is its SHA-256, so a dump of this
+/// table lets nobody reset anybody.
+model PasswordReset {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 of the link's token.
+  tokenHash String @unique
+
+  createdAt DateTime
+  /// Short, because the thing this addresses is a link sitting in a mailbox.
+  expiresAt DateTime
+
+  /// When the second factor was proved *for this reset*.
+  ///
+  /// Null is the half-proved state, and it is the same shape as
+  /// `AuthSession.secondFactorAt` for the same reason: there is one object
+  /// through the whole flow, and its authority grows by one field. It is per
+  /// reset rather than per user because proving a factor once must not license
+  /// every future link.
+  secondFactorAt DateTime?
+
+  /// Spent. A link works once, whatever else is true of it.
+  usedAt DateTime?
+
+  revokedAt DateTime?
+  /// `superseded`, `second_factor_cleared`. A reason code, never a sentence.
+  revokedReason String?
+
+  @@index([userId, usedAt])
   @@index([expiresAt])
 }
 

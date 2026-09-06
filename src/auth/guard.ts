@@ -160,7 +160,19 @@ export async function auditEvent(
  * beside it is what says an attempt was refused, and that is the whole
  * statement the row makes.
  */
-export type AuthAction = 'sign_in' | 'sign_out' | 'enrol_second_factor';
+export type AuthAction =
+  | 'sign_in' | 'sign_out' | 'enrol_second_factor'
+  /**
+   * Password recovery, as three events rather than one.
+   *
+   * A request, a factor proved, and a password set are separately interesting
+   * to somebody reading the trail afterwards: a run of `reset_request` rows
+   * against one account with no `reset_complete` after them is somebody
+   * probing, and a `reset_complete` with no `reset_second_factor` before it on
+   * a clinical account would be the bug this whole phase exists to prevent —
+   * visible in the log rather than only in a branch.
+   */
+  | 'reset_request' | 'reset_second_factor' | 'reset_complete';
 
 export async function authEvent(
   subject: { id: string; role: Role },

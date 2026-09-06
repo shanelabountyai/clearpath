@@ -1,5 +1,11 @@
+import { execFileSync } from 'node:child_process';
 import { DEMO_PASSWORD } from '../src/auth/demo';
+import { latestResetLink } from '../src/auth/mailer';
 import { actAs, clientId, expect, sql, test, USERS } from './fixtures';
+import { CLINICAL as SHOT_CLINICAL } from './reset-fixture';
+
+const resetFixture = (mode: 'setup' | 'teardown') =>
+  execFileSync('npx', ['tsx', 'e2e/reset-fixture.ts', mode], { stdio: 'pipe' });
 
 /**
  * Not an assertion — the README's pictures, captured from the same seeded
@@ -31,6 +37,24 @@ test.describe('README screenshots', () => {
     await expect(page.locator('#code')).toBeVisible();
     await expect(page.getByTestId('totp-secret')).toHaveCount(0);
     await page.screenshot({ path: `${shot}/second-factor.png` });
+
+    // The same challenge, reached from the other door.
+    //
+    // A reset link proves control of a mailbox, which is one factor, and this
+    // is the screen that says so. Captured against a purpose-built account
+    // rather than a seeded one, because completing a reset revokes every
+    // session the account had — including the token this capture and every
+    // later one is still holding.
+    resetFixture('setup');
+    await page.context().clearCookies();
+    await page.goto('/reset');
+    await page.fill('#email', SHOT_CLINICAL.email);
+    await page.click('button[type="submit"]');
+    await expect(page.getByRole('status')).toBeVisible();
+    await page.goto(latestResetLink(SHOT_CLINICAL.email)!);
+    await expect(page.locator('#code')).toBeVisible();
+    await page.screenshot({ path: `${shot}/reset-second-factor.png` });
+    resetFixture('teardown');
 
     // The operational tier: front desk runs the whole calendar and learns
     // nothing about why anyone is in the building.

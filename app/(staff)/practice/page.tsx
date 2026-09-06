@@ -4,6 +4,9 @@ import { guarded } from '../../../src/auth/guard';
 import { Badge, Card, Field, PageHeader, money } from '../../../src/ui/primitives';
 import { ROLE_LABEL } from '../../../src/ui/shell';
 import { withDenial } from '@/src/ui/denied';
+import { requiresSecondFactor } from '../../../src/auth/permissions';
+import { Button } from '@/src/ui/button';
+import { clearSecondFactorAction } from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,6 +20,15 @@ async function PracticePage() {
         where: { role: { not: 'client' } },
         select: {
           id: true, name: true, email: true, role: true, active: true,
+          // When they enrolled, and deliberately not the secret itself. This is
+          // a status; the credential beside it is on the list `sessions.test.ts`
+          // refuses anywhere outside `src/auth/`, and that lint is blunt on
+          // purpose — it fails on the *name*, comments included, which is why
+          // this one is careful not to write it. A page that can select a
+          // credential is one careless `select` from putting it in its own
+          // HTML, and this page needs to know nothing beyond whether there is
+          // one.
+          totpEnrolledAt: true,
           supervisor: { select: { id: true, name: true } },
           supervisees: { select: { id: true, name: true } },
         },
@@ -41,7 +53,7 @@ async function PracticePage() {
               <table className="w-full min-w-[520px] border-collapse text-body">
                 <thead>
                   <tr className="text-left text-muted">
-                    {['Name', 'Role', 'Supervised by', 'Status'].map((h) => (
+                    {['Name', 'Role', 'Supervised by', 'Status', 'Second factor'].map((h) => (
                       <th key={h} className="border-b py-2 font-medium" style={{ borderColor: 'var(--border)' }}>{h}</th>
                     ))}
                   </tr>
@@ -59,6 +71,9 @@ async function PracticePage() {
                       </td>
                       <td className="border-b py-2" style={{ borderColor: 'var(--border)' }}>
                         {u.active ? <Badge tone="success">Active</Badge> : <Badge>Inactive</Badge>}
+                      </td>
+                      <td className="border-b py-2" style={{ borderColor: 'var(--border)' }}>
+                        <SecondFactor id={u.id} role={u.role} enrolled={!!u.totpEnrolledAt} />
                       </td>
                     </tr>
                   ))}
@@ -167,6 +182,43 @@ async function PracticePage() {
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * Whether somebody holds a second factor, and the one thing to do about it.
+ *
+ * Only a clear, never a view and never a set. This is the path for a lost
+ * authenticator, and the account drops back to mandatory enrolment so its owner
+ * chooses the new secret — an administrator who could *set* one would be an
+ * administrator who could sign in as a clinician, and the audit log would
+ * faithfully record it as them.
+ *
+ * It widens `admin`, which was already the most valuable credential in the
+ * building, and that concentration is real rather than designed away. What is
+ * available instead is that every use is one audit row naming who, naming whom,
+ * and never quiet — which is why the copy says so on the button rather than in
+ * a comment nobody at the front desk reads.
+ */
+function SecondFactor({ id, role, enrolled }: { id: string; role: string; enrolled: boolean }) {
+  if (!requiresSecondFactor(role as Parameters<typeof requiresSecondFactor>[0])) {
+    return <span className="text-caption text-subtle">Not required</span>;
+  }
+  if (!enrolled) return <Badge tone="warning">Set up on next sign-in</Badge>;
+
+  return (
+    <form action={clearSecondFactorAction} className="flex items-center gap-2">
+      <input type="hidden" name="userId" value={id} />
+      <Badge tone="success">Enrolled</Badge>
+      {/*
+        `danger` because this is what the variant is for: it cannot be undone,
+        it ends their sessions, and it puts a clinical account back to choosing
+        a factor. A quiet button here would understate what the click does.
+      */}
+      <Button type="submit" variant="danger" className="text-caption">
+        Clear
+      </Button>
+    </form>
   );
 }
 
