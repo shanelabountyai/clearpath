@@ -22,7 +22,7 @@ test.describe('README screenshots', () => {
       `select to_char("startAt", 'YYYY-MM-DD') from "Appointment" group by 1 order by count(*) desc, 1 limit 1`,
     );
     await page.goto(`/calendar?date=${busiest}`);
-    await expect(page.getByText(/[1-9]\d* sessions ·/)).toBeVisible();
+    await expect(page.getByText(/[1-9]\d* sessions( in [1-9]\d* bookings)? ·/)).toBeVisible();
     await page.screenshot({ path: `${shot}/calendar-front-desk.png` });
 
     // The rule, stated where the notes would be, to the supervisor of the

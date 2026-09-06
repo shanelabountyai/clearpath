@@ -1,6 +1,6 @@
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
-import { test, expect, USERS, userId } from './fixtures';
+import { test, expect, sql, USERS, userId } from './fixtures';
 
 /**
  * Every static staff route, as every seeded person, must answer.
@@ -22,25 +22,66 @@ import { test, expect, USERS, userId } from './fixtures';
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const STAFF = path.join(HERE, '..', 'app', '(staff)');
 
-/** Static routes only — a `[id]` segment needs a real record, and the record
- *  pages are the ones that already got this right. */
-function staticRoutes(dir: string, prefix = ''): string[] {
+/**
+ * Every page under `app/(staff)`, `[id]` segments included.
+ *
+ * They used to be excluded, on the grounds that "a `[id]` segment needs a real
+ * record, and the record pages are the ones that already got this right". Both
+ * halves turned out to be wrong. `/groups/[id]` called its getter with no actor
+ * at all — no permission check, no audit row, a roster of six clients by name
+ * and code to anybody with a cookie — and it survived precisely because this
+ * sweep skipped it and the seed created no group for it to open. An excuse for
+ * not covering something is where the next defect lives.
+ *
+ * A real record is not much to ask for: the seed is right there. What cannot be
+ * inferred is *which* record — `/notes/[id]` is a ProgressNote and
+ * `/submissions/[id]` a FormSubmission — so each dynamic route names its source
+ * below, and a route with no entry fails the run rather than being skipped.
+ */
+function pageRoutes(dir: string, prefix = ''): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (entry.name === 'page.tsx') out.push(prefix || '/');
-    if (!entry.isDirectory() || entry.name.startsWith('[') || entry.name.startsWith('_')) continue;
-    out.push(...staticRoutes(path.join(dir, entry.name), `${prefix}/${entry.name}`));
+    if (!entry.isDirectory() || entry.name.startsWith('_')) continue;
+    out.push(...pageRoutes(path.join(dir, entry.name), `${prefix}/${entry.name}`));
   }
   return out;
 }
 
-const ROUTES = staticRoutes(STAFF).sort();
+/**
+ * Where one real id comes from, per dynamic route. Ordered so the id is stable
+ * between seeds — `createdAt` rather than the cuid, which is fresh every run.
+ */
+const ID_SOURCE: Record<string, string> = {
+  '/appointments/[id]': 'select id from "Appointment" order by "startAt", id limit 1',
+  '/clients/[id]': 'select id from "Client" order by code limit 1',
+  '/clients/[id]/trends': 'select id from "Client" order by code limit 1',
+  '/groups/[id]': 'select id from "GroupSession" order by "createdAt", id limit 1',
+  '/notes/[id]': 'select id from "ProgressNote" order by "createdAt", id limit 1',
+  '/process-notes/[id]': 'select id from "ProcessNote" order by "createdAt", id limit 1',
+  '/submissions/[id]': 'select id from "FormSubmission" order by "createdAt", id limit 1',
+};
+
+const ALL = pageRoutes(STAFF).sort();
+const DYNAMIC = ALL.filter((r) => r.includes('['));
+const ROUTES = ALL.map((r) => (r.includes('[') ? r.replace('[id]', sql(ID_SOURCE[r]!)) : r));
 
 test('the route tree is discovered, not assumed', () => {
   // A refactor that moves the pages should fail loudly here rather than
   // quietly reduce this spec to zero assertions.
-  expect(ROUTES.length).toBeGreaterThanOrEqual(10);
-  expect(ROUTES).toContain('/audit');
+  expect(ALL.length).toBeGreaterThanOrEqual(10);
+  expect(ALL).toContain('/audit');
+
+  // A dynamic page added next month is covered the day it lands, or this fails
+  // and somebody says where its id comes from. What it must never do is drop
+  // out of the sweep unnoticed, which is how `/groups/[id]` went unguarded.
+  expect(DYNAMIC.filter((r) => !ID_SOURCE[r])).toEqual([]);
+  expect(DYNAMIC.length).toBeGreaterThanOrEqual(7);
+
+  // And each of those ids has to actually exist, or the sweep is walking URLs
+  // that 404 for everybody and proving nothing.
+  expect(ROUTES.filter((r) => r.includes('['))).toEqual([]);
+  expect(ROUTES.filter((r) => r.endsWith('/') && r !== '/')).toEqual([]);
 });
 
 for (const [role, name] of Object.entries(USERS)) {

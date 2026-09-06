@@ -1,6 +1,6 @@
 import { guardedAll } from '../auth/guard';
 import type { Actor } from '../auth/permissions';
-import { prisma } from '../db';
+import { prisma, type Tx } from '../db';
 import { systemClock, type Clock } from '../clock';
 import { Conflict, NotFound } from '../errors';
 import { zonedToUtc, type LocalDate } from '../time';
@@ -106,12 +106,17 @@ export async function bookGroupSession(actor: Actor, input: GroupBooking) {
     );
   }
 
-  return getGroupSession(result.booked);
+  // The roster query directly, not `getGroupSession`: this call has just
+  // guarded `create` on every one of these clients and written a row for each.
+  // Routing the read-back through the guard as well would double the audit
+  // trail for one booking — six rows for six people is the rule, twelve is
+  // noise that makes the six harder to find.
+  return roster(prisma, result.booked);
 }
 
-/** The group and its attendees. Roster and status only — no clinical content. */
-export async function getGroupSession(groupSessionId: string) {
-  const group = await prisma.groupSession.findUnique({
+/** The roster query. Callers decide who may run it; this only shapes the read. */
+const roster = (db: Tx | typeof prisma, groupSessionId: string) =>
+  db.groupSession.findUniqueOrThrow({
     where: { id: groupSessionId },
     include: {
       appointments: {
@@ -123,8 +128,48 @@ export async function getGroupSession(groupSessionId: string) {
       },
     },
   });
-  if (!group) throw new NotFound('GroupSession');
-  return group;
+
+/**
+ * The group and its attendees.
+ *
+ * Roster and status only — no clinical content — but a roster is still a list
+ * of clients by name and code, and reading one is an access to each of their
+ * records. It went through no permission check and left no audit row: the only
+ * read in the application that did not, and `/groups/[id]` was the only record
+ * page in `app/` that called a getter without an actor. The auditor, whose whole
+ * design is that they see the access event and never the content, could open a
+ * roster of six clients by id.
+ *
+ * `guardedAll` rather than `guarded`, for the same reason booking a group uses
+ * it: hard rule 4 wants one audit row per record touched, and six people in a
+ * room is six records. The decision is per client, so a refusal for any one of
+ * them refuses the whole page rather than quietly dropping a name from a list.
+ */
+export async function getGroupSession(actor: Actor, groupSessionId: string) {
+  const members = await prisma.appointment.findMany({
+    where: { groupSessionId },
+    select: { clientId: true },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  // Existence before permission, matching `getAppointment`: an id that names
+  // nothing is a 404 for everybody, and there is no record to have an opinion
+  // about.
+  const exists = await prisma.groupSession.count({ where: { id: groupSessionId } });
+  if (exists === 0) throw new NotFound('GroupSession');
+
+  const read = (clientId?: string) => ({
+    actor, action: 'read' as const, resource: 'appointment' as const,
+    resourceId: groupSessionId, ...(clientId ? { clientId } : {}),
+  });
+
+  // An hour everybody has been rescheduled out of still renders — the page says
+  // so — and it touches nobody's record, so it is one audit row naming none.
+  const requests = members.length
+    ? members.map((m) => read(m.clientId))
+    : [read()];
+
+  return guardedAll(requests, (tx) => roster(tx, groupSessionId));
 }
 
 /**

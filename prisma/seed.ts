@@ -14,7 +14,8 @@ const { prisma } = await import('../src/db');
 const { actor, resetDb } = await import('../src/test/harness');
 const { TEMPLATES } = await import('../src/forms/fixtures');
 const { publishTemplate, issueForm, submitForm } = await import('../src/forms/service');
-const { materialiseSeries } = await import('../src/scheduling/booking');
+const { availableSlots, materialiseSeries } = await import('../src/scheduling/booking');
+const { bookGroupSession } = await import('../src/scheduling/groups');
 const { createProgressNote, signProgressNote, coSignProgressNote, createProcessNote } =
   await import('../src/notes/service');
 const { guarded } = await import('../src/auth/guard');
@@ -384,6 +385,95 @@ async function main() {
     });
   }
   log('8 clients on the waitlist');
+
+  // ── a skills group: one hour, six people, six records ─────────────────
+  //
+  // The seed created no group session at all, so nothing the feature is made of
+  // ever met real data: not the chip that collapses six attendee rows into one
+  // hour, not `groupStatus`, not the roster page — which turned out to be the
+  // one page in the app reading client records through an unguarded query, and
+  // stayed that way because there was no id to open it with.
+  //
+  // Three Mondays: two behind TODAY so the hour carries real attendance, and
+  // one ahead so the roster has a session that can still be cancelled. Mondays
+  // because that is where this seed's biweekly clients pile up, so the busiest
+  // day the screenshot spec picks is a day with a group on it.
+  const groupDates = [QUARTER_START, '2026-08-10', addDays(TODAY, 6)];
+  const groupIds: string[] = [];
+
+  for (const date of groupDates) {
+    const slots = await availableSlots({
+      clinicianId: rosa.id, date, type: 'standard', modality: 'in_person',
+    });
+    // Late morning, so the group does not sit on top of the 09:00 the calendar
+    // picture opens with.
+    const startMinute = slots.find((m) => m >= 10 * 60);
+    if (startMinute === undefined) {
+      log(`no free hour for the skills group on ${date} — skipped`);
+      continue;
+    }
+
+    // Attendees keep their own treating clinician and their own standing slot,
+    // so anybody already booked at this hour is not free for the group. There
+    // is no database constraint against booking a client twice at once — the
+    // exclusion constraints are on the clinician and the room — so this is the
+    // seed's job rather than the schema's.
+    const busy = await prisma.appointment.findMany({
+      where: {
+        startAt: { lt: zonedToUtc(date, startMinute + 50) },
+        endAt: { gt: zonedToUtc(date, startMinute) },
+      },
+      select: { clientId: true },
+    });
+    const taken = new Set(busy.map((b) => b.clientId));
+    const attendees = clients.filter((c) => !taken.has(c.id)).slice(0, 6);
+    if (attendees.length < 3) {
+      log(`too few free clients for the skills group on ${date} — skipped`);
+      continue;
+    }
+
+    const group = await bookGroupSession(actor(rosa), {
+      clinicianId: rosa.id,
+      clientIds: attendees.map((c) => c.id),
+      date,
+      startMinute,
+      type: 'standard',
+      modality: 'in_person',
+      topic: 'Skills group',
+    });
+    groupIds.push(group.id);
+
+    // Attendance on the two that have already happened. Statuses are set
+    // directly, exactly as the quarter's history above is: this is fixture
+    // construction rather than a simulation of front desk clicking through it.
+    //
+    // Deliberately mixed, because a uniform roster cannot show what
+    // `groupStatus` is for: one person missing does not make the hour a
+    // no-show, and the chip has to read `completed` while the row that sorts
+    // first says otherwise.
+    if (date < TODAY) {
+      const roster = group.appointments;
+      for (const [i, a] of roster.entries()) {
+        const status = i === 0 ? 'no_show' : i === 1 ? 'late_cancelled' : 'completed';
+        await prisma.appointment.update({
+          where: { id: a.id },
+          data: {
+            status,
+            // The fee recorded at the time of service, which is what the
+            // superbill reads rather than the client's fee today — same
+            // convention as the quarter's history above.
+            chargeFeeCents: status === 'completed'
+              ? feeByClient.get(a.clientId) ?? settings.standardFeeCents
+              : settings.lateCancelFeeCents,
+            ...(status === 'late_cancelled'
+              ? { cancelledAt: zonedToUtc(date, startMinute - 60), cancelReason: 'unwell' }
+              : {}),
+          },
+        });
+      }
+    }
+  }
+  log(`${groupIds.length} skills-group sessions (6 attendees each, one hour, one room)`);
 
   // ── the demo, guaranteed ──────────────────────────────────────────────
   //

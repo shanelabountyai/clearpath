@@ -1,24 +1,19 @@
 import Link from 'next/link';
-import { prisma } from '../../../src/db';
+import { listTemplates } from '../../../src/forms/service';
 import { requireSession } from '../../../src/session';
 import type { TemplateSchema } from '../../../src/forms/schema';
 import type { ScoringRules } from '../../../src/forms/scoring';
 import { Badge, Card, PageHeader } from '../../../src/ui/primitives';
 import { publishRevision } from './actions';
+import { withDenial } from '@/src/ui/denied';
 
 export const dynamic = 'force-dynamic';
 
-export default async function FormsPage({ searchParams }: { searchParams: Promise<{ template?: string }> }) {
-  await requireSession();
+async function FormsPage({ searchParams }: { searchParams: Promise<{ template?: string }> }) {
+  const { actor } = await requireSession();
   const { template: selectedId } = await searchParams;
 
-  const templates = await prisma.formTemplate.findMany({
-    orderBy: [{ key: 'asc' }, { version: 'desc' }],
-    select: {
-      id: true, key: true, name: true, kind: true, version: true, schema: true, scoring: true,
-      _count: { select: { submissions: true } },
-    },
-  });
+  const templates = await listTemplates(actor);
 
   const latestByKey = new Map<string, (typeof templates)[number]>();
   for (const t of templates) if (!latestByKey.has(t.key)) latestByKey.set(t.key, t);
@@ -180,3 +175,9 @@ export default async function FormsPage({ searchParams }: { searchParams: Promis
     </>
   );
 }
+
+export default withDenial(FormsPage, {
+  title: 'Forms are not yours to edit',
+  children:
+    'A template is the questionnaire itself — the wording, the scoring, the version history. Reading a screener is a clinical act even before anyone has answered it, and the practice manager owns the versions.',
+});

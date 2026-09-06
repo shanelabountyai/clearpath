@@ -6,17 +6,18 @@ import { requireSession } from '../../../../src/session';
 import { minutesToHHMM, utcToZoned } from '../../../../src/time';
 import { Card, PageHeader, StatusChip, TierBanner } from '../../../../src/ui/primitives';
 import { cancelGroup } from '../actions';
+import { withDenial } from '@/src/ui/denied';
 import { Button } from '@/src/ui/primitives';
 
 export const dynamic = 'force-dynamic';
 
-export default async function GroupSessionPage({ params }: { params: Promise<{ id: string }> }) {
+async function GroupSessionPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  await requireSession();
+  const { actor } = await requireSession();
 
   let group;
   try {
-    group = await getGroupSession(id);
+    group = await getGroupSession(actor, id);
   } catch (e) {
     if (e instanceof NotFound) notFound();
     throw e;
@@ -69,3 +70,9 @@ export default async function GroupSessionPage({ params }: { params: Promise<{ i
     </>
   );
 }
+
+export default withDenial(GroupSessionPage, {
+  title: 'The roster is not yours to read',
+  children:
+    'A group is six clients’ records sharing an hour, so opening it is an access to each of them. The auditor sees that the access happened — every attendee gets their own row in the log — and not who was in the room.',
+});

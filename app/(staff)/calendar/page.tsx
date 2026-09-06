@@ -34,11 +34,24 @@ async function CalendarPage({
   const hours: number[] = [];
   for (let m = DAY_START; m <= DAY_END; m += 60) hours.push(m);
 
+  // Two numbers, because a group makes them differ. `sessions` counts client
+  // sessions — six people in a skills group are six sessions, six notes, six
+  // fees, and that is the number the practice runs on. `bookings` counts what
+  // is drawn: six attendees share one hour in one room, so they are one chip.
+  // Front desk counting seventeen chips under a heading that says twenty-two
+  // has to find the `×6` and do the arithmetic to reconcile them, and a caption
+  // that needs arithmetic is a caption that gets ignored. Said only when they
+  // differ, because on a day with no group it is the same number twice.
+  const bookings = new Set(day.sessions.map((s) => s.groupSessionId ?? s.id)).size;
+  const count = bookings === day.sessions.length
+    ? `${day.sessions.length} sessions`
+    : `${day.sessions.length} sessions in ${bookings} bookings`;
+
   return (
     <>
       <PageHeader
         title={`${WEEKDAYS[weekdayOf(date)]}, ${date}`}
-        subtitle={`${day.sessions.length} sessions · ${day.rooms.length} rooms`}
+        subtitle={`${count} · ${day.rooms.length} rooms`}
         actions={
           <div className="flex items-center gap-1.5">
             <DayLink date={addDays(date, -1)} label="← Previous" />

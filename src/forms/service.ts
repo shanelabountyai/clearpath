@@ -41,6 +41,32 @@ interface TemplateDraft {
  * Publish a new version. Past submissions keep pointing at the version they
  * were answered on, which is the whole reason this creates rather than updates.
  */
+/**
+ * Every template, newest version of each first.
+ *
+ * A questionnaire is not a client record, and this is still a matrixed
+ * resource: `form_template: read` is absent for front desk and for the auditor,
+ * and it was the page's own unguarded `prisma.formTemplate.findMany` that
+ * decided otherwise. The navigation hid the link from them, which is an
+ * affordance and not a control — the same arrangement as the booking form
+ * rendering the offered slots while the action took any minute it was handed.
+ *
+ * The write was never at risk: `publishTemplate` guards `create`, so a POST
+ * from a role that may not publish was already refused. Only the reading of it
+ * went unasked.
+ */
+export async function listTemplates(actor: Actor) {
+  return guarded({ actor, action: 'read', resource: 'form_template' }, (tx) =>
+    tx.formTemplate.findMany({
+      orderBy: [{ key: 'asc' }, { version: 'desc' }],
+      select: {
+        id: true, key: true, name: true, kind: true, version: true, schema: true, scoring: true,
+        _count: { select: { submissions: true } },
+      },
+    }),
+  );
+}
+
 export async function publishTemplate(actor: Actor, draft: TemplateDraft) {
   const latest = await prisma.formTemplate.findFirst({
     where: { key: draft.key },

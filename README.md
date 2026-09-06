@@ -20,7 +20,7 @@ protections is the lesson, claiming them would be the credibility-killer.
 
 ---
 
-![The calendar as the front desk sees it: five columns of named sessions with times, rooms and clinicians — the telehealth lane twice the width of a room column, because it is holding two sessions at the same hour and neither may be hidden behind the other — and a banner reading "Operational — names, times and rooms. Why anyone is here does not appear on this screen at any level of detail."](docs/screenshots/calendar-front-desk.png)
+![The calendar as the front desk sees it: five columns of named sessions with times, rooms and clinicians — the telehealth lane twice the width of a room column, because it is holding two sessions at the same hour and neither may be hidden behind the other. A skills group is one chip marked ×6 rather than six chips stacked on the same pixels, so the heading reads "22 sessions in 17 bookings" rather than leaving the reader to reconcile the two. A banner reads "Operational — names, times and rooms. Why anyone is here does not appear on this screen at any level of detail."](docs/screenshots/calendar-front-desk.png)
 
 ---
 
@@ -79,8 +79,8 @@ createdb clearpath_dev clearpath_test clearpath_e2e clearpath_shadow
 npm install
 npm run db:setup     # migrate all three, generate the client, seed dev + e2e
 npm run dev          # http://localhost:3700
-npm test             # 1,391 unit + integration tests
-npm run test:e2e     # 21 Playwright tests against a production build
+npm test             # 1,403 unit + integration tests
+npm run test:e2e     # 22 Playwright tests against a production build
 ```
 
 Local Postgres only, three databases and each for one job:

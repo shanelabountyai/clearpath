@@ -364,6 +364,65 @@ it('no ad-hoc role checks outside the auth module', () => {
   expect(offenders).toEqual([]);
 });
 
+/**
+ * A page that establishes who you are and never asks what you may do.
+ *
+ * `/groups/[id]` read `await requireSession();` — discarding the session — and
+ * then queried six clients' names and codes through an unguarded Prisma call.
+ * No permission check, no audit row, and the auditor could open the roster.
+ * `/forms` did the same with the questionnaire templates, leaning on the
+ * navigation to hide the link, which is an affordance and not a control.
+ *
+ * The route sweep cannot see this: with no guard there is no `Forbidden`, so
+ * there is no 500 and every route answers. Planting the bug back and running
+ * `denials.spec.ts` confirms it passes. What the two have in common is visible
+ * from the outside though — the call is made for its redirect and the actor is
+ * thrown away — and that is what this matches. It is a proxy rather than a
+ * proof: it cannot tell whether the actor that *is* bound gets used well. It
+ * catches the shape both of these had.
+ */
+/**
+ * Every `await requireSession()` whose answer is not assigned to anything: the
+ * call is being made for the redirect it performs, and the actor thrown away.
+ */
+const discardsSession = (src: string) =>
+  [...src.matchAll(/await\s+requireSession\s*\(\s*\)/g)].some(
+    (m) => !/=\s*$/.test(src.slice(0, m.index)),
+  );
+
+it('no page establishes an identity and then discards it', () => {
+  const offenders: string[] = [];
+  for (const f of readdirSync('app', { recursive: true, encoding: 'utf8' })) {
+    const path = `app/${f}`;
+    if (!/\.tsx?$/.test(f) || !statSync(path).isFile()) continue;
+    if (discardsSession(readFileSync(path, 'utf8'))) offenders.push(path);
+  }
+  expect(offenders).toEqual([]);
+});
+
+it('recognises a discarded session however it is written', () => {
+  // The lint's own fixtures, for the reason the role-check lint grew them: a
+  // regex nobody has watched fail is not a check.
+  for (const bad of [
+    '  await requireSession();',
+    'await requireSession()\n  const rows = await prisma.client.findMany()',
+    '\tawait requireSession();',
+    '  await requireSession ( ) ;',
+    'if (x) await requireSession();',
+  ]) {
+    expect(discardsSession(bad), bad).toBe(true);
+  }
+  for (const good of [
+    '  const { actor } = await requireSession();',
+    '  const session = await requireSession();',
+    '  const { actor, user } = await requireSession();',
+    '  const s=await requireSession();',
+    '  const { actor } =\n    await requireSession();',
+  ]) {
+    expect(discardsSession(good), good).toBe(false);
+  }
+});
+
 describe('caseload scoping', () => {
   it('narrows clinical roles to their own clients', () => {
     for (const role of ['therapist', 'associate', 'supervisor'] as Role[]) {

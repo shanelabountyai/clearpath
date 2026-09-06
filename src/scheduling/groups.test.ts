@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../db';
-import { Conflict, Forbidden } from '../errors';
+import { Conflict, Forbidden, NotFound } from '../errors';
 import { fixedClock, DAY } from '../clock';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { bookAppointment, rescheduleAppointment } from './booking';
@@ -163,7 +163,7 @@ describe('attendance and notes are per attendee', () => {
 
     await setStatus(actor(desk), absent!.id, 'no_show', { clock: fixedClock('2026-09-01T20:00:00Z') });
 
-    const after = await getGroupSession(group.id);
+    const after = await getGroupSession(actor(desk), group.id);
     expect(after.appointments.find((a) => a.id === absent!.id)!.status).toBe('no_show');
     expect(present.every((p) => after.appointments.find((a) => a.id === p.id)!.status === 'scheduled')).toBe(true);
   });
@@ -226,6 +226,83 @@ describe('attendance and notes are per attendee', () => {
   });
 });
 
+describe('reading the roster', () => {
+  /**
+   * A roster is a list of clients by name and code, so opening one is an access
+   * to each of their records. This read went through no permission check and
+   * left no audit row — the only read in the application that did not — and
+   * nothing noticed, because three things lined up: the denial sweep skips
+   * `[id]` routes for want of a real record, the seed created no group for one
+   * to exist, and this file called a getter that took no actor to pass.
+   */
+  it('gives front desk the roster, because names and times are operational', async () => {
+    await makeRoom('Room 1');
+    const group = await book((await attendees(3)).map((c) => c.id));
+    const read = await getGroupSession(actor(desk), group.id);
+    expect(read.appointments).toHaveLength(3);
+  });
+
+  it('refuses the auditor, who sees the access and never the room', async () => {
+    await makeRoom('Room 1');
+    const group = await book((await attendees(3)).map((c) => c.id));
+    const auditorUser = await makeUser('auditor');
+
+    await expect(getGroupSession(actor(auditorUser), group.id))
+      .rejects.toBeInstanceOf(Forbidden);
+  });
+
+  it('logs one row per attendee, on the read and on the refusal alike', async () => {
+    await makeRoom('Room 1');
+    const group = await book((await attendees(3)).map((c) => c.id));
+    const auditorUser = await makeUser('auditor');
+    // Not cleared between the two halves: the table is append-only and the
+    // database refuses DELETE on it, which is the rule doing its job. The reads
+    // are told apart by `resourceId` instead.
+    const rowsFor = (allowed: boolean) =>
+      prisma.auditEvent.findMany({ where: { allowed, resourceId: group.id } });
+
+    await getGroupSession(actor(desk), group.id);
+    const granted = await rowsFor(true);
+    expect(granted).toHaveLength(3);
+    expect(new Set(granted.map((r) => r.clientId)).size).toBe(3);
+
+    await expect(getGroupSession(actor(auditorUser), group.id)).rejects.toBeInstanceOf(Forbidden);
+    const denied = await rowsFor(false);
+    // One denial, not three: `guardedAll` refuses at the first request it
+    // cannot grant, and the whole page is refused rather than a name quietly
+    // dropped from a list.
+    expect(denied).toHaveLength(1);
+    expect(denied[0]).toMatchObject({ actorId: auditorUser.id, resource: 'appointment' });
+  });
+
+  it('is a not-found for an id that names nothing, for everybody', async () => {
+    // Existence before permission, matching `getAppointment`: there is no
+    // record for the matrix to have an opinion about.
+    const auditorUser = await makeUser('auditor');
+    await expect(getGroupSession(actor(desk), 'nope')).rejects.toBeInstanceOf(NotFound);
+    await expect(getGroupSession(actor(auditorUser), 'nope')).rejects.toBeInstanceOf(NotFound);
+  });
+
+  it('still guards an hour everybody has been moved out of', async () => {
+    // The page renders this case — "Everyone has been moved out of this
+    // session" — so it has to survive having no client to name, and it must
+    // not become the one unguarded door by doing so.
+    await makeRoom('Room 1');
+    const group = await book((await attendees(1)).map((c) => c.id));
+    const only = group.appointments[0]!;
+    await prisma.availability.create({
+      data: { userId: clinician.id, weekday: 4, startMinute: 540, endMinute: 1020 },
+    });
+    await rescheduleAppointment(actor(desk), only.id, { date: '2026-09-03', startMinute: THREE_PM });
+
+    const auditorUser = await makeUser('auditor');
+    await expect(getGroupSession(actor(auditorUser), group.id)).rejects.toBeInstanceOf(Forbidden);
+
+    const emptied = await getGroupSession(actor(desk), group.id);
+    expect(emptied.appointments).toEqual([]);
+  });
+});
+
 describe('leaving and ending a group', () => {
   it('drops a rescheduled attendee out of the group', async () => {
     await makeRoom('Room 1');
@@ -236,7 +313,7 @@ describe('leaving and ending a group', () => {
 
     const row = await prisma.appointment.findUniqueOrThrow({ where: { id: moved!.id } });
     expect(row.groupSessionId).toBeNull();
-    expect((await getGroupSession(group.id)).appointments).toHaveLength(2);
+    expect((await getGroupSession(actor(desk), group.id)).appointments).toHaveLength(2);
   });
 
   it('will not let two rescheduled attendees land on each other', async () => {

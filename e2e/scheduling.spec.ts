@@ -56,6 +56,32 @@ test.describe('the calendar', () => {
     expect(boxes.length).toBeGreaterThan(names!.split(',').length);
   });
 
+  test('a group is one chip for the hour and the heading says so', async ({ page }) => {
+    // Six attendees are six client sessions and one booking of one room. Drawn
+    // literally they are six chips stacked on identical pixels, which is what a
+    // double-booking looks like — and counted literally the heading is a number
+    // nobody can reconcile with what is on the screen.
+    await actAs(page, USERS.frontDesk);
+    const date = sql(`
+      select to_char(a."startAt", 'YYYY-MM-DD') from "Appointment" a
+      where a."groupSessionId" is not null order by a."startAt" limit 1`);
+    await page.goto(`/calendar?date=${date}`);
+
+    const rows = Number(sql(`
+      select count(*) from "Appointment"
+      where "startAt" >= timestamptz '${date} 00:00 America/New_York'
+        and "startAt" <  timestamptz '${date} 00:00 America/New_York' + interval '1 day'`));
+    const chips = await page.locator('a[href^="/appointments/"], a[href^="/groups/"]').count();
+
+    expect(chips).toBeLessThan(rows);
+    await expect(page.getByText(`${rows} sessions in ${chips} bookings`)).toBeVisible();
+
+    // One chip, carrying the size of the roster, linking to the roster.
+    const group = page.locator('a[href^="/groups/"]');
+    await expect(group).toHaveCount(1);
+    await expect(group).toContainText('×6');
+  });
+
   test('a cancellation states its consequence before the click', async ({ page }) => {
     await actAs(page, USERS.frontDesk);
     await page.goto(`/calendar?date=${nextMonday()}`);

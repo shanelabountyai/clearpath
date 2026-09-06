@@ -6,7 +6,7 @@ import { fixedClock, DAY } from '../clock';
 import { consentToTreat, wellbeingCheckIn } from './fixtures';
 import {
   acknowledgeAlert, formStatus, getSubmission, issueForm, listSubmissions,
-  myAlerts, openForm, publishTemplate, saveDraft, submitForm,
+  listTemplates, myAlerts, openForm, publishTemplate, saveDraft, submitForm,
 } from './service';
 
 let admin: Awaited<ReturnType<typeof makeUser>>;
@@ -247,5 +247,46 @@ describe('consent', () => {
     const stored = await prisma.formSubmission.findUniqueOrThrow({ where: { id: submissionId } });
     expect(stored.signatureName).toBe('Test Client 001');
     expect(stored.signedAt).not.toBeNull();
+  });
+});
+
+describe('reading the templates', () => {
+  /**
+   * The page listing them queried Prisma directly, so the matrix never got
+   * asked and the navigation was the only thing keeping anybody out — an
+   * affordance standing in for a control. The write was never exposed:
+   * `publishTemplate` guards `create`, so a POST from the wrong role was
+   * already refused. It was the reading that went unasked.
+   */
+  it('lets a clinician read the questionnaire they administer', async () => {
+    await publishScreener();
+    const templates = await listTemplates(actor(therapist));
+    expect(templates.map((t) => t.key)).toContain('wellbeing-check-in');
+  });
+
+  it('lets the practice manager, who owns the versions', async () => {
+    await publishScreener();
+    expect(await listTemplates(actor(admin))).not.toHaveLength(0);
+  });
+
+  it.each(['front_desk', 'auditor'] as const)('refuses %s', async (role) => {
+    await publishScreener();
+    const who = await makeUser(role);
+    await expect(listTemplates(actor(who))).rejects.toBeInstanceOf(Forbidden);
+  });
+
+  it('logs the read and the refusal alike', async () => {
+    await publishScreener();
+    const before = await prisma.auditEvent.count({ where: { resource: 'form_template', action: 'read' } });
+
+    await listTemplates(actor(therapist));
+    await expect(listTemplates(actor(desk))).rejects.toBeInstanceOf(Forbidden);
+
+    const rows = await prisma.auditEvent.findMany({
+      where: { resource: 'form_template', action: 'read' },
+      orderBy: { at: 'asc' },
+    });
+    expect(rows).toHaveLength(before + 2);
+    expect(rows.map((r) => r.allowed).slice(-2)).toEqual([true, false]);
   });
 });
