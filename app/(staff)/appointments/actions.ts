@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { requireSession } from '../../../src/session';
-import { cancelAppointment, setStatus, type Status } from '../../../src/scheduling/lifecycle';
+import { cancelAppointment, setStatus, waiveFee, type FeeWaiveReason, type Status } from '../../../src/scheduling/lifecycle';
 import { rescheduleAppointment } from '../../../src/scheduling/booking';
 import { createProgressNote } from '../../../src/notes/service';
 import { Conflict } from '../../../src/errors';
@@ -19,6 +19,18 @@ export async function cancelSession(formData: FormData) {
   const { actor } = await requireSession();
   const id = String(formData.get('appointmentId'));
   await cancelAppointment(actor, id, { reason: String(formData.get('reason') ?? '') || undefined });
+  revalidatePath(`/appointments/${id}`);
+}
+
+/**
+ * The reversal that makes the automatic charge shippable. Authorization is the
+ * matrix's — `fee: waive`, practice manager only — so this handler performs no
+ * check of its own and a front-desk attempt lands in the audit log as a denial.
+ */
+export async function waiveSessionFee(formData: FormData) {
+  const { actor } = await requireSession();
+  const id = String(formData.get('appointmentId'));
+  await waiveFee(actor, id, String(formData.get('reason')) as FeeWaiveReason);
   revalidatePath(`/appointments/${id}`);
 }
 

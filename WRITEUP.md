@@ -19,6 +19,8 @@ Kept as the work happens, not reconstructed afterwards.
 8. **The client portal** — a door sized to what a leaked link would disclose.
 9. **Where authentication would attach** — the one feature whose right build
    was not building it.
+10. **The non-response fee** — an automatic charge, and the four separate
+   things that stop it reaching somebody who does not deserve it.
 
 ---
 
@@ -506,6 +508,79 @@ opens.
 
 ---
 
+## 10. The non-response fee
+
+This is the only place in Clearpath where software takes money with no person in
+the loop, and almost all of the work was in the guards rather than in the rule.
+The rule itself is four lines: at `startAt + graceMinutes`, an appointment still
+sitting at `confirmation = 'pending'` becomes `no_response`, and if it is also
+still `scheduled` it becomes `no_show` and takes the fee.
+
+**Two functions sharing nothing.** The send cadence and the non-response sweep
+were the obvious candidates for one job with two branches — same domain, same
+settings, same clock. They are separate modules and separate npm scripts because
+they are due at different times, fail in different ways, and only one of them can
+bill somebody. `nonresponse:run` can be stopped without stopping the reminders,
+which is what a practice reviewing its client agreement will actually want.
+
+**Silence is recorded unconditionally; only the money is gated.** Four
+independent things can stop the charge — the appointment is not at `scheduled`,
+the client became unreachable, `autoNoShowOnNoResponse` is off, or the
+`confirmation` was never `pending` to begin with — and none of them stop the
+`no_response` write. That is deliberate: the communication fact is the evidence.
+A practice that turns the money off still gets the whole loop, and a practice
+that turns it back on has a quarter of data about what non-response actually
+predicted.
+
+**The check-in always wins.** The sweep touches `status` only from `scheduled`,
+so a client marked `arrived` at five past — or mid-session, or already completed
+— is untouchable. The spec that matters is the one where a client answers
+nothing, walks in, and is charged the session fee and nothing more. Without the
+two-field split that row would have needed no code at all to go wrong.
+
+**The eligibility rule is asked again at the moment of charging.** The horizon
+only looks forward, so a client who switched to `reminderPreference: 'none'`
+after their last reminder went out is never pulled back to `not_required` by it.
+The sweep is the last place that safety setting can still bite, so it calls
+`confirmationRequired` before it charges — the same pure function the send path
+asks. Recording the silence is not gated on it; only the fee is.
+
+**`noShowFeeCents` shipped changing nothing.** It defaults to `9000`, identical
+to `lateCancelFeeCents`, so the migration and the policy change are reviewable
+separately and a regression spec pins the old numbers on both sides of the
+change. A practice charging 50% for a late cancel and 100% for a no-show is
+ordinary, and one field could not say both.
+
+**The waiver ships in the same commit as the charge.** An automatic charge with
+no reversal is not shippable, and the reversal is not front desk's — they take
+the phone call, but deciding not to charge is a management decision. That was
+already a comment in `lifecycle.ts`; `fee: waive` in the matrix is what makes it
+true, and the front-desk attempt is a 403 with a row in the audit log. The waiver
+zeroes the fee and touches neither `status` nor `confirmation`: the client still
+did not turn up, and the practice chose not to charge. The original amount rides
+in the audit row's reason code (`client_disputed:9000`) rather than being
+overwritten out of existence — and that table is append-only by a database rule,
+so the waiver cannot erase what it reversed.
+
+**A second structural lint, because this one has money attached.** Everything
+above tests the sweep that exists. `no_response` is the only confirmation value a
+fee can be derived from, so the lint is a grep over `src/` and `app/`: write that
+value, and you name `confirmationRequired` in the same module. It fails on a
+planted violation, verified by planting one. It exists for the batch job somebody
+writes next month that sets `no_response` from a query of its own — every
+behavioural spec in the suite would still pass, because none of them call it.
+
+**What it still does not do.** The fee's precondition is an `OutboxMessage` row,
+which proves the practice *intended* to ask. Nothing sends, so nothing proves it
+arrived. When a carrier is attached the precondition has to become a delivery
+receipt, or the practice charges clients for its own failed sends — named in the
+PRD's P2 list, and the single biggest honesty upgrade this feature has available.
+The policy may also simply be the wrong product: in counseling, not answering
+messages correlates with the reason for attending, so this fee falls hardest on
+the clients least able to answer. That is a clinical decision rather than an
+engineering one, and the settings page says so beside the switch.
+
+
 ## Decisions log
 
 | Decision | Why |
@@ -552,7 +627,7 @@ opens.
 | The horizon is one transaction per appointment, not one per stage | The messages, their reminder rows, the promotion to `pending` and the audit row are one fact: the practice asked. Committing the outbox row and failing before the reminder row would leave a message a client received with nothing recording that it was sent, and committing the promotion without the messages would make `no_response` — and the fee — reachable with no evidence behind it. Losing a race to a concurrent run costs that appointment one cycle, which is the cheap half of the trade |
 | The `@@unique([appointmentId, stage])` key is the idempotency guarantee; the pre-filter is only an optimisation | Reading the existing reminder rows and skipping the stages already there makes a second run cheap, but it decides on data read before the transaction opened — two runs a millisecond apart both read zero rows and both queue. So the constraint is what actually holds, and a `P2002` is read as "the other run got there first" rather than as a failure. The same discipline as `Appointment.occurrenceKey`, for the same reason |
 | Switching to `none` mid-cadence pulls a live `pending` back to `not_required` | Stopping the remaining stages is not enough. A row left at `pending` is a row the non-response sweep will find, and it would charge a client for not answering a question the practice had already agreed to stop asking. The safety setting has to reach backwards into the state the cadence already wrote, or it is only a setting about future messages |
-| The e2e fixture for the door is built through Prisma, not as raw SQL | The pg adapter stores a `Date` as its UTC wall clock labelled in the session's zone. Write and read cancel out, so the application is self-consistent and every unit spec passes — but a fixture row inserted by hand with `now()` reads back skewed by the machine's UTC offset, and an appointment two hours away came back as already past and vanished from the client's door. The same skew reaches any column the *database* clock fills: `createdAt` defaults to `CURRENT_TIMESTAMP`, and `createdAt` is what `dueStages` calls the notice a booking had. On a machine west of Greenwich that reads too early, which widens eligibility rather than narrowing it — the wrong direction for a rule a fee depends on. Named here and carried into the money phase; it is invisible on a UTC box, which is exactly why it is worth writing down |
+| The e2e fixture for the door is built through Prisma, not as raw SQL | The pg adapter stores a `Date` as its UTC wall clock labelled in the session's zone. Write and read cancel out, so the application is self-consistent and every unit spec passes — but a fixture row inserted by hand with `now()` reads back skewed by the machine's UTC offset, and an appointment two hours away came back as already past and vanished from the client's door. The suspicion carried into the money phase was that the same skew reaches any column the *database* clock fills — `createdAt` defaults to `CURRENT_TIMESTAMP`, and `createdAt` is what `dueStages` calls the notice a booking had, so a fee would have rested on it. **Measured in phase 4, and it does not.** A row whose `createdAt` Postgres filled and a row whose `createdAt` the application wrote both read back through Prisma with zero skew on a UTC−5 laptop, and the notice `dueStages` sees for a booking six days out is 6.0000 days. The skew appears only through `$queryRaw`, where Prisma's own type handling is bypassed — and the only two raw statements in the codebase are a `pg_tables` lookup and an advisory lock, neither of which moves a timestamp. So the finding is real and narrower than it looked: it is a rule about hand-written SQL, not about `CURRENT_TIMESTAMP`, and the four-call-site refactor it seemed to demand was not needed. Worth keeping because the wrong version of it is expensive and, on a UTC box, untestable |
 | The required response is a tap on a link, not a `YES` texted back | A message demanding a reply is more conspicuous on a lock screen than one that does not, and conspicuousness is not vocabulary — the deny-list governs words and cannot make a compulsory answer discreet. A keyword reply also opens an inbound channel front desk monitors, which a client can answer with a crisis disclosure. A link is one tap, works the same on SMS and email, needs no inbound channel at all, and puts the fee disclosure on a page where it can be read before it applies |
 | The reminder carries the existing `PortalLink`, not a new per-appointment token | A second token type is a second expiry policy, a second revocation story, a second audit rule and a second thing to get wrong. The blast radius grows honestly instead: a forwarded link can now see appointment times, request a reschedule, **and** cancel — bounded by `classifyCancellation`, unable to reach another client's row, and every use on the record with the client as the actor |
 | A decline cancels, though the reschedule request only asks | The portal's "it requests, it never books" rule is about creating commitments a person should see being made. A decline destroys one, and the practice's goal is a calendar that tells the truth — an hour the client has said they will not attend has to free the room, or the feature is theatre. The rail is that it routes through the same `cancelAppointment` front desk uses, so the 24-hour policy applies identically whoever clicked |
@@ -560,6 +635,14 @@ opens.
 | The fee interstitial is a second tap, and the first tap changes nothing | Declining inside the late-cancel window is chargeable, so the first tap asks the server, the server decides from the clock, and the client is shown the amount in dollars before anything is cancelled. Outside the window there is nothing to disclose and the decline is one tap. Same code path, disclosure in front of one of them — the policy becomes something the client is told rather than something they discover |
 | The portal token is re-rolled until it passes the deny-list | Once a link is substituted into a client-facing body, `assertDiscreet` scans the random token too, and 32 base64url characters hit a four-letter term like `ptsd` about once in 36,000 — roughly twice a year at this feature's volume, as a throw in the middle of a horizon run. One `while` in the generator removes the class for every template rather than for the one that surfaced it |
 | The cadence is a script and a function, with no scheduler dependency | Due times derive from `startAt` and the injected clock, so the job is idempotent and the schedule is an implementation detail of whatever calls it — cron, a timer, a hosted trigger, or a person typing `npm run reminders:run`. A missed hour costs lateness and nothing else, and the whole five-day cadence runs in a test in a millisecond because the clock is an argument |
+| The non-response sweep is its own module and its own script, not a second branch of the cadence | They are due at different times, fail in different ways, and only one of them can bill somebody. Splitting them means the money half can be stopped without stopping the reminders — which is exactly what a practice reviewing its client agreement will ask for, and it should be a command they do not run rather than a code change |
+| The sweep records `no_response` whatever else it does, and gates only the money | The communication fact is the evidence. Four independent things can stop the charge — not at `scheduled`, client now unreachable, the flag off, never `pending` — and none of them stops the write. A practice that turns the money off gets the whole feature minus the money, plus a quarter of data about what non-response actually predicted before turning it on |
+| The sweep asks `confirmationRequired` again at the moment of charging | The horizon only looks forward, so a client who switched to `none` after their last reminder is never pulled back to `not_required` by it. This is the last place that safety setting can still bite, and the fee is the thing it is protecting them from. It gates the money only: the silence is still recorded |
+| The `no_show` transition goes through `setStatus`, so the sweep writes no status of its own | The existing lint says `status: 'no_show'` is written in one file, and the automatic path is precisely the one that would have been tempting to exempt. Routing through `setStatus` also means a sweep-set no-show and a human-set one derive the same fee from the same field — the policy is about the fact, not about who noticed it |
+| `noShowFeeCents` defaults to the late-cancel figure, so the field changed nothing the day it shipped | The migration and the policy change are then reviewable independently, and a regression spec pins the existing fixtures on both sides of it. A practice charging 50% for a late cancel and 100% for a no-show is ordinary; one field could not express both, and the second field is the thing they can raise without a code change |
+| The waiver is a new `waive` action on `fee`, not an `update` | Reversing money the practice already decided to charge is a different power from setting a sliding-scale rate, and the whole argument of `permissions.ts` is that a power nobody named is a power nobody reviewed. Front desk keeps `fee: read` and gets a 403 on the waiver, logged — which turns the existing "waiving a fee is a management decision" comment from an intention into a rule |
+| The waived amount goes in the audit row's reason code, and the waiver leaves `status` and `confirmation` alone | The client still did not turn up; the practice chose not to charge, and the record should say both. Zeroing `chargeFeeCents` would otherwise be the only trace of what was reversed, and the audit table is append-only by a database rule — so the amount survives in the one place the waiver cannot rewrite |
+| `no_response` writes get their own structural lint | It is the only confirmation value a fee can be derived from, and `confirmationRequired` is the only thing between it and a client who was never asked. The behavioural specs cover the sweep that exists; they say nothing about the batch job written next month that sets `no_response` from a query of its own and passes every one of them. Grep over `src/` and `app/`, verified by planting a violation — the same discipline as the author-only and `no_show` rules |
 
 ## What this project deliberately is not
 

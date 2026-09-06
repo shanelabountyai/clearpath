@@ -5,7 +5,7 @@ import { prisma } from '../db';
 import { Forbidden } from '../errors';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { bookAppointment } from './booking';
-import { attendanceSummary, canTransition, cancelAppointment, classifyCancellation, setStatus, TRANSITIONS, type Status } from './lifecycle';
+import { attendanceSummary, canTransition, cancelAppointment, classifyCancellation, setStatus, TRANSITIONS, waiveFee, type Status } from './lifecycle';
 
 const TUESDAY = '2026-09-01';
 const THREE_PM = 15 * 60;
@@ -200,6 +200,136 @@ describe('against the database', () => {
       expect(out.chargeFeeCents).toBe(18000); // the session, not the no-show policy
     });
   });
+  /**
+   * P0-6. Two policies, two fields. The field shipped at the late-cancel figure
+   * so that the migration changed no behaviour on the day it landed (D-09) —
+   * the first test here is what pins that, and it passed before the change as
+   * well as after it.
+   */
+  describe('the no-show fee is its own money', () => {
+    it('is unchanged while both fields sit at their defaults', async () => {
+      const appt = await book();
+      const out = await setStatus(actor(desk), appt.id, 'no_show');
+      expect(out.chargeFeeCents).toBe(9000);
+    });
+
+    it('charges the no-show policy, not the late-cancel one', async () => {
+      await settings({ noShowFeeCents: 18000, lateCancelFeeCents: 9000 });
+
+      const missed = await book();
+      expect((await setStatus(actor(desk), missed.id, 'no_show')).chargeFeeCents).toBe(18000);
+
+      const bailed = await bookAppointment(actor(desk), {
+        clientId: client.id, clinicianId: therapist.id, date: TUESDAY,
+        startMinute: 16 * 60, type: 'standard', modality: 'in_person',
+      });
+      const out = await cancelAppointment(actor(desk), bailed.id, {
+        clock: fixedClock(new Date(SESSION_START.getTime() - 3 * HOUR)),
+      });
+      expect(out.status).toBe('late_cancelled');
+      expect(out.chargeFeeCents).toBe(9000);
+    });
+
+    it('keeps summing both into the chargeable total', async () => {
+      await settings({ noShowFeeCents: 18000, lateCancelFeeCents: 9000 });
+      const missed = await book();
+      await setStatus(actor(desk), missed.id, 'no_show');
+      const bailed = await bookAppointment(actor(desk), {
+        clientId: client.id, clinicianId: therapist.id, date: TUESDAY,
+        startMinute: 16 * 60, type: 'standard', modality: 'in_person',
+      });
+      await cancelAppointment(actor(desk), bailed.id, {
+        clock: fixedClock(new Date(SESSION_START.getTime() - 3 * HOUR)),
+      });
+
+      const summary = await attendanceSummary(actor(therapist), client.id);
+      expect(summary.chargeableFeeCents).toBe(27000);
+    });
+
+    it('is integer cents, never a float', async () => {
+      const appt = await book();
+      const out = await setStatus(actor(desk), appt.id, 'no_show');
+      expect(Number.isInteger(out.chargeFeeCents)).toBe(true);
+    });
+  });
+
+  /**
+   * P0-7. An automatic charge without a reversal is not shippable. The sweep
+   * can now bill a client nobody spoke to, so the reversal ships in the same
+   * phase — and it is the practice manager's, not the front desk's.
+   */
+  describe('waiving a fee', () => {
+    let admin: Awaited<ReturnType<typeof makeUser>>;
+    const charged = async () => {
+      const appt = await book();
+      return setStatus(actor(desk), appt.id, 'no_show');
+    };
+
+    beforeEach(async () => {
+      admin = await makeUser('admin');
+    });
+
+    it('zeroes the fee and records who decided, and why', async () => {
+      const appt = await charged();
+      const clock = fixedClock(new Date(SESSION_START.getTime() + 25 * HOUR));
+
+      const out = await waiveFee(actor(admin), appt.id, 'goodwill', { clock });
+
+      expect(out.chargeFeeCents).toBe(0);
+      expect(out.feeWaivedById).toBe(admin.id);
+      expect(out.feeWaiveReason).toBe('goodwill');
+      expect(out.feeWaivedAt).toEqual(clock.now());
+    });
+
+    it('leaves the attendance record exactly as it was', async () => {
+      const appt = await charged();
+      await prisma.appointment.update({ where: { id: appt.id }, data: { confirmation: 'no_response' } });
+
+      const out = await waiveFee(actor(admin), appt.id, 'client_disputed');
+
+      // The client still did not turn up; the practice chose not to charge.
+      expect(out.status).toBe('no_show');
+      expect(out.confirmation).toBe('no_response');
+    });
+
+    it('leaves the original amount recoverable from the audit trail', async () => {
+      const appt = await charged();
+      await waiveFee(actor(admin), appt.id, 'practice_error');
+
+      const [row] = await prisma.auditEvent.findMany({ where: { resource: 'fee', action: 'waive' } });
+      expect(row).toMatchObject({
+        allowed: true, actorId: admin.id, resourceId: appt.id, clientId: client.id,
+        reason: 'practice_error:9000',
+      });
+    });
+
+    it('is denied to front desk, and the denial is logged', async () => {
+      const appt = await charged();
+
+      await expect(waiveFee(actor(desk), appt.id, 'goodwill')).rejects.toBeInstanceOf(Forbidden);
+
+      expect((await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } })).chargeFeeCents).toBe(9000);
+      const [row] = await prisma.auditEvent.findMany({ where: { resource: 'fee', action: 'waive' } });
+      expect(row).toMatchObject({ allowed: false, actorRole: 'front_desk', clientId: client.id });
+    });
+
+    it('is denied to the treating clinician too — it is a management decision', async () => {
+      const appt = await charged();
+      await expect(waiveFee(actor(therapist), appt.id, 'emergency')).rejects.toBeInstanceOf(Forbidden);
+    });
+
+    it('refuses when there is no fee to waive', async () => {
+      const appt = await book();
+      await expect(waiveFee(actor(admin), appt.id, 'goodwill')).rejects.toMatchObject({ code: 'no_fee' });
+    });
+
+    it('refuses to waive the same fee twice', async () => {
+      const appt = await charged();
+      await waiveFee(actor(admin), appt.id, 'goodwill');
+      await expect(waiveFee(actor(admin), appt.id, 'goodwill')).rejects.toMatchObject({ code: 'already_waived' });
+    });
+  });
+
 });
 
 /**

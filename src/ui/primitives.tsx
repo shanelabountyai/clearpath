@@ -154,6 +154,23 @@ export const STATUS_META: Record<string, { label: string; glyph: string; tone: T
 };
 
 /**
+ * The other column, and deliberately a quieter treatment than status.
+ *
+ * "Did you answer my message" is not "were you in the room" (D-02), and the
+ * page must not let a reader collapse them at a glance — so this renders as a
+ * plain badge beside the status chip rather than as a second chip competing
+ * with it. `no_response` is a warning rather than a danger: it is the fact the
+ * fee rests on, but the fee is the status chip's business.
+ */
+export const CONFIRMATION_META: Record<string, { label: string; glyph: string; tone: Tone }> = {
+  not_required: { label: 'Not asked', glyph: '–', tone: 'neutral' },
+  pending: { label: 'Awaiting reply', glyph: '⋯', tone: 'info' },
+  confirmed: { label: 'Client confirmed', glyph: '✓', tone: 'success' },
+  declined: { label: 'Client declined', glyph: '✕', tone: 'neutral' },
+  no_response: { label: 'No reply', glyph: '?', tone: 'warning' },
+};
+
+/**
  * `no_show` and `late_cancelled` share a hue and a tone by design - both are
  * red, both are bad news - but both also take money, and money must not hang
  * off a glyph difference alone at 11.5px. The chargeable treatment is a hatch

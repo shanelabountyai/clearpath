@@ -6,6 +6,9 @@ import { clientTarget } from '../clients/repository';
 import { Conflict, NotFound } from '../errors';
 import type { Confirmation } from './confirmation';
 
+/** A category the practice reports on, never free text on a money reversal. */
+export type FeeWaiveReason = 'practice_error' | 'client_disputed' | 'emergency' | 'goodwill';
+
 export type Status =
   | 'scheduled' | 'confirmed' | 'arrived' | 'in_session'
   | 'completed' | 'no_show' | 'cancelled' | 'late_cancelled';
@@ -57,6 +60,9 @@ async function loadSettings() {
       id: 1, name: 'Stillwater Counseling', standardFeeCents: 18000,
       lateCancelWindowHours: 24, lateCancelFeeCents: 9000,
       recurrenceHorizonDays: 90, continuityGapDays: 21,
+      // Ships at the late-cancel figure, so the field changes nothing the day
+      // it lands and the policy change stays reviewable on its own (D-09).
+      noShowFeeCents: 9000,
     }
   );
 }
@@ -66,7 +72,17 @@ export async function setStatus(
   actor: Actor,
   appointmentId: string,
   to: Status,
-  opts: { reason?: string; clock?: Clock; confirmation?: Confirmation } = {},
+  opts: {
+    reason?: string;
+    clock?: Clock;
+    confirmation?: Confirmation;
+    /**
+     * A reason CODE for the audit row. Deliberately not `reason`, which is
+     * operational free text a person typed: the audit log is read by the one
+     * role that may not open a record, so only codes go in it.
+     */
+    auditReason?: string;
+  } = {},
 ) {
   const clock = opts.clock ?? systemClock;
   const appt = await prisma.appointment.findUnique({ where: { id: appointmentId } });
@@ -86,9 +102,10 @@ export async function setStatus(
     data.cancelledById = actor.id;
     data.cancelReason = opts.reason ?? null;
   }
-  if (to === 'late_cancelled' || to === 'no_show') {
-    data.chargeFeeCents = settings.lateCancelFeeCents;
-  }
+  // Two policies, two fields. A practice charging 50% for a late cancel and
+  // 100% for a no-show is ordinary, and one field could not say both.
+  if (to === 'late_cancelled') data.chargeFeeCents = settings.lateCancelFeeCents;
+  if (to === 'no_show') data.chargeFeeCents = settings.noShowFeeCents;
   if (to === 'completed') {
     const client = await prisma.client.findUnique({ where: { id: appt.clientId }, select: { feeCents: true } });
     data.chargeFeeCents = client?.feeCents ?? settings.standardFeeCents;
@@ -102,6 +119,7 @@ export async function setStatus(
     {
       actor, action: 'update', resource: 'appointment',
       resourceId: appointmentId, clientId: appt.clientId,
+      ...(opts.auditReason ? { reason: opts.auditReason } : {}),
       // Whose row this is. Staff roles decide on `always` and ignore it; it is
       // what lets the token door reach one appointment and no other.
       target: { ownerClientId: appt.clientId },
@@ -156,5 +174,52 @@ export async function attendanceSummary(actor: Actor, clientId: string) {
           .reduce((sum, r) => sum + (r._sum.chargeFeeCents ?? 0), 0),
       };
     },
+  );
+}
+
+/**
+ * Reverse a fee the practice decided to charge. Practice manager only.
+ *
+ * An automatic charge without a reversal is not shippable — the sweep can now
+ * bill a client nobody spoke to, so somebody has to be able to undo it, and
+ * the person who can is not the person who took the phone call. Front desk is
+ * denied here and the denial is on the record, which is what turns the comment
+ * on `classifyCancellation` from an intention into a rule.
+ *
+ * `status` and `confirmation` are deliberately untouched. The client still did
+ * not turn up; the practice chose not to charge for it, and the record should
+ * say both. The original amount rides in the audit row's reason code rather
+ * than being overwritten out of existence — that row is append-only, so the
+ * waiver cannot erase what it reversed.
+ */
+export async function waiveFee(
+  actor: Actor,
+  appointmentId: string,
+  reason: FeeWaiveReason,
+  opts: { clock?: Clock } = {},
+) {
+  const appt = await prisma.appointment.findUnique({ where: { id: appointmentId } });
+  if (!appt) throw new NotFound('Appointment');
+  if (appt.chargeFeeCents === null) throw new Conflict('There is no fee to waive', 'no_fee');
+  if (appt.feeWaivedAt) throw new Conflict('That fee is already waived', 'already_waived');
+
+  return guarded(
+    {
+      actor, action: 'waive', resource: 'fee',
+      resourceId: appointmentId, clientId: appt.clientId,
+      // Ids and integer cents. A waiver reason is a category, so the log stays
+      // readable by the auditor without disclosing anything about the person.
+      reason: `${reason}:${appt.chargeFeeCents}`,
+    },
+    (tx) =>
+      tx.appointment.update({
+        where: { id: appointmentId },
+        data: {
+          chargeFeeCents: 0,
+          feeWaivedById: actor.id,
+          feeWaivedAt: (opts.clock ?? systemClock).now(),
+          feeWaiveReason: reason,
+        },
+      }),
   );
 }

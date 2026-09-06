@@ -69,7 +69,7 @@ const ALLOWED: Record<Role, Set<string>> = {
   }),
   admin: spec({
     client: 'read update', // break-glass only
-    fee: 'read update',
+    fee: 'read update waive',
     appointment: 'read create update',
     attendance_history: 'read',
     progress_note: 'read', // break-glass only
@@ -104,7 +104,7 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
     form_request: 'read create',
   }),
   admin: spec({
-    fee: 'read update',
+    fee: 'read update waive',
     appointment: 'read create update',
     attendance_history: 'read',
     form_template: 'read create update',
@@ -150,7 +150,7 @@ describe('permission matrix — every cell', () => {
     RESOURCES.flatMap((res) => ACTIONS.map((a) => [role, res, a] as [Role, Resource, Action])),
   );
 
-  it('covers 455 cells', () => expect(cells).toHaveLength(ROLES.length * RESOURCES.length * ACTIONS.length));
+  it('covers every cell', () => expect(cells).toHaveLength(ROLES.length * RESOURCES.length * ACTIONS.length));
 
   it.each(cells)('%s / %s / %s', (role, resource, action) => {
     const key = `${resource}:${action}`;

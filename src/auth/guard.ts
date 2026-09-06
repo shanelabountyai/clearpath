@@ -24,6 +24,13 @@ interface GuardRequest {
   resourceId?: string;
   /** The client whose record this belongs to. Indexed for auditor queries. */
   clientId?: string;
+  /**
+   * A reason CODE for the action itself, where the action has one — a fee
+   * waiver's `goodwill`, and the amount it reversed. Never free text and never
+   * clinical: this column is read by the one role that may not open a record.
+   * Break-glass justification still fills it when nothing else does.
+   */
+  reason?: string;
 }
 
 async function record(db: Tx | typeof prisma, req: GuardRequest, decision: Decision) {
@@ -38,7 +45,7 @@ async function record(db: Tx | typeof prisma, req: GuardRequest, decision: Decis
       allowed: decision.allowed,
       rule: decision.rule,
       breakGlass: decision.breakGlass,
-      reason: req.actor.breakGlass?.reason ?? null,
+      reason: req.reason ?? req.actor.breakGlass?.reason ?? null,
     },
   });
 }

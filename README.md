@@ -18,6 +18,14 @@ discipline. It is **not** HIPAA-compliant software and must never hold real clie
 data. Mental-health data is among the most sensitive that exists; modeling the
 protections is the lesson, claiming them would be the credibility-killer.
 
+**Nothing sends, and nothing charges.** `OutboxMessage` rows are the stub for every
+reminder — there is no carrier integration — and `chargeFeeCents` is a chargeable
+*flag* in integer cents with no payment processing anywhere behind it. The
+automatic no-show fee for a client who never answers is a **modeled mechanism,
+not clinical or legal advice**: a real practice cannot switch that policy on
+without a review of its client agreement, and the settings page says so where the
+switch is.
+
 ---
 
 ![The calendar as the front desk sees it: five columns of named sessions with times, rooms and clinicians, and a banner reading "Operational — names, times and rooms. Why anyone is here does not appear on this screen at any level of detail."](docs/screenshots/calendar-front-desk.png)

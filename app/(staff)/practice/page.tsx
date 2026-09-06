@@ -116,10 +116,34 @@ async function PracticePage() {
                 <Field label="Standard fee">{money(data.settings.standardFeeCents)}</Field>
                 <Field label="Late-cancel window">{data.settings.lateCancelWindowHours} hours</Field>
                 <Field label="Late-cancel fee">{money(data.settings.lateCancelFeeCents)}</Field>
+                <Field label="No-show fee">{money(data.settings.noShowFeeCents)}</Field>
+                <Field label="Non-response grace">{data.settings.graceMinutes} minutes after the start</Field>
+                <Field label="Charge for non-response">
+                  {data.settings.autoNoShowOnNoResponse
+                    ? <Badge tone="warning" glyph="!">On</Badge>
+                    : <Badge>Off — recorded, never charged</Badge>}
+                </Field>
                 <Field label="Booking horizon">{data.settings.recurrenceHorizonDays} days</Field>
                 <Field label="Continuity gap">{data.settings.continuityGapDays} days</Field>
                 <Field label="Name used in messages">{data.settings.messagingName}</Field>
               </dl>
+              {data.settings.autoNoShowOnNoResponse && (
+                /* The honesty note the PRD asks for, on the page where the switch
+                   lives. A practice cannot ship an auto-charge policy on the
+                   strength of the mechanism working. */
+                <p
+                  className="mt-3 rounded-[var(--radius)] px-3 py-2 text-caption"
+                  style={{ background: 'var(--warning-soft)', color: 'var(--warning)' }}
+                >
+                  <strong>This setting charges people automatically.</strong> A session still
+                  sitting at scheduled {data.settings.graceMinutes} minutes after it should have
+                  started, from a client who never answered, becomes a no-show and takes the fee
+                  with no person in the loop. A check-in always beats it, and it never touches a
+                  client who was not asked. It is still a policy that needs a clinical and legal
+                  review of your client agreement before it is switched on for real people —
+                  the software cannot give you that review.
+                </p>
+              )}
               <p className="mt-3 text-caption text-subtle">
                 Messages to clients use &ldquo;{data.settings.messagingName}&rdquo;, not
                 &ldquo;{data.settings.name}&rdquo;. A lock-screen preview should not say why

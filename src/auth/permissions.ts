@@ -30,7 +30,13 @@ export type Resource =
   | 'audit_log'
   | 'user'; // accounts, roles, supervision relationships
 
-export type Action = 'read' | 'create' | 'update' | 'sign' | 'cosign';
+/**
+ * `waive` is its own action rather than an `update` on `fee`, because reversing
+ * money the practice already decided to charge is a different power from
+ * setting a sliding-scale rate — and the whole argument of this file is that a
+ * power nobody named is a power nobody reviewed.
+ */
+export type Action = 'read' | 'create' | 'update' | 'sign' | 'cosign' | 'waive';
 
 export const ROLES: readonly Role[] = [
   'front_desk', 'therapist', 'associate', 'supervisor', 'admin', 'auditor', 'client',
@@ -40,7 +46,7 @@ export const RESOURCES: readonly Resource[] = [
   'process_note', 'form_template', 'form_request', 'form_submission',
   'alert', 'portal_link', 'audit_log', 'user',
 ];
-export const ACTIONS: readonly Action[] = ['read', 'create', 'update', 'sign', 'cosign'];
+export const ACTIONS: readonly Action[] = ['read', 'create', 'update', 'sign', 'cosign', 'waive'];
 
 export interface Actor {
   id: string;
@@ -179,7 +185,10 @@ const MATRIX: Record<Role, RoleMatrix> = {
   admin: {
     // Practice manager. Clinical reach only through logged break-glass.
     client: { read: 'breakGlass', update: 'breakGlass' },
-    fee: { read: 'always', update: 'always' },
+    // Waiving is the practice manager's alone. Front desk runs the calendar and
+    // takes the phone call about a fee; deciding not to charge it is the thing
+    // they are not allowed to do, and the denial is on the record.
+    fee: { read: 'always', update: 'always', waive: 'always' },
     appointment: { read: 'always', create: 'always', update: 'always' },
     attendance_history: { read: 'always' },
     progress_note: { read: 'breakGlass' },

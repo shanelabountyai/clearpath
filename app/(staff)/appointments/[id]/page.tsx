@@ -6,9 +6,9 @@ import { Forbidden } from '../../../../src/errors';
 import { requireSession } from '../../../../src/session';
 import { may } from '../../../../src/auth/guard';
 import { localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../../src/time';
-import { Badge, Card, Field, PageHeader, STATUS_META, StatusChip, money } from '../../../../src/ui/primitives';
+import { Badge, Card, CONFIRMATION_META, Field, PageHeader, STATUS_META, StatusChip, money } from '../../../../src/ui/primitives';
 import { BreakGlassPrompt } from '../../break-glass';
-import { advanceStatus, cancelSession, moveSession, startProgressNote } from '../actions';
+import { advanceStatus, cancelSession, moveSession, startProgressNote, waiveSessionFee } from '../actions';
 import { systemClock } from '@/src/clock';
 import { Button } from '@/src/ui/primitives';
 
@@ -40,6 +40,10 @@ export default async function AppointmentPage({
   const canWriteNote = may({
     actor, action: 'create', resource: 'progress_note', target: { clinicianId: appt.clinicianId },
   });
+  // Front desk sees the fee and the reason it applies; only the practice
+  // manager sees a way to reverse it. The matrix decides, here as everywhere.
+  const canWaive = may({ actor, action: 'waive', resource: 'fee' });
+  const confirmation = CONFIRMATION_META[appt.confirmation] ?? CONFIRMATION_META.not_required!;
 
   return (
     <>
@@ -51,7 +55,14 @@ export default async function AppointmentPage({
             {appt.clinician.name}
           </>
         }
-        actions={<StatusChip status={appt.status} />}
+        actions={
+          <span className="flex items-center gap-2">
+            <StatusChip status={appt.status} />
+            {/* Beside the status, never merged into it: a client's answer and
+                a front-desk observation are different facts (D-02). */}
+            <Badge tone={confirmation.tone} glyph={confirmation.glyph}>{confirmation.label}</Badge>
+          </span>
+        }
       />
 
       {error && (
@@ -83,7 +94,16 @@ export default async function AppointmentPage({
                     : <Badge tone="info" glyph="↻">{appt.series.frequency}, {WEEKDAYS[appt.series.weekday]}</Badge>
                   : <span className="text-subtle">One-off</span>}
               </Field>
-              <Field label="Charge">{money(appt.chargeFeeCents)}</Field>
+              <Field label="Charge">
+                {appt.feeWaivedAt ? (
+                  <span className="flex flex-wrap items-center gap-2">
+                    {money(0)}
+                    <Badge tone="info" glyph="↩">Waived · {appt.feeWaiveReason?.replace('_', ' ')}</Badge>
+                  </span>
+                ) : (
+                  money(appt.chargeFeeCents)
+                )}
+              </Field>
             </dl>
           </Card>
 
@@ -148,6 +168,39 @@ export default async function AppointmentPage({
                 <Button variant="danger">
                   Cancel session
                 </Button>
+              </form>
+            </Card>
+          )}
+
+          {canWaive && appt.chargeFeeCents !== null && appt.chargeFeeCents > 0 && !appt.feeWaivedAt && (
+            <Card>
+              <h2 className="font-semibold">Waive this fee</h2>
+              <p className="mt-1 text-body text-muted">
+                Zeroes the charge and records who decided and why. It does not change
+                what happened — the session stays {STATUS_META[appt.status]?.label.toLowerCase()},
+                and the client&rsquo;s answer stays {confirmation.label.toLowerCase()}. The original
+                {' '}{money(appt.chargeFeeCents)} stays in the audit log.
+              </p>
+              <form action={waiveSessionFee} className="mt-3 flex flex-wrap items-end gap-2">
+                <input type="hidden" name="appointmentId" value={appt.id} />
+                <div>
+                  <label htmlFor="waiveReason" className="block text-micro font-medium tracking-wide text-subtle uppercase">
+                    Reason
+                  </label>
+                  {/* A fixed list, not a text box: free text on a money reversal
+                      becomes a place to write something clinical. */}
+                  <select
+                    id="waiveReason" name="reason" required
+                    className="mt-1 rounded-[var(--radius)] border px-2 py-1.5 text-body"
+                    style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
+                  >
+                    <option value="practice_error">Practice error</option>
+                    <option value="client_disputed">Client disputed</option>
+                    <option value="emergency">Emergency</option>
+                    <option value="goodwill">Goodwill</option>
+                  </select>
+                </div>
+                <Button variant="quiet">Waive {money(appt.chargeFeeCents)}</Button>
               </form>
             </Card>
           )}

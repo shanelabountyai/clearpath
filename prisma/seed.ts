@@ -19,6 +19,12 @@ const { createProgressNote, signProgressNote, coSignProgressNote, createProcessN
   await import('../src/notes/service');
 const { guarded } = await import('../src/auth/guard');
 const { addDays, localDateOf, zonedToUtc } = await import('../src/time');
+const { bookGroupSession } = await import('../src/scheduling/groups');
+const { waiveFee } = await import('../src/scheduling/lifecycle');
+const { stageDueAt } = await import('../src/scheduling/confirmation');
+const { ensurePortalLink } = await import('../src/portal/service');
+const { queueToClient } = await import('../src/messaging/outbox');
+const { systemClock } = await import('../src/clock');
 
 /** mulberry32 — small, fast, and identical on every machine. */
 function rng(seed: number) {
@@ -39,6 +45,7 @@ const QUARTER_START = '2026-06-01';
 const HORIZON_DAYS = 35;
 
 const log = (msg: string) => console.log(`  ${msg}`);
+const addDaysMs = (d: Date, days: number) => new Date(d.getTime() + days * 86_400_000);
 
 async function main() {
   console.log('\nSeeding Stillwater Counseling — synthetic data only.\n');
@@ -49,6 +56,13 @@ async function main() {
       id: 1, name: 'Stillwater Counseling', messagingName: 'Stillwater',
       standardFeeCents: 18_000, lateCancelWindowHours: 24, lateCancelFeeCents: 9_000,
       recurrenceHorizonDays: 90, continuityGapDays: 21,
+      // The confirmation policy, stated rather than left to defaults. The
+      // no-show fee ships at the late-cancel figure so the field changes
+      // nothing on the day it lands (D-09), and the auto-charge is on because
+      // the practice owner asked for it (D-10) — a decision the settings page
+      // says out loud needs a clinical and legal review before it is real.
+      noShowFeeCents: 9_000, dayOfLeadHours: 3, graceMinutes: 20,
+      autoNoShowOnNoResponse: true,
     },
   });
 
@@ -210,7 +224,7 @@ async function main() {
     } else if (roll < 0.12) {
       await prisma.appointment.update({
         where: { id: appt.id },
-        data: { status: 'no_show', chargeFeeCents: settings.lateCancelFeeCents },
+        data: { status: 'no_show', chargeFeeCents: settings.noShowFeeCents },
       });
     } else {
       await prisma.appointment.update({
@@ -227,6 +241,146 @@ async function main() {
     where: { startAt: { gte: zonedToUtc(TODAY, 0), lt: zonedToUtc(addDays(TODAY, 7), 0) } },
     data: { status: 'confirmed' },
   });
+
+  // ── the confirmation loop ─────────────────────────────────────────────
+  //
+  // The awkward rows, constructed explicitly. Left to the dice these are
+  // likely but not certain, and every one of them is a row a spec asserts
+  // against — a fixture the seed only *probably* produces is a spec that only
+  // probably means anything.
+  const now = systemClock.now();
+
+  /**
+   * Ask, for real: three reminder rows and three outbox rows, then whatever
+   * the client did or did not do about it. `pending` is only honest where
+   * something actually queued, because that is the whole invariant the fee
+   * rests on — no charge without a row proving the practice asked.
+   */
+  async function asked(
+    appt: { id: string; clientId: string; startAt: Date },
+    answer: 'pending' | 'confirmed' | 'declined' | 'no_response',
+  ) {
+    const link = await ensurePortalLink(appt.clientId, systemClock);
+    for (const stage of ['d5', 'd1', 'd0'] as const) {
+      const dueAt = stageDueAt(appt.startAt, stage, { graceMinutes: 20, dayOfLeadHours: 3 });
+      const message = await queueToClient({
+        clientId: appt.clientId,
+        templateKey: 'appointment_reminder',
+        scheduledFor: dueAt,
+        startAt: appt.startAt,
+        link: `http://localhost:3700/p/${link.token}`,
+      });
+      if (!message) return false; // the client is on `none`; nothing was asked
+      await prisma.appointmentReminder.create({
+        data: { appointmentId: appt.id, stage, dueAt, sentAt: dueAt, outboxMessageId: message.id },
+      });
+    }
+    await prisma.appointment.update({ where: { id: appt.id }, data: { confirmation: answer } });
+    return true;
+  }
+
+  // Three clients on `none` who have missed sessions. The exemption has to be
+  // exercised by data rather than asserted in the abstract: these are the rows
+  // that prove a safety setting did not quietly become a billing trap.
+  const exempt = clients.slice(30, 33);
+  let exemptAbsences = 0;
+  for (const c of exempt) {
+    await prisma.client.update({ where: { id: c.id }, data: { reminderPreference: 'none' } });
+    const theirs = await prisma.appointment.findMany({
+      where: { clientId: c.id, status: 'completed' }, orderBy: { startAt: 'desc' }, take: 2,
+    });
+    for (const appt of theirs) {
+      await prisma.appointment.update({
+        where: { id: appt.id },
+        // A human noticed the absence and set it. `confirmation` stays
+        // `not_required` forever, so no fee here is ever derived from silence.
+        data: { status: 'no_show', chargeFeeCents: settings.noShowFeeCents, confirmation: 'not_required' },
+      });
+      exemptAbsences++;
+    }
+  }
+  log(`${exempt.length} clients on reminderPreference 'none' with ${exemptAbsences} absences between them`);
+
+  // The client the whole feature is about: asked three times, answered never,
+  // and walked in anyway. Charged the session fee, not the policy fee.
+  // Reachable clients only: `asked` refuses to invent an ask it could not have
+  // sent, so a client on `none` here would silently produce nothing.
+  const reachable = new Set(
+    (await prisma.client.findMany({ where: { reminderPreference: { not: 'none' } }, select: { id: true } }))
+      .map((c) => c.id),
+  );
+  const silentButPresent = completed.filter((a) => reachable.has(a.clientId)).slice(-6);
+  for (const appt of silentButPresent) await asked(appt, 'no_response');
+  log(`${silentButPresent.length} completed sessions the client never answered about — session fee only`);
+
+  // And the other kind of silence: asked, never answered, never turned up.
+  const silentAndAbsent = await prisma.appointment.findMany({
+    where: {
+      status: 'no_show', confirmation: 'not_required',
+      client: { reminderPreference: { not: 'none' } },
+    },
+    orderBy: { startAt: 'desc' },
+    take: 4,
+  });
+  for (const appt of silentAndAbsent) {
+    if (await asked(appt, 'no_response')) {
+      await prisma.appointment.update({ where: { id: appt.id }, data: { chargeFeeCents: settings.noShowFeeCents } });
+    }
+  }
+  log(`${silentAndAbsent.length} no-shows the policy would charge for`);
+
+  // One of them waived, through the real path so the audit row is real too.
+  const toWaive = silentAndAbsent[0];
+  if (toWaive) {
+    await waiveFee(actor(manager), toWaive.id, 'client_disputed');
+    log('1 fee waived by the practice manager, with the original amount in the audit log');
+  }
+
+  // A booking made inside the five-day window: it skips `d5` permanently and
+  // is still fee-eligible on the two stages that were sendable.
+  const soon = await prisma.appointment.findFirst({
+    where: { status: 'scheduled', startAt: { gte: addDaysMs(now, 2), lt: addDaysMs(now, 4) } },
+    orderBy: { startAt: 'asc' },
+  });
+  if (soon) {
+    await prisma.appointment.update({
+      where: { id: soon.id },
+      data: { createdAt: addDaysMs(soon.startAt, -2), confirmation: 'pending' },
+    });
+    for (const stage of ['d1', 'd0'] as const) {
+      const dueAt = stageDueAt(soon.startAt, stage, { graceMinutes: 20, dayOfLeadHours: 3 });
+      const message = await queueToClient({
+        clientId: soon.clientId, templateKey: 'appointment_reminder', scheduledFor: dueAt,
+        startAt: soon.startAt, link: `http://localhost:3700/p/${(await ensurePortalLink(soon.clientId, systemClock)).token}`,
+      });
+      if (message) {
+        await prisma.appointmentReminder.create({
+          data: { appointmentId: soon.id, stage, dueAt, sentAt: dueAt, outboxMessageId: message.id },
+        });
+      }
+    }
+    log('1 booking made inside the five-day window — d5 skipped, d1 and d0 sent');
+  }
+
+  // A group session where one attendee declined. The group, the room and every
+  // co-attendee are untouched: a group is N appointments sharing a key.
+  const groupClients = clients.slice(40, 45);
+  const group = await bookGroupSession(desk, {
+    clinicianId: nour.id,
+    clientIds: groupClients.map((c) => c.id),
+    date: addDays(TODAY, 21),
+    startMinute: 18 * 60,
+    topic: 'Tuesday skills group',
+  });
+  for (const [i, a] of group.appointments.entries()) {
+    const full = await prisma.appointment.findUniqueOrThrow({ where: { id: a.id } });
+    await asked(full, i === 0 ? 'declined' : i === 1 ? 'pending' : 'confirmed');
+  }
+  await prisma.appointment.update({
+    where: { id: group.appointments[0]!.id },
+    data: { status: 'cancelled', cancelledAt: now, cancelReason: 'client declined' },
+  });
+  log(`1 group session of ${group.appointments.length} — 1 declined, 1 still silent, the rest confirmed`);
 
   // ── notes ─────────────────────────────────────────────────────────────
   const byClinician = new Map<string, typeof past>();
