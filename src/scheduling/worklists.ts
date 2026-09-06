@@ -1,14 +1,67 @@
 import { guarded } from '../auth/guard';
 import { ownCaseloadOnly, type Actor } from '../auth/permissions';
-import { systemClock, type Clock, DAY } from '../clock';
+import { systemClock, type Clock, DAY, HOUR } from '../clock';
 import { prisma } from '../db';
 import { addDays, localDateOf, weekdayOf, zonedToUtc, type LocalDate } from '../time';
 
 /**
  * The work-lists. Each one exists because something that ought to be visible
- * otherwise hides: a vacation against standing clients, a client who quietly
- * stopped booking, a cancellation nobody offered to the next person waiting.
+ * otherwise hides: an hour tomorrow nobody has answered about, a vacation
+ * against standing clients, a client who quietly stopped booking, a
+ * cancellation nobody offered to the next person waiting.
  */
+
+/**
+ * The hours nobody has said they are coming to, soonest first, with a phone
+ * number.
+ *
+ * Every other surface in this feature is about what the practice *sent*. This
+ * one is about the gap the sending leaves: a client who never answered is not a
+ * message problem, they are a phone call, and the fee that follows silence is
+ * only defensible if somebody had the chance to make it. So the list carries
+ * the number rather than a link to a record that carries the number — a work
+ * list you have to click through twice is a work list nobody works.
+ *
+ * `confirmation: not confirmed` rather than `pending`, deliberately. Three
+ * different silences land here and they are the same job: nobody was asked
+ * (`not_required` — the client is on `none`, or booked inside the grace
+ * window), somebody was asked and has not answered (`pending`), and somebody
+ * said no in a way that could not free the room (`declined` on a session still
+ * standing, which is what an inbound keyword decline inside the fee window
+ * leaves behind). `status: 'scheduled'` is what keeps it short: an hour front
+ * desk has already marked `confirmed` by hand is an hour somebody has spoken
+ * to them about.
+ */
+export async function unconfirmedSoon(
+  actor: Actor,
+  opts: { clock?: Clock; withinHours?: number } = {},
+) {
+  const now = (opts.clock ?? systemClock).now();
+  const until = new Date(now.getTime() + (opts.withinHours ?? 48) * HOUR);
+
+  return guarded(
+    { actor, action: 'read', resource: 'appointment' },
+    (tx) =>
+      tx.appointment.findMany({
+        where: {
+          status: 'scheduled',
+          confirmation: { not: 'confirmed' },
+          startAt: { gte: now, lte: until },
+        },
+        select: {
+          id: true, startAt: true, modality: true, confirmation: true,
+          client: {
+            select: {
+              id: true, code: true, firstName: true, lastName: true,
+              phone: true, reminderPreference: true,
+            },
+          },
+          clinician: { select: { name: true } },
+        },
+        orderBy: { startAt: 'asc' },
+      }),
+  );
+}
 
 /**
  * Every standing client a clinician's absence displaces.

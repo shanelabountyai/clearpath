@@ -5,7 +5,7 @@ import { prisma } from '../db';
 import { Forbidden } from '../errors';
 import { bookAppointment } from '../scheduling/booking';
 import { cancelAppointment, setStatus } from '../scheduling/lifecycle';
-import { continuityQueue, vacationImpact, waitlistMatches } from '../scheduling/worklists';
+import { continuityQueue, unconfirmedSoon, vacationImpact, waitlistMatches } from '../scheduling/worklists';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { queryAuditLog, toCsv } from './audit';
 import { utilizationReport, weeklyVolume, weekStart } from './utilization';
@@ -31,6 +31,52 @@ const book = (clientId: string, startMinute: number, date = '2026-09-01') =>
   bookAppointment(actor(desk), {
     clientId, clinicianId: therapist.id, date, startMinute, type: 'standard', modality: 'in_person',
   });
+
+describe('the unconfirmed work-list', () => {
+  /** ~31 hours before the 15:00 Tuesday, and ~7 days before the one after. */
+  const clock = fixedClock('2026-08-31T12:00:00Z');
+
+  it('lists every unanswered session in the window, soonest first, with a number', async () => {
+    const silent = await makeClient(therapist.id, { code: 'TC-SILENT' });
+    await prisma.client.update({ where: { id: silent.id }, data: { phone: '555-0142' } });
+    const never = await makeClient(therapist.id, { code: 'TC-NEVER' });
+    const answered = await makeClient(therapist.id, { code: 'TC-ANSWERED' });
+    const later = await makeClient(therapist.id, { code: 'TC-LATER' });
+
+    const asked = await book(silent.id, 600);
+    await prisma.appointment.update({ where: { id: asked.id }, data: { confirmation: 'pending' } });
+    await book(never.id, 900);
+    const yes = await book(answered.id, 660);
+    await prisma.appointment.update({ where: { id: yes.id }, data: { confirmation: 'confirmed' } });
+    await book(later.id, 900, '2026-09-08');
+
+    const list = await unconfirmedSoon(actor(desk), { clock });
+    expect(list.map((a) => a.client.code)).toEqual(['TC-SILENT', 'TC-NEVER']);
+    expect(list[0]!.client.phone).toBe('555-0142');
+  });
+
+  it('drops an hour front desk has already confirmed by hand', async () => {
+    const c = await makeClient(therapist.id, { code: 'TC-BYHAND' });
+    const appt = await book(c.id, 900);
+    expect(await unconfirmedSoon(actor(desk), { clock })).toHaveLength(1);
+
+    await setStatus(actor(desk), appt.id, 'confirmed');
+    expect(await unconfirmedSoon(actor(desk), { clock })).toEqual([]);
+  });
+
+  /**
+   * The case P1-3 leaves behind: a keyword decline inside the fee window
+   * records the answer and does not free the room, because a text message
+   * cannot carry a fee disclosure. That hour still needs a phone call.
+   */
+  it('keeps a declined session that is still standing', async () => {
+    const c = await makeClient(therapist.id, { code: 'TC-SAIDNO' });
+    const appt = await book(c.id, 900);
+    await prisma.appointment.update({ where: { id: appt.id }, data: { confirmation: 'declined' } });
+
+    expect((await unconfirmedSoon(actor(desk), { clock })).map((a) => a.confirmation)).toEqual(['declined']);
+  });
+});
 
 describe('the vacation work-list', () => {
   it('surfaces every standing client an absence displaces', async () => {

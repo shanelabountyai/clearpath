@@ -1,11 +1,11 @@
 import Link from 'next/link';
 import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
-import { continuityQueue, vacationImpact, waitlistMatches } from '../../../src/scheduling/worklists';
+import { continuityQueue, unconfirmedSoon, vacationImpact, waitlistMatches } from '../../../src/scheduling/worklists';
 import { openRescheduleRequests } from '../../../src/portal/service';
 import { handleRescheduleRequest } from './actions';
 import { addDays, localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
-import { Badge, Card, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
+import { Badge, Card, CONFIRMATION_META, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
 import { withDenial } from '@/src/ui/denied';
 
@@ -15,7 +15,8 @@ async function WorkListsPage() {
   const { actor } = await requireSession();
   const today = localDateOf(systemClock.now());
 
-  const [continuity, absences] = await Promise.all([
+  const [unconfirmed, continuity, absences] = await Promise.all([
+    unconfirmedSoon(actor),
     continuityQueue(actor),
     prisma.availabilityOverride.findMany({
       where: { kind: 'unavailable', toDate: { gte: systemClock.now() } },
@@ -44,6 +45,49 @@ async function WorkListsPage() {
       <div className="mb-4"><TierBanner tier="operational" /></div>
 
       <div className="space-y-6">
+        <section>
+          <h2 className="mb-2 text-subhead font-semibold">Nobody has said they are coming</h2>
+          <p className="mb-3 max-w-prose text-body text-muted">
+            Sessions in the next 48 hours with no answer on them, soonest first. The
+            number is here because ringing them is the job — and because silence only
+            becomes a fee if somebody had the chance to make this call.
+          </p>
+          {unconfirmed.length === 0 ? (
+            <EmptyState title="Every session in the next two days is answered for">
+              Sessions appear here as they come inside the window without a reply.
+            </EmptyState>
+          ) : (
+            <Card className="p-0">
+              <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                {unconfirmed.map((a) => {
+                  const when = utcToZoned(a.startAt);
+                  const meta = CONFIRMATION_META[a.confirmation]!;
+                  return (
+                    <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body">
+                      <span>
+                        <Link href={`/appointments/${a.id}`} className="font-medium text-accent hover:underline">
+                          {a.client.lastName}, {a.client.firstName}
+                        </Link>{' '}
+                        <span className="font-mono text-caption text-subtle">{a.client.code}</span>
+                        <span className="ml-2 text-muted">
+                          {WEEKDAYS[when.weekday]} {when.date} {minutesToHHMM(when.minutes)} · {a.clinician.name}
+                        </span>
+                      </span>
+                      <span className="flex items-center gap-2">
+                        {a.client.phone
+                          ? <span className="font-mono text-body">{a.client.phone}</span>
+                          : <span className="text-caption text-subtle">no number on file</span>}
+                        {a.client.reminderPreference === 'none' && <Badge tone="warning">call only</Badge>}
+                        <Badge tone={meta.tone} glyph={meta.glyph}>{meta.label}</Badge>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
+          )}
+        </section>
+
         <section>
           <h2 className="mb-2 text-subhead font-semibold">Clients asking to move a session</h2>
           <p className="mb-3 max-w-prose text-body text-muted">
