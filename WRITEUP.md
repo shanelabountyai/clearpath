@@ -1830,6 +1830,137 @@ is missing.
 
 ---
 
+## 18. Issuing a credential is not resetting one
+
+The two look identical in a form — an address, a link, a box to type a password
+into — and the last phase is the reason they cannot share an implementation.
+
+`resetStage` **refuses** a clinical account that has never enrolled a second
+factor, because a link to one is a takeover on mailbox access alone, and worse
+than the enrolled case: whoever used it would then enrol their own authenticator
+and hold the factor from then on. A brand new clinical account is *exactly* that
+shape. So if an invitation were a link and nothing else, this phase would
+quietly reopen the door the previous one closed — through the screen a practice
+manager uses on somebody's first day, which is not where anybody re-reads the
+security argument.
+
+### Two channels, and the narrow claim they support
+
+The link goes to the mailbox. An eight-character code is shown to the
+administrator once, on screen, to be handed over some other way — read across a
+desk, spoken down a phone. Neither half is sufficient: somebody who can read the
+mailbox holds the link and not the code; the administrator holds the code and
+not the mailbox.
+
+This is **not a second factor** and the module does not call it one. It is one
+credential split across two channels, and the honest statement of what it buys
+is narrow enough to write down: *an administrator cannot complete an invitation
+to a mailbox they do not control*. They can of course create an account naming
+their own address — deciding who works here is what the role is for — and that
+account starts empty, appears on the practice page, and leaves an audit row
+naming who made it and what role they handed out.
+
+The code alphabet is Crockford's base32 without `I`, `O` and `U`, because it is
+read aloud to somebody who has never seen it written. Eight characters is forty
+bits, and five wrong attempts burns the invitation — not because forty bits
+needs the help, but because a code with no attempt limit sitting behind a URL an
+attacker already holds is a design that works only while the arithmetic happens
+to be on its side.
+
+### The line that stops the powers composing
+
+```ts
+export function credentialRoute(user: { hasPassword: boolean }): CredentialRoute {
+  return user.hasPassword ? 'reset' : 'invite';
+}
+```
+
+An invitation is issuable **only to an account that has never had a password**.
+Nothing in the module sets one, and that is the point rather than an omission:
+an administrator who could set a password would, combined with
+`clearSecondFactor` — which they already hold — be an administrator who could
+sign in as any clinician in the building, with every audit row from that session
+naming the clinician. The two powers are individually defensible and compose
+into impersonation, so the composition is refused at the only place it could be
+introduced.
+
+`hasPassword` rather than "has ever signed in", because an administrator never
+sets one: a password exists on an account if and only if its *owner* put it
+there. `lastLoginAt` was the intuitive choice and is weaker — an account claimed
+an hour ago whose owner has not come back would still read as invitable.
+
+There is a spec that writes the composition out rather than reasoning about it,
+because reading two functions and concluding it is safe is exactly how these get
+missed: clear a clinician's second factor, then try both doors. Re-invitation
+refuses because they have a password; the reset refuses because a clinical
+account with no factor gets no link. Both shut, which is the correct answer and
+the reason `clearSecondFactor` is a person verifying a person.
+
+### Two things the module answers so a screen does not
+
+Hard rule 1 says no component draws its own conclusion from a role. A form that
+decided `role === 'associate'` for itself to require a supervisor field would be
+that — narrowly, in a way that only greys out a control, and exactly the shape
+of scattered role logic the rule keeps out. So `supervisionRule(role)` and
+`mayBeNamedSupervisor(role)` live next to the validation that enforces the same
+thing, and the screen asks rather than decides.
+
+The associate rule is the one worth the file. `requiresCoSignature` says an
+associate's progress note is not a complete record until their supervisor
+countersigns it, and `signProgressNote` refuses with `no_supervisor` when there
+is nobody to route it to — *after* the clinical work is written. A session has
+happened, a note is drafted, and the person discovers at the moment they try to
+complete the record that their account was never finished. Checking it at
+creation moves the identical failure to the one moment it costs nothing.
+
+### The ordering bug the review found
+
+Every entry point read the account before it authorized:
+
+```ts
+if (credentialRoute({ hasPassword: !!user.passwordHash }) !== 'invite') {
+  throw new Conflict('That account has already been set up. …');
+}
+return guarded({ actor, action: 'update', resource: 'user', … }, …);
+```
+
+A caller the matrix would refuse got the *domain's* answer instead of the
+guard's — "that account has already been set up" is a fact about a colleague's
+account, handed out by a screen they may not reach. And no denial row was
+written, which is the half of hard rule 4 that is easiest to lose: a probe
+nobody logged is a probe nobody can find afterwards.
+
+Confirmed with a failing spec before it was called a finding, then fixed by
+moving the validation *inside* the guarded callback. A `Conflict` thrown there
+rolls the transaction back, the allowed audit row included, which is the guard's
+own rule — the log records accesses that happened. `setAccountActive` already
+had the ordering right, which is why it is worth saying that reading two
+functions and concluding the third matches is not a review.
+
+### Nobody is deleted
+
+Deactivation is the whole of "removing" an account. Their id is on every note
+they wrote and every audit row they made, and a trail that can lose the person
+it names is not a trail. Deactivating ends their live sessions in the same
+transaction and revokes whatever invitation or reset link was in flight, so
+coming back is a fresh decision rather than a resumed one.
+
+### What this deliberately does not do
+
+- **It does not mail the invitation code.** The value of the split depends
+  entirely on the code not travelling the same route as the link, so it is
+  returned to the screen once and never written to `OutboxMessage` — which
+  stores `body`, and which the confirmation report, the work lists and the
+  delivery job all read.
+- **It does not let an administrator set a password.** See above; this is the
+  one refusal the whole module exists to make.
+- **It does not create client accounts.** `client` exists so a form submitted
+  through a tokenized link has an honest actor in the audit trail. Nobody signs
+  in as one, so creating one here would make an account with a door and no room
+  behind it.
+
+---
+
 ## Decisions log
 
 | Decision | Why |
@@ -1964,6 +2095,15 @@ is missing.
 | An administrator clears a second factor and can never see or set one | The account drops back to mandatory enrolment so its *owner* chooses the new secret. An administrator who could set one could sign in as a clinician, and the audit log would faithfully record it as them. It widens the most valuable credential in the building, so every use is one row naming who and whom |
 | The reset mail does not go through `OutboxMessage` | That table stores `body`, so the link would be a live credential in a table the report, the work lists and the delivery job all read — hard rule 10's mistake, reached from the side nobody guards. A lint refuses any `src/messaging/` import inside `src/auth/` |
 | The mailer is chosen by `RESET_MAILER`, not by `NODE_ENV` | The first draft refused in production, and the e2e sweep — which runs a production build on purpose — found the hole immediately. Weakening the check would leave a deployment one unset variable from a reset flow that appears to work while every link lands in a folder nobody reads. An explicit driver name fails at the moment somebody asks for a link, saying what is missing |
+| An invitation is two channels, and is never a link on its own | `resetStage` refuses a clinical account with no enrolled factor because a link to one is a takeover on mailbox access. A brand new clinical account is exactly that shape, so a link-only invitation would reopen the door the previous phase closed — through the screen used on somebody's first day, where nobody re-reads the argument |
+| The split is called a bootstrap, not a second factor | What it buys is narrow and worth stating exactly: an administrator cannot complete an invitation to a mailbox they do not control. Calling it a factor would claim more than it does, and the claim would be believed by whoever reads it next |
+| An invitation is issuable only to an account that has never had a password | An administrator who could set a password would, with `clearSecondFactor` which they already hold, be able to sign in as any clinician — and every audit row would name the clinician. Two individually defensible powers compose into impersonation, so the composition is refused at the only place it could be introduced |
+| `hasPassword` rather than `lastLoginAt` as the claimed marker | Nothing in the module sets a password, so one exists if and only if the account's owner put it there. `lastLoginAt` would read an account claimed an hour ago, whose owner has not come back, as still invitable |
+| The invite code excludes `I`, `O` and `U`, and burns after five attempts | It is read aloud to somebody who has never seen it written. Forty bits does not need the attempt limit, but a code with no limit behind a URL an attacker already holds only works while the arithmetic happens to be on its side |
+| `supervisionRule` and `mayBeNamedSupervisor` are functions, not form logic | Hard rule 1 says no component concludes from a role. A form deciding `role === 'associate'` to require a field would be exactly that, narrowly and invisibly, and the answer belongs beside the validation that enforces the same thing |
+| An associate without a supervisor is refused at creation, not at signing | `signProgressNote` already refuses with `no_supervisor` — after the session, after the note is drafted, at the moment somebody tries to complete the record. Checking at creation moves the identical failure to the one moment it costs nothing |
+| Domain validation moved inside the guarded callback | Reading the account first meant a caller the matrix would refuse got the domain's answer — a fact about a colleague's account from a screen they may not reach — and left no denial row. A `Conflict` thrown inside rolls the allowed row back with it, which is the guard's own rule |
+| Accounts are deactivated, never deleted | Their id is on every note they wrote and every audit row they made. Deactivating ends live sessions in the same transaction and revokes anything in flight, so coming back is a fresh decision rather than a resumed one |
 | The cadence is a script and a function, with no scheduler dependency | Due times derive from `startAt` and the injected clock, so the job is idempotent and the schedule is an implementation detail of whatever calls it — cron, a timer, a hosted trigger, or a person typing `npm run reminders:run`. A missed hour costs lateness and nothing else, and the whole five-day cadence runs in a test in a millisecond because the clock is an argument |
 
 ## What this project deliberately is not

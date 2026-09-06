@@ -19,11 +19,11 @@ export const dynamic = 'force-dynamic';
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ reset?: string }>;
+  searchParams: Promise<{ reset?: string; claimed?: string }>;
 }) {
   const stage = await sessionStage();
   if (stage?.stage === 'ready') redirect('/');
-  const { reset } = await searchParams;
+  const { reset, claimed } = await searchParams;
 
   return (
     <main className="mx-auto max-w-xl px-6 py-16">
@@ -48,6 +48,18 @@ export default async function LoginPage({
         >
           Your password is set. Sign in with it — and note that every session your account had
           open has been ended, which is the point of a reset rather than a side effect of one.
+        </p>
+      ) : null}
+
+      {claimed && !stage ? (
+        <p
+          role="status"
+          className="mt-6 rounded-[var(--radius)] border px-3 py-2 text-caption"
+          style={{ borderColor: 'var(--border)', background: 'var(--surface-sunken)' }}
+        >
+          Your account is set up. Sign in with the password you just chose — setting it did not
+          sign you in, which is the only ordering where the password is actually used to prove
+          something.
         </p>
       ) : null}
 

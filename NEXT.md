@@ -1,100 +1,74 @@
 # Next
 
-**Item:** nothing outstanding. Phase 13 built password recovery — the largest
-named gap after authentication itself — and the four directions the last handoff
-listed are now three. The next one is still a choice rather than a queue.
+**Item:** nothing outstanding. Phase 14 built account administration — the last
+of the authentication gaps — and the three directions the previous handoff
+listed are now two. The next one is a choice rather than a queue.
 
-Phase 13 is committed and pushed. What landed on top of Phase 12:
+Phase 14 is committed and pushed. What landed on top of Phase 13:
 
-**The question was never "how does somebody get back in".** It was **what does a
-link prove**. It proves control of a mailbox: one factor, and the weakest one in
-the building. Phase 12 bought the property that a clinical account is never
-reachable with one factor, and a reset flow is the door that undoes that quietly
-if nobody looks — because a reset feels like plumbing and nobody re-reads it.
+**Creating an account and resetting one look identical in a form, and the
+previous phase is the reason they cannot share an implementation.** `resetStage`
+refuses a clinical account that never enrolled a second factor, because a link to
+one is a takeover on mailbox access alone. **A brand new clinical account is
+exactly that shape.** A link-only invitation would have reopened that door
+through the screen a practice manager uses on somebody's first day, which is not
+where anybody re-reads a security argument.
 
-**Three answers, decided as a pure function across seven roles:**
+**So an invitation is two channels.** The link goes to the mailbox; an
+eight-character code is shown to the administrator once, on screen, to be handed
+over some other way. Neither half is sufficient. It is deliberately *not* called
+a second factor — what it buys is narrow enough to state exactly: an
+administrator cannot complete an invitation to a mailbox they do not control.
+
+**The line that stops the powers composing is one function:**
 
 ```ts
-export function resetStage(user: { role: Role; enrolled: boolean }): ResetStage {
-  if (!requiresSecondFactor(user.role)) return 'set_password';
-  if (user.enrolled) return 'second_factor';
-  return 'refused';
+export function credentialRoute(user: { hasPassword: boolean }): CredentialRoute {
+  return user.hasPassword ? 'reset' : 'invite';
 }
 ```
 
-`requiresSecondFactor` is the same policy function the sign-in reads, asked at a
-second moment — not a second copy free to drift.
+An invitation is issuable only to an account that has **never had a password**,
+and nothing in the module sets one. An administrator who could would — combined
+with `clearSecondFactor`, which they already hold — be able to sign in as any
+clinician in the building, with every audit row naming the clinician. Two
+individually defensible powers compose into impersonation, and the composition
+is refused at the only place it could be introduced. A spec writes that
+composition out rather than reasoning about it: clear a factor, then try both
+doors; both stay shut.
 
-The third cell is the one worth the table. A clinical account that **never
-enrolled** has no factor to demand, so a link would be a complete takeover on
-mailbox access alone — and worse than the sign-in equivalent, because whoever
-used it would then enrol their own authenticator and hold the factor from then
-on. Those accounts get **no link at all**; the refusal is logged and the screen
-says so, because otherwise somebody waits on an email that is never coming.
+**The review found a real ordering bug in this phase before it was committed.**
+`createAccount` and `reissueInvitation` read the account *before* they
+authorized, so a caller the matrix would refuse got the domain's answer — "that
+account has already been set up", a fact about a colleague's account from a
+screen they may not reach — and left **no denial row**, which is the half of hard
+rule 4 that is easiest to lose. Confirmed with a failing spec, then fixed by
+moving the validation inside the guarded callback: a `Conflict` thrown there
+rolls the transaction back, allowed row included, which is the guard's own rule.
+`setAccountActive` already had the ordering right, which is exactly why reading
+two functions and assuming the third matches is not a review.
 
-`resolveReset` returns no `Actor` in any variant and has no `ready` stage.
-Completing a reset **signs nobody in** — it sets a password and ends every
-session the account had.
-
-**The half it is not shippable without.** Requiring the factor means somebody
-who loses password *and* authenticator cannot get back in by any route the
-system offers, so `clearSecondFactor` is the other half — and what the practice
-manager does is *clear* a factor, never see or set one. The account drops back
-to mandatory enrolment and its owner chooses the new secret. It widens the most
-valuable credential in the building; the mitigation available is that every use
-is one audit row naming who and naming whom, never quiet.
-
-**Two smaller decisions from the same argument.** A valid link works **during a
-lockout** and clears it — a reset link is not a password guess, and refusing it
-would let anybody who knows a clinician's address close both doors by typing
-wrong passwords at the first. And a code is spent once **across both doors**:
-`totpLastStep` lives on the account, so a code typed at the sign-in will not then
-reset the password.
-
-Gate at this commit: unit **2035/2035**, typecheck clean, e2e **86/86** against a
+Gate at this commit: unit **2088/2088**, typecheck clean, e2e **96/96** against a
 production build, seed green on **all forty-eight** metrics.
 
-**Four things worth knowing before building on this.**
+**Three things worth knowing before building on this.**
 
-1. **`RESET_MAILER` is a new environment variable, and it has to be set.** With
-   it unset the reset flow refuses at the moment somebody asks for a link. The
-   first draft keyed the guard on `NODE_ENV !== 'production'` instead, and the
-   e2e sweep found the hole immediately — that suite runs a production build on
-   purpose, so the guard fired on the one build that most needed exercising. The
-   tempting fix, weakening the check, would leave a deployment one unset
-   variable from a flow that appears to work while every link lands in a folder
-   nobody reads.
-2. **The reset mail never touches `OutboxMessage`.** That table stores `body`, so
-   a link routed through it would be a live credential in a table the
-   confirmation report, the work lists and the delivery job all read. A lint
-   refuses any `src/messaging/` import inside `src/auth/`, so nobody simplifies
-   it back later. `ResetMailer` is an interface with a filesystem driver — the
-   same shape as `Carrier`, and the same amount of work left.
-3. **The e2e reset specs build their own three accounts.** Completing a reset
-   revokes every session the account had, and the sweep caches one token per
-   person for the whole run — resetting a seeded user's password would end a
-   session four spec files are still holding, and the failure would surface as a
-   calendar page redirecting to the login screen with nothing connecting it
-   back. One of the three is a case the seed cannot contain at all: a clinical
-   account that never enrolled.
-4. **Audit rows survive the accounts that made them.** The reset fixture's
-   teardown tried to delete them and the database refused —
-   `AuditEvent is append-only (attempted DELETE)`. `actorId` is a plain column
-   with no foreign key precisely so a trail outlives the account it names.
-
-**The method, again.** Pure function and its truth table first, then persistence,
-then the screens — and the two things worth having came from the suite rather
-than from reasoning: the append-only rule catching the fixture, and the
-production-build guard firing on the build that most needed testing. Neither
-would have been found by reading the code.
+1. **`getByRole('alert')` is ambiguous on any page reached by a client-side
+   navigation.** Next renders its route announcer as `role="alert"`, so the bare
+   role resolves to two elements and Playwright's strict mode fails. Two specs
+   in this phase hit it. Scope to `main`, as the reset specs already do.
+2. **A page-wide `toHaveCount(0)` couples a spec to every test before it.** The
+   "no seeded account offers a new invitation" assertion was written across the
+   whole page, and an earlier test in the same file leaves an unclaimed account
+   behind on purpose — correctly. It is asserted per row now.
+3. **`newUserId()` exists because `guarded` authorizes before it works.** Every
+   other model lets the database invent a cuid; account creation cannot, because
+   the audit row is written from the request and an id invented halfway through
+   the insert is an id that row never sees. The alternatives are an audit row
+   with no `resourceId`, or authorizing after the account exists.
 
 Where this could go next, in no particular order and none of it queued:
 
-- **Account administration.** Now the largest named gap. No screen creates an
-  account or sets somebody's first password; the matrix already says `admin`
-  may, and the surface does not exist. The interesting part is that issuing a
-  credential and resetting one are different decisions that look identical in a
-  form.
 - **Rate-limiting the reset request form.** An unauthenticated form that sends
   mail is a form somebody can point at a list of addresses. What it cannot do is
   *answer* — every outcome is one sentence — so today's exposure is mail volume
@@ -114,7 +88,7 @@ counseling, non-response correlates with the reason people are attending, so
 this policy's fee falls hardest on the clients least able to answer, and the
 practice learns about it as attrition rather than as complaints. The seeded
 quarter reads **29 charged of 677 (4.28%)**, unchanged by this phase — correctly,
-since signing in and getting back in touch no part of scheduling. Six phases of preconditions have
+since who may sign in touches no part of scheduling. Six phases of preconditions have
 removed ways of charging the *wrong* people, and every one of those guards is
 green: 0 charged without a delivered message, 0 charged when never messaged, 0
 charged for a session moved too late to re-ask. **None of them touches capacity,

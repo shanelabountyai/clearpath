@@ -456,7 +456,12 @@ function sourceFiles(exclude: (path: string) => boolean) {
  * by accident.
  */
 it('no credential column is named outside the auth module', () => {
-  const columns = /\b(passwordHash|totpSecret|pendingTotpSecret|totpLastStep|tokenHash)\b/;
+  // `codeHash` joined the list with the invitation code, and the reason it has
+  // to is the practice page: that screen legitimately *shows* a code once, and
+  // a page holding a plaintext credential is one careless `select` from also
+  // holding the column it is checked against.
+
+  const columns = /\b(passwordHash|totpSecret|pendingTotpSecret|totpLastStep|tokenHash|codeHash)\b/;
   const offenders = sourceFiles((p) => p.startsWith('src/auth/')).filter((p) =>
     columns.test(readFileSync(p, 'utf8')),
   );

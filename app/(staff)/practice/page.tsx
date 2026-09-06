@@ -4,9 +4,11 @@ import { guarded } from '../../../src/auth/guard';
 import { Badge, Card, Field, PageHeader, money } from '../../../src/ui/primitives';
 import { ROLE_LABEL } from '../../../src/ui/shell';
 import { withDenial } from '@/src/ui/denied';
-import { requiresSecondFactor } from '../../../src/auth/permissions';
+import { ROLES, requiresSecondFactor } from '../../../src/auth/permissions';
+import { credentialRoutes, mayBeNamedSupervisor, supervisionRule } from '../../../src/auth/accounts';
 import { Button } from '@/src/ui/button';
-import { clearSecondFactorAction } from './actions';
+import { clearSecondFactorAction, setAccountActiveAction } from './actions';
+import { NewAccountForm, ReissueForm } from './forms';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,7 +41,29 @@ async function PracticePage() {
     }),
   );
 
-  const supervisors = data.users.filter((u) => u.supervisees.length > 0);
+  /**
+   * Which of these rows have been claimed, asked as a question rather than
+   * selected as a column. The column that answers it is on the list no file
+   * outside `src/auth/` may name — the same list the comment above is careful
+   * not to write out — and that lint is why this is a function call. What
+   * crosses the boundary is the conclusion; there is no shape of careless
+   * `select` on this side that turns it back into a credential.
+   */
+  const routes = await credentialRoutes(data.users.map((u) => u.id));
+
+  // Anybody may supervise who holds the role, not only those already doing it.
+  // The predicate is `mayBeNamedSupervisor` rather than a comparison written
+  // here: a page filtering a staff list on a role is a component deciding from
+  // one, and it is the same rule `accountComplaint` checks the submitted form
+  // against — so the two agreeing is one function rather than a convention.
+  const supervisors = data.users
+    .filter((u) => u.active && mayBeNamedSupervisor(u.role))
+    .map((u) => ({ id: u.id, name: u.name }));
+  const supervising = data.users.filter((u) => u.supervisees.length > 0);
+
+  const roleOptions = ROLES
+    .filter((r) => r !== 'client')
+    .map((r) => ({ value: r, label: ROLE_LABEL[r]!, supervision: supervisionRule(r) }));
 
   return (
     <>
@@ -53,7 +77,7 @@ async function PracticePage() {
               <table className="w-full min-w-[520px] border-collapse text-body">
                 <thead>
                   <tr className="text-left text-muted">
-                    {['Name', 'Role', 'Supervised by', 'Status', 'Second factor'].map((h) => (
+                    {['Name', 'Role', 'Supervised by', 'Status', 'Second factor', ''].map((h) => (
                       <th key={h} className="border-b py-2 font-medium" style={{ borderColor: 'var(--border)' }}>{h}</th>
                     ))}
                   </tr>
@@ -70,16 +94,51 @@ async function PracticePage() {
                         {u.supervisor ? u.supervisor.name : <span className="text-subtle">—</span>}
                       </td>
                       <td className="border-b py-2" style={{ borderColor: 'var(--border)' }}>
-                        {u.active ? <Badge tone="success">Active</Badge> : <Badge>Inactive</Badge>}
+                        {!u.active ? <Badge>Inactive</Badge>
+                          : routes[u.id] === 'invite' ? <Badge tone="warning">Invited</Badge>
+                          : <Badge tone="success">Active</Badge>}
                       </td>
                       <td className="border-b py-2" style={{ borderColor: 'var(--border)' }}>
                         <SecondFactor id={u.id} role={u.role} enrolled={!!u.totpEnrolledAt} />
+                      </td>
+                      <td className="border-b py-2 align-top" style={{ borderColor: 'var(--border)' }}>
+                        <div className="flex flex-wrap items-start gap-2">
+                          {/*
+                            Only drawn where an invitation is still the right
+                            door. An account whose owner has set a password gets
+                            a reset, which asks for their second factor — and a
+                            form post here lands on the same refusal, so this is
+                            the screen agreeing with the rule rather than
+                            enforcing it.
+                          */}
+                          {u.active && routes[u.id] === 'invite' ? (
+                            <ReissueForm userId={u.id} name={u.name} email={u.email} />
+                          ) : null}
+                          <ActiveToggle id={u.id} active={u.active} />
+                        </div>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+          </Card>
+
+          {/*
+            Issuing a credential and resetting one look identical in a form and
+            are different decisions. A reset asks whether a mailbox still belongs
+            to somebody who already holds this account. This asks nothing about
+            history, because there is none — so it cannot lean on the account for
+            any of its assurance, which is why it takes two channels.
+          */}
+          <Card>
+            <h2 className="font-semibold">Add someone</h2>
+            <p className="mt-1 max-w-prose text-body text-muted">
+              Creates the account and issues an invitation. The link goes to their mailbox;
+              a code appears here once, for you to hand over some other way. Both are needed,
+              and neither is enough.
+            </p>
+            <NewAccountForm roles={roleOptions} supervisors={supervisors} />
           </Card>
 
           <Card>
@@ -89,11 +148,11 @@ async function PracticePage() {
               both read access to progress notes and the co-signature queue — no deploy, no
               cache to clear.
             </p>
-            {supervisors.length === 0 ? (
+            {supervising.length === 0 ? (
               <p className="text-body text-muted">Nobody is currently supervising.</p>
             ) : (
               <ul className="space-y-3">
-                {supervisors.map((s) => (
+                {supervising.map((s) => (
                   <li key={s.id} className="flex flex-wrap items-center gap-2 text-body">
                     <span className="font-medium">{s.name}</span>
                     <span aria-hidden className="text-subtle">→</span>
@@ -217,6 +276,28 @@ function SecondFactor({ id, role, enrolled }: { id: string; role: string; enroll
       */}
       <Button type="submit" variant="danger" className="text-caption">
         Clear
+      </Button>
+    </form>
+  );
+}
+
+/**
+ * Leaving, and coming back.
+ *
+ * Deactivating is the whole of "removing" somebody: nothing deletes a user,
+ * because their id is on every note they wrote and every audit row they made,
+ * and a trail that can lose the person it names is not a trail. It ends their
+ * live sessions in the same transaction rather than waiting out an idle
+ * timeout — somebody who has left should not keep a client's record open on the
+ * way out of the building.
+ */
+function ActiveToggle({ id, active }: { id: string; active: boolean }) {
+  return (
+    <form action={setAccountActiveAction}>
+      <input type="hidden" name="userId" value={id} />
+      <input type="hidden" name="active" value={active ? 'false' : 'true'} />
+      <Button type="submit" variant={active ? 'danger' : 'quiet'} className="text-caption">
+        {active ? 'Deactivate' : 'Reactivate'}
       </Button>
     </form>
   );

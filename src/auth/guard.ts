@@ -172,7 +172,19 @@ export type AuthAction =
    * a clinical account would be the bug this whole phase exists to prevent —
    * visible in the log rather than only in a branch.
    */
-  | 'reset_request' | 'reset_second_factor' | 'reset_complete';
+  | 'reset_request' | 'reset_second_factor' | 'reset_complete'
+  /**
+   * An account existing, and an account being claimed.
+   *
+   * `invite_issued` sits beside the `guarded` row that authorized the creation
+   * rather than replacing it: the guard's row names the administrator who
+   * decided, and this one names the account the decision was about, with no
+   * actor to attribute it to yet. `invite_accepted` has the same shape as a
+   * refused sign-in and for the same reason — a run of `allowed: false` rows
+   * against one new account is somebody guessing at the code, and it should
+   * read like the guessing it is.
+   */
+  | 'invite_issued' | 'invite_accepted';
 
 export async function authEvent(
   subject: { id: string; role: Role },

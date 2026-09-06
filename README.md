@@ -72,6 +72,43 @@ with an idle timeout and an absolute ceiling. Signing out, deactivating a user
 and changing a password all end live sessions immediately rather than at the
 next timeout.
 
+### Making an account exist
+
+Creating an account and resetting one look identical in a form — an address, a
+link, a box to type a password into — and they answer different questions. A
+reset asks whether the mailbox still belongs to somebody who already holds this
+account. An invitation asks nothing about history, because there is none.
+
+That difference matters here specifically, because the reset rules refuse a
+clinical account that has never enrolled a second factor: a link to one is a
+takeover on mailbox access alone. **A brand new clinical account is exactly that
+shape.** So an invitation cannot be a link and nothing else, or this reopens the
+door the reset flow closed.
+
+It is **two channels** instead. The link goes to the mailbox; an eight-character
+code is shown to the practice manager once, on screen, to be handed over some
+other way — read out across a desk or down a phone. Neither half is sufficient
+on its own, and the code is never mailed, never in a URL, and never written to
+`OutboxMessage`. The honest statement of what that buys is narrow, and the code
+says so: **an administrator cannot complete an invitation to a mailbox they do
+not control.**
+
+The line that keeps administrative powers from composing into impersonation is
+one function:
+
+```ts
+export function credentialRoute(user: { hasPassword: boolean }): CredentialRoute {
+  return user.hasPassword ? 'reset' : 'invite';
+}
+```
+
+An invitation is only ever issuable to an account that has **never had a
+password**. Nothing in the module sets one — an administrator who could would,
+combined with clearing a second factor, be an administrator who could sign in as
+any clinician in the building, with every audit row naming the clinician. Once
+an owner claims their account that door shuts permanently, and clearing their
+second factor does not reopen it.
+
 ### Forgetting a password
 
 A reset link is a second credential with the same power as the first, delivered
@@ -134,11 +171,10 @@ and a test greps the rest of `src/` to prove no endpoint re-implements a role ch
 
 ## Known limitations (deliberate)
 
-- **No account administration.** There is no screen for creating an account or
-  setting somebody's first password; the matrix says `admin` may, and the
-  surface does not exist. Issuing a credential and resetting one are different
-  decisions that look identical in a form, which is the interesting part and the
-  reason it is unbuilt rather than half-built.
+- **Nobody can be removed, only deactivated.** Their id is on every note they
+  wrote and every audit row they made, and a trail that can lose the person it
+  names is not a trail. Deactivating ends their sessions immediately and revokes
+  anything in flight.
 - **Nothing actually sends mail.** `ResetMailer` is an interface with one driver,
   which writes links to a gitignored directory — the same shape as the carrier
   port. With `RESET_MAILER` unset the reset flow refuses at the moment somebody
@@ -214,8 +250,8 @@ createdb clearpath_dev clearpath_test clearpath_e2e clearpath_shadow
 npm install
 npm run db:setup     # migrate all three, generate the client, seed dev + e2e
 npm run dev          # http://localhost:3700
-npm test             # 2,035 unit + integration tests
-npm run test:e2e     # 86 Playwright tests against a production build
+npm test             # 2,088 unit + integration tests
+npm run test:e2e     # 96 Playwright tests against a production build
 npm run verify:seed  # the seeded quarter, against its own success metrics
 ```
 
@@ -369,5 +405,6 @@ means replacing that file's values and nothing else.
 | The carrier port, "delivered", and "in time to answer" | [`src/messaging/carrier.ts`](src/messaging/carrier.ts) |
 | The freed hour, and who may be offered it | [`src/scheduling/openings.ts`](src/scheduling/openings.ts) |
 | What a reset link may do, and the case it may not | [`src/auth/recovery.ts`](src/auth/recovery.ts) |
+| Which door an account gets, and why an admin cannot set a password | [`src/auth/accounts.ts`](src/auth/accounts.ts) |
 | The seed's own success metrics | [`prisma/metrics.ts`](prisma/metrics.ts) |
 | Why any of it is shaped this way | [`WRITEUP.md`](WRITEUP.md) |

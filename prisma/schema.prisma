@@ -82,6 +82,7 @@ model User {
 
   authSessions   AuthSession[]
   passwordResets PasswordReset[]
+  invitations    Invitation[]
 
   createdAt                 DateTime            @default(now())
   rescheduleRequestsHandled RescheduleRequest[]
@@ -177,6 +178,53 @@ model PasswordReset {
   revokedReason String?
 
   @@index([userId, usedAt])
+  @@index([expiresAt])
+}
+
+/// An account that exists and has never been claimed.
+///
+/// A separate table from `PasswordReset` rather than a `kind` column on it, and
+/// the reason is that they are different decisions with different rules — see
+/// the header of `src/auth/accounts.ts`. A reset asks whether a mailbox still
+/// belongs to somebody who already holds this account; an invitation hands over
+/// an account nobody holds yet. Sharing a table would have meant one row shape
+/// carrying two sets of conditions and a branch on every read.
+model Invitation {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 of the link's token. The link goes to the person's mailbox.
+  tokenHash String @unique
+
+  /// SHA-256 of the short code, normalized. The code goes by some other route
+  /// entirely — read out by the practice manager — and is what stops a link in
+  /// a mailbox from being the whole of a new clinical account's way in.
+  ///
+  /// Stored as a digest for the same reason a password is: a dump of this table
+  /// must not be a set of working credentials.
+  codeHash String
+
+  /// Wrong codes so far. At `MAX_CODE_ATTEMPTS` the invitation is revoked
+  /// rather than throttled — re-issuing is one click for the practice manager
+  /// and a dead end for anybody else.
+  attempts Int @default(0)
+
+  createdAt DateTime
+  /// Long, unlike a reset link: half its life is somebody waiting on a phone
+  /// call about the code, and this is sent to a person who does not work here
+  /// yet.
+  expiresAt DateTime
+
+  /// Claimed. The account has a password from this moment, and
+  /// `credentialRoute` never returns `invite` for it again.
+  acceptedAt DateTime?
+
+  revokedAt DateTime?
+  /// `superseded`, `code_attempts`, `deactivated`. A reason code, never a sentence.
+  revokedReason String?
+
+  @@index([userId, acceptedAt])
   @@index([expiresAt])
 }
 

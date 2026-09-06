@@ -514,15 +514,38 @@ it('nothing outside the auth module touches the reset table', () => {
  * nothing else may write the column — which the credential lint already says
  * for every file outside `src/auth/`, and this says for the ones inside it.
  */
-it('only sessions.ts and recovery.ts can set a password', () => {
+it('only the three files that do the proving can set a password', () => {
   // `hashPassword` is the chokepoint rather than the column name: `demo.ts`
-  // names `passwordHash` in a `where` clause and sets nothing, and a lint that
+  // names the column in a `where` clause and sets nothing, and a lint that
   // could not tell the two apart would be one somebody adds an exception to.
+  //
+  // `accounts.ts` joined the list when invitations landed, and widening a lint
+  // is the moment to say what still holds rather than the moment to stop
+  // looking. It writes a password only through `acceptInvitation`, which goes
+  // through `resolveInvitation` first — and that refuses any account
+  // `credentialRoute` does not answer `invite` for, which is every account
+  // whose owner has ever set one. So it can set a *first* password and cannot
+  // reach an established account at all, which is the property this lint is
+  // protecting stated for a third door rather than an exception to it. The
+  // behaviour is asserted directly in `accounts.test.ts`, under "refuses an
+  // account whose owner has already set a password" and "stays shut after the
+  // practice manager clears the second factor".
   const offenders = readdirSync('src/auth')
     .filter((f) => f.endsWith('.ts') && !f.endsWith('.test.ts'))
-    .filter((f) => !['sessions.ts', 'recovery.ts', 'password.ts'].includes(f))
+    .filter((f) => !['sessions.ts', 'recovery.ts', 'password.ts', 'accounts.ts'].includes(f))
     .filter((f) => /\bhashPassword\s*\(/.test(readFileSync(`src/auth/${f}`, 'utf8')));
   expect(offenders).toEqual([]);
+});
+
+/**
+ * And the guard on the guard: the third door is only safe because it asks
+ * `credentialRoute` before it hashes anything, so a future edit that dropped
+ * the resolver would leave a file that can set a password on any account.
+ */
+it('the invitation path asks which door the account gets before it sets one', () => {
+  const src = readFileSync('src/auth/accounts.ts', 'utf8');
+  expect(src).toContain('credentialRoute');
+  expect(src.indexOf('resolveInvitation')).toBeLessThan(src.indexOf('hashPassword('));
 });
 
 /**
