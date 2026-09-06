@@ -29,6 +29,16 @@ decoration, it is the first thing a reader must hit.
    scattered `status = ...` assignments.
 9. **Alerts route to the treating clinician only.** Never a shared inbox, never
    a channel, never front desk.
+10. **Credentials never leave `src/auth/`.** No file outside it names
+    `passwordHash`, `totpSecret`, `pendingTotpSecret`, `totpLastStep` or
+    `tokenHash`, and nothing outside the sign-in flow touches the session
+    cookie. `sessions.test.ts` greps `src/` and `app/` and fails the build.
+    Containment rather than vigilance: a page that *can* select a credential
+    column is one careless `select` from putting it in its own HTML.
+11. **Only a fully authenticated session yields an `Actor`.** The
+    half-authenticated stage — password accepted, second factor not — is a
+    distinct variant of `Resolved` with no actor on it, so authorizing from an
+    unfinished sign-in is a type error rather than a review comment.
 
 ## Local environment
 

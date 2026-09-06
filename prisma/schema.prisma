@@ -48,8 +48,92 @@ model User {
   amendments    NoteAmendment[]
   alerts        Alert[]
 
+  /// scrypt, encoded with its own parameters. See `src/auth/password.ts`.
+  ///
+  /// Nullable because an account can exist before anybody has set a password
+  /// on it — a new hire whose row the practice manager created this morning.
+  /// That account cannot sign in, and the login route says the same sentence
+  /// it says for a wrong password: an account with no credential is exactly
+  /// the one an attacker most wants to find.
+  passwordHash String?
+
+  /// Base32 TOTP secret, and when the person finished enrolling.
+  ///
+  /// Null means not enrolled. For a role `requiresSecondFactor` covers, that
+  /// is not a way past the check — it is a mandatory enrolment before the
+  /// session becomes usable, which is the only ordering that does not leave a
+  /// clinical account reachable with one factor.
+  totpSecret     String?
+  totpEnrolledAt DateTime?
+
+  /// The last TOTP step this account spent, so it can never be spent again.
+  ///
+  /// A code is valid for its whole 30-second window, so one shoulder-surfed or
+  /// phished code works again until it expires. Recording the step is what
+  /// makes every accepted code single-use. On the account rather than on the
+  /// session, because a stolen code must not work in a *different* session.
+  totpLastStep BigInt?
+
+  /// Failed sign-in throttling. Escalating and self-expiring, never permanent —
+  /// see `src/auth/lockout.ts` for why a hard lock would be a weapon.
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  lastLoginAt      DateTime?
+
+  authSessions AuthSession[]
+
   createdAt                 DateTime            @default(now())
   rescheduleRequestsHandled RescheduleRequest[]
+}
+
+/// A signed-in staff session, held server-side.
+///
+/// The cookie carries an opaque random token and nothing else. What is stored
+/// here is its SHA-256, so the session table is not itself a set of working
+/// credentials: a dump of this table lets nobody sign in as anybody. That is
+/// the same reasoning as `passwordHash`, applied to the thing the password
+/// buys you, and it is the difference between a login and the previous
+/// `clearpath_user` cookie, which was a user id anybody could type.
+model AuthSession {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 of the bearer token. The token itself exists only in the cookie.
+  tokenHash String @unique
+
+  createdAt DateTime
+  /// Advanced on use, and what the idle timeout is measured from.
+  lastSeenAt DateTime
+  /// The absolute ceiling. A session does not outlive this however active.
+  expiresAt DateTime
+
+  /// When the second factor was satisfied.
+  ///
+  /// Null is the half-authenticated state: the password was right and nothing
+  /// else has happened yet. A session in that state reaches the challenge
+  /// screen and no other page, which is why this is a column rather than a
+  /// separate "pending" table — there is one session object through the whole
+  /// sign-in, and its authority grows by one field.
+  secondFactorAt DateTime?
+
+  /// A secret generated for enrolment and not yet proved by a code.
+  ///
+  /// Held on the session rather than round-tripped through a hidden form
+  /// field, because a secret the browser hands back is a secret an attacker
+  /// can substitute — enrol their own authenticator against somebody else's
+  /// account and the second factor is theirs. It is promoted onto the `User`
+  /// only when a code generated from it verifies, so an enrolment abandoned
+  /// halfway leaves an account with no secret rather than one nobody holds.
+  pendingTotpSecret String?
+
+  revokedAt DateTime?
+  /// Why it ended: `signed_out`, `deactivated`, `superseded`, `password_changed`.
+  /// A reason code, never a sentence about a person.
+  revokedReason String?
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
 }
 
 enum ReminderPreference {

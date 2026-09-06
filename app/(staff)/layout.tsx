@@ -1,8 +1,8 @@
 import Link from 'next/link';
-import { currentSession, switchableUsers } from '../../src/session';
+import { requireSession } from '../../src/session';
 import { NavLinks, ROLE_LABEL } from '../../src/ui/shell';
-import { requiresSecondFactor, type Role } from '../../src/auth/permissions';
-import { endBreakGlass, switchUser } from '../actions';
+import { endBreakGlass } from '../actions';
+import { signOutAction } from '../login/actions';
 import { Wordmark } from '@/src/ui/logo';
 import { BreakGlassBar } from '@/src/ui/primitives';
 
@@ -10,142 +10,80 @@ export const dynamic = 'force-dynamic';
 
 /**
  * The staff shell. The client-facing form pages sit outside this group and get
- * none of it -- no navigation, no identity switcher, nothing that suggests the
- * person holding a form link is looking at a practice's internal tool.
+ * none of it -- no navigation, no identity, nothing that suggests the person
+ * holding a form link is looking at a practice's internal tool.
+ *
+ * This used to render a person picker when nobody was selected, because there
+ * was nobody to be signed in *as*. It now requires a session and redirects to
+ * `/login` without one, which means the layout no longer has an unauthenticated
+ * branch at all — the shell either has an actor or does not render.
  */
 export default async function StaffLayout({ children }: { children: React.ReactNode }) {
-  const session = await currentSession();
-  const users = await switchableUsers();
+  const session = await requireSession();
 
   return (
-    <>
-      {!session ? (
-        <main className="mx-auto max-w-xl px-6 py-16">
-          <SignInPanel users={users} />
-        </main>
-      ) : (
-        <div className="flex min-h-screen">
-            <aside
-              className="hidden w-56 shrink-0 flex-col justify-between border-r px-3 py-4 md:flex"
-              style={{ borderColor: 'var(--border)', background: 'var(--surface-sunken)' }}
-            >
-              <div>
-                <Link href="/" className="mb-5 block px-2.5">
-                  <Wordmark practice="Stillwater Counseling" size="sm" />
-                </Link>
-                <NavLinks actor={session.actor} />
-              </div>
-              <UserSwitcher users={users} currentId={session.user.id} />
-            </aside>
-
-            <div className="min-w-0 flex-1">
-              {session.actor.breakGlass && <BreakGlassBar reason={session.actor.breakGlass.reason} endAction={endBreakGlass} />}
-              <main className="mx-auto max-w-[1200px] px-5 py-6">{children}</main>
-            </div>
-          </div>
-      )}
-    </>
-  );
-}
-
-type SwitchUser = { id: string; name: string; role: Role; supervisor: { name: string } | null };
-
-function SignInPanel({ users }: { users: SwitchUser[] }) {
-  return (
-    <div>
-      <Wordmark practice="Stillwater Counseling — practice operations" />
-
-      <div
-        className="mt-6 rounded-[var(--radius-lg)] border p-4"
-        style={{ borderColor: 'var(--warning)', background: 'var(--warning-soft)' }}
+    <div className="flex min-h-screen">
+      <aside
+        className="hidden w-56 shrink-0 flex-col justify-between border-r px-3 py-4 md:flex"
+        style={{ borderColor: 'var(--border)', background: 'var(--surface-sunken)' }}
       >
-        <p className="text-body">
-          <strong>Learning project, synthetic data only.</strong> Clearpath applies
-          HIPAA-inspired design principles. It is not HIPAA-compliant software and must
-          never hold real client data.
-        </p>
+        <div>
+          <Link href="/" className="mb-5 block px-2.5">
+            <Wordmark practice="Stillwater Counseling" size="sm" />
+          </Link>
+          <NavLinks actor={session.actor} />
+        </div>
+        <SignedInAs
+          name={session.user.name}
+          role={session.user.role}
+          secondFactor={session.secondFactor}
+        />
+      </aside>
+
+      <div className="min-w-0 flex-1">
+        {session.actor.breakGlass && (
+          <BreakGlassBar reason={session.actor.breakGlass.reason} endAction={endBreakGlass} />
+        )}
+        <main className="mx-auto max-w-[1200px] px-5 py-6">{children}</main>
       </div>
-
-      <p className="mt-6 text-body text-muted">
-        There is no authentication here — pick a person and the app runs as them.
-        Authorization is real: every screen below is decided by the same permission
-        matrix a signed-in user would meet.
-      </p>
-
-      <p className="mt-2 text-caption text-subtle">
-        The roles marked <span className="tracking-wide uppercase">2FA seam</span> are the
-        ones a real deployment would put behind a second factor — they reach clinical
-        records, the practice manager through break-glass. The policy that decides that is
-        written and tested in <code>permissions.ts</code>; the check it would gate is not
-        built, because a login that always succeeds looks like a feature.
-      </p>
-
-      <ul className="mt-4 space-y-1.5">
-        {users.map((u) => (
-          <li key={u.id}>
-            <form action={switchUser}>
-              <input type="hidden" name="userId" value={u.id} />
-              <button
-                type="submit"
-                className="flex w-full items-center justify-between rounded-[var(--radius)] border px-3 py-2 text-left transition-colors hover:bg-[var(--surface-inset)]"
-                style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
-              >
-                <span className="font-medium">
-                  {u.name}
-                  {requiresSecondFactor(u.role) && (
-                    <span
-                      className="ml-2 align-middle text-micro font-normal tracking-wide text-subtle uppercase"
-                      title="This role reaches clinical records, so a real deployment would require a second factor here. There is no authentication in this project — see WRITEUP.md."
-                    >
-                      2FA seam
-                    </span>
-                  )}
-                </span>
-                <span className="text-caption text-muted">
-                  {ROLE_LABEL[u.role]}
-                  {u.supervisor ? ` · supervised by ${u.supervisor.name}` : ''}
-                </span>
-              </button>
-            </form>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }
 
-/** Looks like a dev tool on purpose. It must never read as production chrome. */
-function UserSwitcher({ users, currentId }: { users: SwitchUser[]; currentId: string }) {
-  const current = users.find((u) => u.id === currentId);
+/**
+ * Who you are, and the way out.
+ *
+ * The dashed dev-tool border this replaces was load-bearing honesty: it said
+ * "this is a switcher, not a login". It is gone because the thing it was
+ * disclaiming is gone. What stays is the second-factor line, which now reports
+ * a fact instead of a gap.
+ */
+function SignedInAs({
+  name,
+  role,
+  secondFactor,
+}: {
+  name: string;
+  role: string;
+  secondFactor: { required: boolean; satisfied: boolean };
+}) {
   return (
-    <form
-      action={switchUser}
-      className="rounded-[var(--radius)] border border-dashed p-2"
-      style={{ borderColor: 'var(--border-strong)' }}
+    <div
+      className="rounded-[var(--radius)] border p-2.5"
+      style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
     >
-      <label htmlFor="userId" className="block font-mono text-nano tracking-wide text-subtle uppercase">
-        dev: acting as
-      </label>
-      <select
-        id="userId"
-        name="userId"
-        defaultValue={currentId}
-        className="mt-1 w-full rounded-[3px] border bg-[var(--surface-raised)] px-1.5 py-1 text-caption"
-        style={{ borderColor: 'var(--border)' }}
-      >
-        {users.map((u) => (
-          <option key={u.id} value={u.id}>
-            {u.name} — {ROLE_LABEL[u.role]}
-          </option>
-        ))}
-      </select>
-      <div className="mt-1.5 flex items-center justify-between">
-        <span className="text-nano text-subtle">{current ? ROLE_LABEL[current.role] : ''}</span>
+      <p className="text-caption font-medium">{name}</p>
+      <p className="text-micro text-muted">{ROLE_LABEL[role] ?? role}</p>
+      {secondFactor.required && secondFactor.satisfied && (
+        <p className="mt-1 text-nano tracking-wide text-subtle uppercase" title="This role requires a second factor, and this session satisfied it.">
+          two factors
+        </p>
+      )}
+      <form action={signOutAction} className="mt-2">
         <button type="submit" className="text-micro font-medium text-accent hover:underline">
-          Switch
+          Sign out
         </button>
-      </div>
-    </form>
+      </form>
+    </div>
   );
 }
-

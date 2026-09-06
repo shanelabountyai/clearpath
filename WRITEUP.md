@@ -17,8 +17,8 @@ Kept as the work happens, not reconstructed afterwards.
 7. **Group sessions** — a plural booking of a singular appointment, paid for
    with two exclusion constraints instead of a rewrite.
 8. **The client portal** — a door sized to what a leaked link would disclose.
-9. **Where authentication would attach** — the one feature whose right build
-   was not building it.
+9. **Authentication** — the feature this write-up argued against building, and
+   the standard that argument set for building it.
 10. **The confirmation loop and its fee** — an automatic charge, and the four
     things it is not allowed to conclude.
 11. **The reply nobody is allowed to read** — an inbound channel whose defining
@@ -384,7 +384,8 @@ each naming its own client, in the same transaction as the appointments.
 A client gets a link to their own schedule. The design question is not what to
 show them — it is what a forwarded link discloses.
 
-Because there is no login, holding the link *is* the authentication, which is
+Clients never log in — that is still true, and deliberately so, now that staff
+do. Holding the link *is* the authentication, which is
 exactly as strong as the email it arrived in. That is not a reason to refuse to
 build it; the form door already made this trade and made it well. It is a reason
 to size what is behind it to what you would accept leaking. So the portal shows
@@ -483,41 +484,157 @@ times a year. The whole failure class costs one `while` in the generator.
 
 ---
 
-## 9. Where authentication would attach
+## 9. Authentication, and the argument it had to answer
 
-The last P2 item is two-factor auth for clinical roles, and the right build was
-not to build it.
+For five phases this section was called *Where authentication would attach*,
+and it argued that the right build was not to build it. That argument is worth
+keeping, because it is the standard the replacement had to meet:
 
-There is no authentication in Clearpath. Adding a login that always succeeds,
-or a TOTP field seeded with a fixed secret, would not have taught anything about
-access control — it would have added a thing that *looks* like a security
-control to a project whose entire argument is that its access control is real.
-A check that cannot fail is worse than an absent one, because it reads as
+> Adding a login that always succeeds, or a TOTP field seeded with a fixed
+> secret, would not have taught anything about access control — it would have
+> added a thing that *looks* like a security control to a project whose entire
+> argument is that its access control is real. A check that cannot fail is
+> worse than an absent one, because it reads as present.
+
+That is still true, and it is the whole specification for what got built. The
+question was never "is there a login screen". It is whether the thing behind it
+can refuse.
+
+### What `requiresSecondFactor` was, and what it is now
+
+`requiresSecondFactor(role)` sat in `permissions.ts` for five phases as policy
+that **nothing read**. The line was drawn by capability rather than job title —
+the three clinical roles reach notes, front desk does not, and the practice
+manager is on the list despite not being a clinical role at all, because
+break-glass makes theirs the most valuable credential in the building. All of
+that survives unchanged. What changed is that something now reads it.
+
+The enforcement is a type rather than a check:
+
+```ts
+export type Resolved =
+  | { stage: 'ready'; sessionId: string; user: SessionUser; actor: Actor }
+  | { stage: 'second_factor'; sessionId: string; user: SessionUser }
+  | { stage: 'enrol_second_factor'; sessionId: string; user: SessionUser }
+```
+
+Only `ready` carries an `Actor`. A session that has cleared a password and
+nothing else is perfectly representable — it has to be, it is a real state a
+real person is sitting in — but there is no way to get an actor out of it, so
+no caller can authorize from a half-finished sign-in. There is no branch for
+anybody to forget, and no future page that gets it wrong. `currentSession()`
+returns `null` for it, `requireSession()` redirects, and the roughly fifty
+pages and server actions downstream did not change a line: they take `{ actor }`
+off `requireSession()`, exactly as they did when the session was a cookie
+naming a user id. The seam the old `session.ts` claimed to be, it turned out to
+actually be.
+
+### Three decisions worth the words
+
+**A code is spent once.** TOTP's weakness is not the digest — SHA-1 and six
+digits are the interoperability contract, and the security rests on the shared
+secret and the 30-second step. The weakness is that a code stays valid for the
+rest of its window, so one read over a shoulder or lifted from a phishing page
+works again. So the accepted step is recorded, and any step at or before it is
+refused even though the HMAC is correct. It is recorded on the **account**, not
+the session, which is the case that matters: an attacker who also has the
+password opens a session of their own, and the stolen code has to be dead
+*there*.
+
+**Enrolment is mandatory, not offered.** A role that requires a second factor
+and has not enrolled lands on `enrol_second_factor` and can reach nothing else.
+The alternative — treating "no secret yet" as "no second factor to check" —
+leaves every clinical account reachable with one factor until somebody
+remembers to finish setup, which is the same class of bug as a check that
+cannot fail. The pending secret lives on the session rather than in a hidden
+form field, because a secret the browser hands back is a secret an attacker can
+substitute, and enrolling their own authenticator against somebody else's
+account is a better outcome for them than stealing a password.
+
+**The lockout expires on its own, and is capped.** This is the one where the
+domain changes the answer. A permanent lock triggered by failed attempts is a
+denial-of-service that anybody holding a staff email address can fire, and here
+the target is a clinician who cannot open a progress note before a session —
+the practice would experience an attack on their availability as their own
+software refusing them. Capping at fifteen minutes still costs a guessing run
+almost everything: past three free attempts an attacker is down to a handful of
+tries an hour against a twelve-character minimum. The cap bounds the
+*defender's* loss, which a permanent lock does not, and that asymmetry is the
+argument.
+
+### The sameness of every refusal
+
+"No such account" and "wrong password" return the identical sentence, and an
+address matching no account still pays a full scrypt against a hash of a
+passphrase nobody holds. Both halves are one defence — a login that
+distinguishes them, in its words *or* in its timing, hands over the staff list.
+The lockout is the single exception and says so plainly, because somebody
+locked out needs to know to wait rather than to keep trying.
+
+The audit trail records refused sign-ins beside refused reads, with one
+deliberate hole: **an address matching no account writes no row at all**. There
+is nothing to name, and the alternative is storing the string that was typed —
+and people type their password into the email box. The audit table is
+append-only by database rule, so a password that lands there lands there
+permanently. A replayed code and a mistyped one are distinguished in the trail,
+where the difference is real, and not to the person typing, where it would tell
+an attacker their captured code had already been spent.
+
+### What the specs caught
+
+Two things, and both are the method working rather than anecdotes.
+
+**Enrolment spends a step.** The first spec written for the two-sessions replay
+case failed, and the implementation was right: confirming an enrolment is
+itself a use of a code, so the step it used is spent like any other. The
+alternative — verifying an enrolment without recording it — leaves the very
+first code a new clinician generates replayable for the rest of its window.
+That became its own named spec rather than a silent line in the fixture.
+
+**The e2e suite had to obey the rule it asked for.** Signing in through the real
+screens means the suite presents real codes, and two spec files signing the same
+person in inside one thirty-second window presented a code that person had
+already spent. The server refused it, correctly. The fix was for the suite to
+wait for an unspent step — not to relax the guard, and not to mint sessions
+behind the login's back. A test helper that had gone around the door would have
+left seventy-odd specs proving the application works for people who never
+signed in.
+
+### Departing from the brief
+
+Item 13 of the design brief asked for a dev-mode user switcher, "deliberately
+like a dev tool, never like production chrome". It is gone, and the brief is
+left as written rather than edited to match. The switcher existed because there
+was nothing to be signed in *as*; keeping it beside a real login would be a
+second door into the building whose only protection is a flag somebody has to
+set correctly. The e2e suite replaced it with the thing it was standing in for:
+`actAs` signs people in through the screens they use, so the door is exercised
+seventy-odd times a run as a side effect of every spec that needs somebody
 present.
 
-What did get built is the part that is genuinely this project's business: the
-**policy**. `requiresSecondFactor(role)` sits in `permissions.ts` beside
-`requiresCoSignature`, because which roles need a second factor is a
-role-derived rule and that file is where every role-derived rule lives. An
-identity provider attached later reads it; it does not restate it, and there is
-no second place for the two answers to disagree.
+### What is still not built, and why
 
-The line is drawn by capability rather than job title. The three clinical roles
-reach notes. Front desk does not, and their credential is worth a list of names
-and times. The practice manager is on the list despite not being a clinical
-role at all, because break-glass makes theirs the most valuable credential in
-the building: a stolen admin session is one typed reason away from a client's
-record, and the audit log would record that access faithfully, as them. The
-break-glass design that makes admin access *visible* is exactly what makes
-admin credentials *worth stealing*, and those are the same sentence.
+**Password recovery.** A clinician who loses their phone has no way back in.
+This is a real gap and not a modelled one, and it is unbuilt rather than
+half-built on purpose: recovery is the harder half of any authentication
+system and the half that most often becomes the way in. A reset link is a
+second credential with the same power as the first, delivered over email, and
+designing that properly — expiry, single use, what it may reach, what it must
+re-prove — is its own piece of work with its own failure modes. A version done
+carelessly here would undo the rest of this section.
 
-`Session` carries `secondFactor: { required, satisfied }` where `satisfied` is
-always false and nothing reads it — the seam, named, in the type. And the person
-picker marks those roles "2FA seam" with the reason, so the gap is visible in
-the product to anyone who opens it, rather than in a comment in a file nobody
-opens.
+**Account administration.** There is no screen for setting somebody's first
+password. The seed does it, through the same `setPassword` every other caller
+would use, which meets the same hashing and the same complexity rule. An
+account with no password cannot sign in and does not announce itself by failing
+differently — the account created this morning that nobody has set a password
+on is the one an attacker most wants to find.
 
----
+**Demo accounts on the sign-in screen.** The one deliberate breach, and it is
+labelled where it happens. Listing valid accounts on a login page is
+enumeration served up voluntarily. It is there because a public demo over
+invented data has to be openable, and it says what rule it is breaking rather
+than looking like a feature.
 
 ## 10. The confirmation loop, and the money at the end of it
 
@@ -780,8 +897,8 @@ because a plausible-looking placeholder on that particular path would be worse
 than none.
 
 **The endpoint is the only write in this application with no session behind
-it**, and it can cancel an appointment. It is not left open the way the dev-mode
-switcher is: a shared secret in the header, and with `INBOUND_WEBHOOK_SECRET`
+it**, and it can cancel an appointment. So it carries its own credential rather
+than borrowing the staff session's: a shared secret in the header, and with `INBOUND_WEBHOOK_SECRET`
 unset it refuses everything rather than defaulting to open — a webhook that
 quietly works without its secret is a webhook nobody notices is unauthenticated.
 The route classifies nothing, decides nothing, and does not echo the message
@@ -1597,7 +1714,9 @@ happened.
 | Rescheduling an attendee clears their group key | The exemption that lets co-attendees share a clinician has to end where the shared hour does, or two rescheduled attendees can land on each other |
 | The portal's reschedule request is a reason code, with no free-text field | A message box on a client-facing page is a channel for clinical content to arrive at the one desk that must never see it. Front desk phones them; that conversation is not this system's to hold |
 | The portal shows no appointment type | "Intake" and "extended" describe a clinical shape. It is on the messaging deny-list for the same reason, and a leaked link should disclose times, not care |
-| 2FA is a tested policy function and a named seam, not an implementation | A login that always succeeds is worse than no login, because it reads as a control. What belongs here is which roles need one, and that is a role-derived rule, so it lives beside every other role-derived rule |
+| 2FA is real TOTP, and only the `ready` session stage carries an actor | A login that always succeeds is worse than no login, because it reads as a control — so the check had to be one that can fail, and it fails four distinguishable ways. Making the enforcement a *type* rather than a check is what stops a future page authorizing from a half-finished sign-in: the half-authenticated stage is representable and has no actor to hand out |
+| The failed-login lockout expires on its own and caps at fifteen minutes | A lock an administrator must clear is a denial-of-service anybody holding a staff email can fire, and the target is a clinician who needs a progress note before a session. The cap still leaves a guessing run a handful of tries an hour; what it bounds is the defender's loss, which a permanent lock does not |
+| An accepted TOTP step is recorded on the account, not the session | A code is valid for its whole window, so one read over a shoulder works again. Recording it on the account is what kills it in the session an attacker opens with a password they also hold — which is the case worth defending |
 | The practice manager needs a second factor despite not being a clinical role | Break-glass is one typed reason from a record, and the log would record it faithfully as them. The design that makes their access visible is what makes their credential worth stealing |
 | The README's screenshots are captured by a spec, not taken by hand | A hand-taken screenshot is a claim about the product on the day someone remembered to take it. `npm run shots` drives the real build against the seeded practice, so a picture that has gone stale is a spec that fails to find what it is pointing at |
 | Producing a superbill needs both the fee and the demographics permission | It is both records at once. Guarding it twice meant no new matrix row and no new question: whoever may already see both halves may produce it, and the practice manager still has to break glass, because billing is not a carve-out from the rule that their clinical reach is logged |
@@ -1642,7 +1761,7 @@ happened.
 | `STOP` is its own classification, not a decline (a PRD amendment) | Read as a decline it cancels a session the client never mentioned; read as `unparsed` it earns an auto-reply, and replying to an opt-out is the one thing a carrier forbids. The right answer — stop messaging, say nothing — is neither of the three the PRD named, so the fourth was added and flagged rather than forced into one that fits badly |
 | Keyword matching is whole-message, never substring | "Yes if my ride works out" is not a yes. A substring match confirms somebody's Tuesday on the strength of a word order, and the cost of being wrong is an hour or a fee. `unparsed` reaches a person who can ask, which is the correct failure |
 | The auto-reply says what the number is for rather than naming the crisis line | The deny-list forbids `crisis` because it names why somebody might be attending, on a lock screen — and P1-3 requires the one message that can carry an external number to carry that one. Both requirements come from the same instinct and cannot both be met literally; "if you need urgent help right now, call or text 988 at any hour" keeps the information and loses only the label. 988 is real, because a plausible placeholder on that path would be worse than none |
-| The inbound webhook refuses everything when its secret is unset | It is the only write endpoint in the application with no session behind it and it can cancel an appointment, so it does not get the dev switcher's latitude. Defaulting to open would mean a webhook that works without its secret, which is a webhook nobody notices is unauthenticated. What it still cannot prove — that the carrier was told the truth about who sent the message — is named in the route rather than implied by its absence |
+| The inbound webhook refuses everything when its secret is unset | It is the only write endpoint in the application with no session behind it and it can cancel an appointment, so it gets no latitude at all. Defaulting to open would mean a webhook that works without its secret, which is a webhook nobody notices is unauthenticated. What it still cannot prove — that the carrier was told the truth about who sent the message — is named in the route rather than implied by its absence |
 | The confirmation report's rates are against what the practice was allowed to ask | A client on "no messages" was never in the denominator of a question nobody put to them, and dividing by them would flatter the confirmation rate by exactly the count of people the policy may not reach. `notRequired` stays a visible column for the same reason: an exemption that disappears from the report disappears from the decision |
 | A decline reuses the reschedule request's four reason codes | Two of them read oddly on a cancellation. The alternative is two places to add a fifth reason, two things for a report to union, and a client answering the same question with different words depending on which button they came in through. Reusing an imperfect vocabulary beats maintaining two |
 | The fee's precondition is a delivery receipt, not a queued message | A queued row proves the practice intended to ask. A dead number, a bouncing mailbox and a provider outage all produce the same evidence as a client ignoring you, so charging on intent means charging clients for the practice's own failed sends — and never finding out, because the failure looks exactly like the offence |
@@ -1686,10 +1805,12 @@ happened.
 
 It is a learning project on synthetic data. It applies HIPAA-inspired principles
 because they are good engineering discipline, and it is not HIPAA-compliant
-software. There is no authentication — the dev switcher is the seam where it
-would go, and *authorization* is the part built for real. There is no insurance
-billing beyond the superbill the client claims with themselves, no video, no
-diagnosis coding, and no clinician logs in from anywhere it can verify.
+software. Staff authentication is now real — password, session, and a second
+factor that can refuse — but there is no password recovery and no account
+administration, which are named gaps rather than modelled ones. There is no
+insurance billing beyond the superbill the client claims with themselves, no
+video, no diagnosis coding, and no clinician logs in from anywhere it can
+verify.
 
 Screener trends and the client portal were the two things this write-up
 originally listed as deliberate omissions, on the grounds that both are design

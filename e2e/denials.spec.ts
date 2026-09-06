@@ -1,6 +1,6 @@
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
-import { test, expect, USERS, userId } from './fixtures';
+import { test, expect, USERS, actAs } from './fixtures';
 
 /**
  * Every static staff route, as every seeded person, must answer.
@@ -45,10 +45,7 @@ test('the route tree is discovered, not assumed', () => {
 
 for (const [role, name] of Object.entries(USERS)) {
   test(`no route crashes for ${role}`, async ({ page }) => {
-    const id = userId(name);
-    await page.context().addCookies([
-      { name: 'clearpath_user', value: id, url: 'http://localhost:3700' },
-    ]);
+    await actAs(page, name);
 
     const crashed: string[] = [];
     for (const route of ROUTES) {

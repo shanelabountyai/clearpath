@@ -27,6 +27,8 @@ const { confirmAppointment, declineAppointment } = await import('../src/portal/s
 const { cancelAppointment, waiveFee } = await import('../src/scheduling/lifecycle');
 const { bookGroupSession } = await import('../src/scheduling/groups');
 const { assertSeedMetrics } = await import('./metrics');
+const { setPassword } = await import('../src/auth/sessions');
+const { DEMO_PASSWORD } = await import('../src/auth/demo');
 const { handleInboundReply } = await import('../src/messaging/inbound');
 const { runCarrier } = await import('../src/messaging/delivery');
 
@@ -91,6 +93,20 @@ async function main() {
 
   const clinicians = [rosa, dev, nour, tom, kai, priya];
   log(`${clinicians.length} clinicians (2 supervisors, 3 therapists, 1 associate under ${rosa.name})`);
+
+  // Every staff account gets the same published demo password, set through
+  // `setPassword` rather than by writing the column — the seed meets the same
+  // hashing and the same complexity rule staff do, so a seed that drifted from
+  // the policy would fail rather than quietly hash at some other cost.
+  //
+  // Nobody is pre-enrolled in a second factor. That is the more useful default
+  // and the more honest one: the first sign-in for a clinical role walks
+  // through mandatory enrolment, which is the part of the design worth seeing —
+  // "not set up yet" is a step you must complete, never a way past the check.
+  const staff = [...clinicians, frontDesk, manager, auditorUser];
+  const hiredAt = fixedClock(BOOKED_AT);
+  for (const person of staff) await setPassword(person.id, DEMO_PASSWORD, { clock: hiredAt });
+  log(`${staff.length} staff accounts given the demo password, none enrolled in a second factor`);
 
   // Everyone works Monday–Friday, 9:00 to 17:00.
   for (const c of clinicians) {
@@ -1008,15 +1024,22 @@ async function main() {
   log(`${breakGlassCases.length} break-glass events and 1 logged process-note refusal`);
   log(`${auditRows} audit rows in total`);
 
+  const account = (u: { name: string; email: string }) => `${u.name.padEnd(17)}${u.email}`;
   console.log(`
-Sign in as any of these (there is no password — the switcher is a dev tool):
+Sign in with the password  ${DEMO_PASSWORD}
 
-  Front desk    ${frontDesk.name}
-  Therapist     ${nour.name}
-  Associate     ${priya.name}    (supervised by ${rosa.name})
-  Supervisor    ${rosa.name}
-  Manager       ${manager.name}
-  Auditor       ${auditorUser.name}
+  Front desk    ${account(frontDesk)}
+  Therapist     ${account(nour)}
+  Associate     ${account(priya)}  (supervised by ${rosa.name})
+  Supervisor    ${account(rosa)}
+  Manager       ${account(manager)}
+  Auditor       ${account(auditorUser)}
+
+Front desk and auditor sign in with the password alone. The three clinical roles
+and the practice manager are asked for a second factor, and none of them is
+enrolled yet — the first sign-in walks through setting one up, which is the part
+worth watching: "not set up yet" is a step you have to finish, not a way past it.
+You will need an authenticator app, or the code the e2e suite computes for one.
 
 The demo: sign in as ${rosa.name}, co-sign one of ${priya.name}'s progress notes,
 then open the same client's process notes. Then sign in as ${auditorUser.name}

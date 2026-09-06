@@ -37,6 +37,41 @@ decide whether to turn the money on.
 
 ---
 
+## Signing in
+
+Staff sign in with an email and a password (scrypt, salted, with its cost
+parameters written into every row). The three clinical roles and the practice
+manager are then asked for a **second factor** — real TOTP, RFC 6238, verified
+against the [published test vectors](src/auth/totp.test.ts) so an ordinary
+authenticator app agrees with it.
+
+![The second-factor screen, addressed to Rosa Iyer: her password was accepted and nothing else has happened yet, and the session reaches no client record until the code is right. Below the field, a note that each code works once and a reused code is refused inside its own 30-second window.](docs/screenshots/second-factor.png)
+
+The property worth stating is not that the second screen appears. It is that
+the session has **no authority while it is showing**: `resolveSession` attaches
+an actor only to a session that has satisfied its second factor, so a
+half-finished sign-in is representable but cannot produce one. There is no
+branch for anybody to forget.
+
+Three more decisions behind it:
+
+- **Enrolment is mandatory, not offered.** A role that requires a second factor
+  and has not set one up lands on the enrolment screen and can reach nothing
+  else. "Not set up yet" must not be the way past the check.
+- **A code is spent once.** The accepted step is recorded on the *account*, so a
+  code read over a shoulder cannot be used in a session the attacker opened
+  themselves — the window it would otherwise stay valid for is the whole point
+  of stealing it.
+- **The lockout expires on its own.** Failed attempts escalate to a fifteen
+  minute cap and never to a permanent lock. A lock an administrator must clear
+  is a denial-of-service anybody holding a staff email can fire, and the target
+  is a clinician who needs a progress note before a session.
+
+The session itself is a random token whose SHA-256 is what the database stores,
+with an idle timeout and an absolute ceiling. Signing out, deactivating a user
+and changing a password all end live sessions immediately rather than at the
+next timeout.
+
 ## The access rule that shapes everything
 
 Two classes of clinical note, with different rules:
@@ -61,11 +96,16 @@ and a test greps the rest of `src/` to prove no endpoint re-implements a role ch
 
 ## Known limitations (deliberate)
 
-- **No real auth.** A dev-mode user switcher stands in for login. Two-factor and
-  session management are their own project. The *policy* — which roles would sit
-  behind a second factor — is written and tested in `permissions.ts`, and the
-  person picker marks those roles, so the seam is visible rather than implied.
-  Nothing enforces it, because a check that always passes reads as a control.
+- **No password recovery, and no account administration.** Authentication itself
+  is built — see below — but a clinician who loses their phone has no way back
+  in, and there is no screen for setting somebody's first password. Both are
+  real gaps rather than modelled ones. Recovery is the harder half of any
+  authentication system and the half that most often becomes the way in, so it
+  is unbuilt rather than half-built.
+- **Demo accounts are listed on the sign-in screen.** With one published
+  password, because a public demo over invented data has to be openable. It is
+  account enumeration served up voluntarily and a real practice must never do
+  it; the screen says so where it does it.
 - **No insurance billing.** The superbill exports completed sessions with their
   CPT codes and the fee recorded at the time of service, which is what a client
   needs to claim reimbursement themselves. It carries no diagnosis code —
@@ -133,8 +173,8 @@ createdb clearpath_dev clearpath_test clearpath_e2e clearpath_shadow
 npm install
 npm run db:setup     # migrate all three, generate the client, seed dev + e2e
 npm run dev          # http://localhost:3700
-npm test             # 1,919 unit + integration tests
-npm run test:e2e     # 68 Playwright tests against a production build
+npm test             # 1,999 unit + integration tests
+npm run test:e2e     # 78 Playwright tests against a production build
 npm run verify:seed  # the seeded quarter, against its own success metrics
 ```
 
@@ -150,8 +190,11 @@ Local Postgres only, three databases and each for one job:
 truncates every table between tests and the e2e sweep needs a seeded practice;
 sharing one database means whichever suite ran last decides what the other sees.
 
-There is no login. The dev switcher in the sidebar runs the app as any seeded
-person — see **Known limitations**. Authorization is real either way.
+`npm run db:seed` prints the seeded staff accounts and the one password they
+share. Front desk and the auditor are in with the password alone; the clinical
+roles and the practice manager are asked to set up a second factor on first
+sign-in, so have an authenticator app to hand — or start the demo as Marion
+Whitlock, who needs neither.
 
 ### The 60-second demo: the confirmation loop
 
@@ -159,7 +202,7 @@ Three clients and one rule. The practice texts before every session, requires an
 answer, and charges for silence — and the whole design is about what silence is
 *not* allowed to mean.
 
-1. Act as **Marion Whitlock** (front desk) → **Work lists**. Three lists, and
+1. Sign in as **Marion Whitlock** (front desk) → **Work lists**. Three lists, and
    the order is the argument: clients who replied in words nobody here may read,
    clients the carrier could not reach, and sessions starting soon that nobody
    has answered for. A practice should work this list with a telephone before it
@@ -178,14 +221,14 @@ answer, and charges for silence — and the whole design is about what silence i
 
    ![The client's portal in Spanish: "Hola Test", their next appointments with weekday names in Spanish, a confirm button, a decline with a reason picker, and a separate "or, if you would rather keep it and move it" request.](docs/screenshots/client-door-es.png)
 
-4. Act as **Elena Sarkis** (practice manager) → **Practice report** →
+4. Sign in as **Elena Sarkis** (practice manager) → **Practice report** →
    **Confirmation**. What the policy did and what it cost, including the
    sessions it stood down on: undelivered reminders charge nobody, and neither
    do reminders that arrived too late to answer.
 
    ![The confirmation report: 71.1% confirmed, 10.4% declined, 17.6% no reply, and 29 sessions charged for silence totalling $2,610. Beneath it, reminders as the carrier reported them — 948 delivered, 16 undelivered, 17 reached too late — and a per-clinician table.](docs/screenshots/confirmation-report.png)
 
-5. Act as **Owen Delacroix** (auditor) → filter to a charged session. Three
+5. Sign in as **Owen Delacroix** (auditor) → filter to a charged session. Three
    sends, zero answers, one determination, one fee. Ids and reason codes only.
 
 **The client that is the whole feature** is none of the ones above: it is any of
@@ -201,17 +244,17 @@ checked by `npm run verify:seed`.
 
 ### The 60-second demo: the access rule
 
-1. Act as **Rosa Iyer** (supervisor) → **Co-sign queue** → co-sign one of Priya
+1. Sign in as **Rosa Iyer** (supervisor) → **Co-sign queue** → co-sign one of Priya
    Vance's progress notes.
 2. Open that client's record. Everything is there — attendance, screeners, the
    note just signed — and where Priya's process notes would be there is a locked
    panel stating the rule.
-3. Act as **Elena Sarkis** (practice manager) → open the same client → break
+3. Sign in as **Elena Sarkis** (practice manager) → open the same client → break
    glass with a reason → the record opens, flagged. The process notes stay shut.
 
    ![The practice manager's break-glass gate: a required reason field, and a note that break-glass reaches demographics and progress notes but not process notes — nothing does.](docs/screenshots/break-glass.png)
 
-4. Act as **Owen Delacroix** (auditor) → **Audit log** → both events are there,
+4. Sign in as **Owen Delacroix** (auditor) → **Audit log** → both events are there,
    the co-signature and the refusal.
 
    ![The audit log filtered to denials of process notes, showing one row: a supervisor's read, denied. Ids only — no names, no note content, no answers. The When cell is boxed out in the capture: the audit table stamps `at` from the database clock, so it is the one value that moves between seed runs.](docs/screenshots/audit-log.png)
@@ -268,6 +311,9 @@ means replacing that file's values and nothing else.
 | | |
 |---|---|
 | The permission matrix | [`src/auth/permissions.ts`](src/auth/permissions.ts) |
+| Sign-in, sessions, and the stage that carries no actor | [`src/auth/sessions.ts`](src/auth/sessions.ts) |
+| TOTP, and the replay a bare HMAC would allow | [`src/auth/totp.ts`](src/auth/totp.ts) |
+| Why the lockout expires rather than holds | [`src/auth/lockout.ts`](src/auth/lockout.ts) |
 | The single guarded door, and the audit write | [`src/auth/guard.ts`](src/auth/guard.ts) |
 | Constraints the ORM cannot express | [`prisma/migrations/*_init/migration.sql`](prisma/migrations) |
 | Recurrence, and the occurrence-key fix | [`src/scheduling/recurrence.ts`](src/scheduling/recurrence.ts) |

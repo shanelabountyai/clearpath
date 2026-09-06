@@ -1,6 +1,6 @@
 import { prisma, type Tx } from '../db';
 import { Forbidden } from '../errors';
-import { can, type Action, type Actor, type Decision, type Resource, type Target } from './permissions';
+import { can, type Action, type Actor, type Decision, type Resource, type Role, type Target } from './permissions';
 
 /**
  * The single door to client data.
@@ -142,5 +142,47 @@ export async function auditEvent(
     allowed: true,
     rule: (opts.rule ?? 'system') as Decision['rule'],
     breakGlass: !!actor.breakGlass,
+  });
+}
+
+/**
+ * Things that happen at the door, before there is an actor.
+ *
+ * Deliberately not routed through `can()`. Authentication is not
+ * authorization: there is no matrix cell for "may this person prove who they
+ * are", and inventing one would put a rule in `permissions.ts` that answers a
+ * question that file does not ask. What these rows share with the rest of the
+ * trail is the shape — ids, a reason code, and an `allowed` flag — so an
+ * auditor reading the log sees refused sign-ins next to refused reads.
+ *
+ * `actorId` names the *account the attempt was made against*, which for a
+ * failure is not a claim that the account's owner made it. `allowed: false`
+ * beside it is what says an attempt was refused, and that is the whole
+ * statement the row makes.
+ */
+export type AuthAction = 'sign_in' | 'sign_out' | 'enrol_second_factor';
+
+export async function authEvent(
+  subject: { id: string; role: Role },
+  action: AuthAction,
+  opts: { allowed: boolean; rule: string; reason?: string },
+  tx?: Tx,
+): Promise<void> {
+  await (tx ?? prisma).auditEvent.create({
+    data: {
+      actorId: subject.id,
+      actorRole: subject.role,
+      action,
+      resource: 'user',
+      resourceId: subject.id,
+      clientId: null,
+      allowed: opts.allowed,
+      rule: opts.rule,
+      breakGlass: false,
+      // Reason codes only. Never the address that was typed, never the string
+      // that was typed into the password box — people put passwords in the
+      // email field, and this table is append-only by database rule.
+      reason: opts.reason ?? null,
+    },
   });
 }

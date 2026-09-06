@@ -1,72 +1,90 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { requiresSecondFactor, type Actor } from './auth/permissions';
-import { prisma } from './db';
+import { SESSION_ABSOLUTE_MS, resolveSession, type Resolved } from './auth/sessions';
+import { systemClock } from './clock';
 
 /**
- * The dev-mode user switcher.
+ * The application's view of who is signed in.
  *
- * There is no authentication in Clearpath, on purpose: auth is its own project
- * and bolting on a half-version would make the access-control work harder to
- * read, not easier. What matters here is that *authorization* is real, and it
- * is — the actor this returns goes through the same permission matrix a logged
- * in user would.
+ * This file used to be the dev-mode user switcher, and its own comment called
+ * itself "the seam where real authentication would go". This is that
+ * replacement, and the seam held: every caller takes `{ actor }` off
+ * `requireSession()`, so roughly fifty pages and server actions did not change
+ * a line when a cookie naming a user id became a session that has to be
+ * proved.
  *
- * This is the seam. A real deployment replaces this file and nothing else.
+ * What is left here is only the Next-facing part — cookies and redirects. The
+ * decisions live in `src/auth/sessions.ts`, which knows nothing about HTTP and
+ * is tested without it.
  */
-export const USER_COOKIE = 'clearpath_user';
+
+export const SESSION_COOKIE = 'clearpath_session';
 export const BREAK_GLASS_COOKIE = 'clearpath_break_glass';
 
 export interface Session {
   actor: Actor;
   user: { id: string; name: string; role: Actor['role']; supervisorId: string | null };
   /**
-   * Where the second factor would be checked.
+   * The second factor, now that there is one.
    *
-   * `required` is real policy, read from the permission module. `satisfied` is
-   * a lie this build tells on purpose: there is no authentication here, so
-   * there is nothing to satisfy, and pretending otherwise by writing a check
-   * that always passes would look like a feature. It is surfaced in the person
-   * picker instead, so the gap is visible in the product rather than buried in
-   * a comment — see WRITEUP.md, "Where authentication would attach".
+   * `satisfied` was documented as "a lie this build tells on purpose" —
+   * always false, read by nothing. It is now the truth, and it is only ever
+   * `true` here: a session that has not satisfied its second factor cannot
+   * produce a `Session` at all, because `resolveSession` only attaches an
+   * actor to the `ready` stage. The field stays because a surface that wants
+   * to say "you are fully signed in" should not have to re-derive it.
    */
   secondFactor: { required: boolean; satisfied: boolean };
+  sessionId: string;
 }
 
+const clock = systemClock;
+
+/** The raw stage, for the sign-in flow to route on. */
+export async function sessionStage(): Promise<Resolved | null> {
+  const token = (await cookies()).get(SESSION_COOKIE)?.value;
+  return token ? resolveSession(token, { clock }) : null;
+}
+
+/**
+ * The signed-in session, or `null`.
+ *
+ * A half-authenticated session — password accepted, second factor not — is
+ * `null` here, deliberately and by construction. There is no branch to forget:
+ * only the `ready` stage carries an actor, so there is nothing to build a
+ * session out of.
+ */
 export async function currentSession(): Promise<Session | null> {
+  const resolved = await sessionStage();
+  if (!resolved || resolved.stage !== 'ready') return null;
+
   const jar = await cookies();
-  const id = jar.get(USER_COOKIE)?.value;
-  if (!id) return null;
-
-  const user = await prisma.user.findUnique({
-    where: { id },
-    select: { id: true, name: true, role: true, supervisorId: true, active: true },
-  });
-  if (!user || !user.active) return null;
-
   const reason = jar.get(BREAK_GLASS_COOKIE)?.value;
+
   return {
-    user,
-    secondFactor: { required: requiresSecondFactor(user.role), satisfied: false },
+    user: resolved.user,
+    sessionId: resolved.sessionId,
+    secondFactor: { required: requiresSecondFactor(resolved.user.role), satisfied: true },
     actor: {
-      id: user.id,
-      role: user.role,
+      ...resolved.actor,
       ...(reason ? { breakGlass: { reason } } : {}),
     },
   };
 }
 
+/**
+ * Everything behind the staff shell calls this.
+ *
+ * Sends people to `/login`, which then decides which step of the sign-in they
+ * are actually on. Routing the stages from one place is why the ~50 callers
+ * here stayed a one-line `requireSession()` — none of them has to know that a
+ * second factor exists.
+ */
 export async function requireSession(): Promise<Session> {
   const session = await currentSession();
-  // Nobody selected yet, or the cookie points at a user who has been
-  // deactivated. Either way it is the person picker, not a stack trace.
-  if (!session) redirect('/');
+  if (!session) redirect('/login');
   return session;
 }
 
-export const switchableUsers = () =>
-  prisma.user.findMany({
-    where: { active: true, role: { not: 'client' } },
-    select: { id: true, name: true, role: true, supervisor: { select: { name: true } } },
-    orderBy: [{ role: 'asc' }, { name: 'asc' }],
-  });
+export { SESSION_ABSOLUTE_MS };

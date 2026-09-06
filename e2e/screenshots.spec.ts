@@ -1,3 +1,4 @@
+import { DEMO_PASSWORD } from '../src/auth/demo';
 import { actAs, clientId, expect, sql, test, USERS } from './fixtures';
 
 /**
@@ -12,6 +13,24 @@ test.describe('README screenshots', () => {
 
   test('capture', async ({ page }) => {
     const demoClient = clientId('TC-006');
+
+    // The door, half open. A supervisor whose password was accepted and who has
+    // proved nothing else — the screen says what this session can reach, which
+    // is nothing.
+    //
+    // The challenge rather than the enrolment screen, and `actAs` first is what
+    // makes it the challenge: the seed enrols nobody, so a first sign-in would
+    // land on enrolment and photograph a TOTP secret. Invented or not, a secret
+    // in a README teaches the wrong habit.
+    await actAs(page, USERS.supervisor);
+    await page.context().clearCookies();
+    await page.goto('/login');
+    await page.fill('#email', sql(`select email from "User" where name = '${USERS.supervisor}'`));
+    await page.fill('#password', DEMO_PASSWORD);
+    await page.click('button[type="submit"]');
+    await expect(page.locator('#code')).toBeVisible();
+    await expect(page.getByTestId('totp-secret')).toHaveCount(0);
+    await page.screenshot({ path: `${shot}/second-factor.png` });
 
     // The operational tier: front desk runs the whole calendar and learns
     // nothing about why anyone is in the building.
