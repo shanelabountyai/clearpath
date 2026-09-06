@@ -44,7 +44,9 @@ describe('the vacation work-list', () => {
     });
     const standing = await book(a.id, 900);
     await prisma.appointment.update({ where: { id: standing.id }, data: { seriesId: series.id } });
-    await book(b.id, 1020);
+    // 16:00, not 17:00: the therapist finishes at 17:00 and a fifty-minute
+    // session starting there would run past the end of their day.
+    await book(b.id, 960);
 
     const impact = await vacationImpact(actor(desk), {
       clinicianId: therapist.id, fromDate: '2026-09-01', toDate: '2026-09-05',

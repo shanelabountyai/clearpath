@@ -19,6 +19,10 @@ let desk: Awaited<ReturnType<typeof makeUser>>;
 let mine: Awaited<ReturnType<typeof makeUser>>;
 let client: Awaited<ReturnType<typeof makeClient>>;
 
+/** Tuesdays 9:00–17:00. A clinician with no pattern works no hours at all. */
+const worksTuesdays = (userId: string) =>
+  prisma.availability.create({ data: { userId, weekday: 2, startMinute: 540, endMinute: 1020 } });
+
 const bookOne = (clientId: string, clinicianId: string, startMinute = THREE_PM) =>
   bookAppointment(actor(desk), {
     clientId, clinicianId, date: TUESDAY, startMinute, type: 'standard', modality: 'in_person',
@@ -29,6 +33,7 @@ beforeEach(async () => {
   await settings({ messagingName: 'Stillwater' });
   desk = await makeUser('front_desk');
   mine = await makeUser('therapist');
+  await worksTuesdays(mine.id);
   client = await makeClient(mine.id);
   await makeRoom('Room 1');
 });
@@ -57,6 +62,7 @@ describe('issuing the door', () => {
   it('lets the treating clinician issue one, and refuses a stranger', async () => {
     await expect(issuePortalLink(actor(mine), { clientId: client.id, clock })).resolves.toBeTruthy();
     const other = await makeUser('therapist');
+    await worksTuesdays(other.id);
     await expect(
       issuePortalLink(actor(other), { clientId: client.id, clock }),
     ).rejects.toBeInstanceOf(Forbidden);

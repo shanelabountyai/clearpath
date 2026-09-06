@@ -4,7 +4,7 @@ import { prisma } from '../db';
 import { systemClock, type Clock } from '../clock';
 import { Conflict, NotFound } from '../errors';
 import { zonedToUtc, type LocalDate } from '../time';
-import { claimRoom, slotLock } from './booking';
+import { assertWorkingHour, claimRoom, slotLock } from './booking';
 import { cancelAppointment } from './lifecycle';
 import { DURATION_MINUTES, type AppointmentType } from './recurrence';
 
@@ -56,6 +56,8 @@ export async function bookGroupSession(actor: Actor, input: GroupBooking) {
 
   const known = await prisma.client.count({ where: { id: { in: clientIds } } });
   if (known !== clientIds.length) throw new NotFound('Client');
+
+  await assertWorkingHour(input.clinicianId, input.date, input.startMinute, type);
 
   const candidates: (string | null)[] = [null];
   if (modality === 'in_person') {

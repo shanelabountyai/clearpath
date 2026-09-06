@@ -195,16 +195,56 @@ interface BookInput {
 }
 
 /**
+ * Refuse an hour the clinician's week does not contain.
+ *
+ * The *pattern*, deliberately, with no overrides applied. Those are two
+ * different questions and only one of them belongs here. A session booked into
+ * a clinician's vacation week is not an error to refuse: standing weekly
+ * clients against a week off is this domain's cascade, and `vacationImpact`
+ * exists so somebody rings each of them. Refusing it would turn that
+ * conversation into a silent gap, which is the outcome the work list exists to
+ * prevent. A session at one in the morning is a different thing — no week
+ * contains it, nobody is going to ring anybody about it, and the day view's
+ * grid runs 08:00 to 19:00 inside a scrolling box, so it would be clipped out
+ * of the one screen that could have shown it.
+ *
+ * Checked against the window rather than the 15-minute grid, because the grid
+ * is how slots are *offered* and not what makes an hour legitimate. Checked in
+ * all three places a session gets a time — booking, group booking and a
+ * reschedule — because a rule enforced at one of three doors is a convention.
+ */
+export async function assertWorkingHour(
+  clinicianId: string,
+  date: LocalDate,
+  startMinute: number,
+  type: AppointmentType,
+): Promise<void> {
+  const weekly = await prisma.availability.findMany({ where: { userId: clinicianId } });
+  const span = { startMinute, endMinute: startMinute + DURATION_MINUTES[type] };
+  const fits = workingWindows(weekly, [], date).some(
+    (w) => span.startMinute >= w.startMinute && span.endMinute <= w.endMinute,
+  );
+  if (!fits) throw new Conflict('That clinician does not work at this time', 'outside_hours');
+}
+
+/**
  * Reserve clinician and, for in-person, a room — together or not at all.
  *
  * Room selection is optimistic: pick a candidate, insert, and let the database
  * arbitrate. On a room collision try the next candidate; on a clinician
  * collision stop, because there is no second clinician to fall through to.
+ *
+ * The start minute is re-derived against the clinician's week rather than
+ * trusted. The booking form renders the offered slots as radio buttons, and the
+ * server action reads whichever value arrives — so the constraint lived in the
+ * markup, which is not where a constraint lives.
  */
 export async function bookAppointment(actor: Actor, input: BookInput) {
   const duration = DURATION_MINUTES[input.type];
   const startAt = zonedToUtc(input.date, input.startMinute);
   const endAt = zonedToUtc(input.date, input.startMinute + duration);
+
+  await assertWorkingHour(input.clinicianId, input.date, input.startMinute, input.type);
 
   const candidates: (string | null)[] = [null];
   if (input.modality === 'in_person') {
@@ -351,6 +391,8 @@ export async function rescheduleAppointment(
   const modality = to.modality ?? current.modality;
   const startAt = zonedToUtc(to.date, to.startMinute);
   const endAt = zonedToUtc(to.date, to.startMinute + DURATION_MINUTES[type]);
+
+  await assertWorkingHour(current.clinicianId, to.date, to.startMinute, type);
 
   const rooms = modality === 'in_person'
     ? await prisma.room.findMany({ where: { active: true }, orderBy: { name: 'asc' } })

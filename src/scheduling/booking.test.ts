@@ -147,12 +147,112 @@ describe('the conditional resource', () => {
     });
     expect(booked.roomId).toBeNull();
 
+    // An hour that is genuinely inside the day: 17:00 is when this clinician
+    // finishes, so a 50-minute session starting there would run past it — which
+    // this test used to book, and nothing objected.
     await expect(
       bookAppointment(actor(desk), {
-        clientId: client.id, clinicianId: fifth.id, date: TUESDAY, startMinute: THREE_PM + 120,
+        clientId: client.id, clinicianId: fifth.id, date: TUESDAY, startMinute: THREE_PM - 120,
         type: 'standard', modality: 'in_person',
       }),
     ).resolves.toBeTruthy();
+  });
+
+  describe('the hour has to be one the clinician works', () => {
+    /**
+     * The booking form renders the offered slots as radio buttons and the
+     * server action reads whichever value arrives, so until now the constraint
+     * lived in the markup. A start minute nobody offered produced a real,
+     * audit-logged session — and the day view's grid is 08:00 to 19:00 inside a
+     * scrolling box, so a session at one in the morning was clipped out of the
+     * one screen that would have shown it.
+     */
+    it('refuses an hour outside the working day, whatever the form said', async () => {
+      await makeRoom('Room 1');
+      const t = await clinicianWorkingTuesdays();
+      const c = await makeClient(t.id);
+      const at = (startMinute: number) =>
+        bookAppointment(actor(desk), {
+          clientId: c.id, clinicianId: t.id, date: TUESDAY, startMinute,
+          type: 'standard' as const, modality: 'in_person' as const,
+        });
+
+      await expect(at(60)).rejects.toMatchObject({ code: 'outside_hours' });
+      await expect(at(0)).rejects.toMatchObject({ code: 'outside_hours' });
+      await expect(at(23 * 60)).rejects.toMatchObject({ code: 'outside_hours' });
+      expect(await prisma.appointment.count()).toBe(0);
+    });
+
+    it('refuses a session that starts inside the day and finishes after it', async () => {
+      // 16:30 is a working minute; 16:30 plus fifty is not. The window is what
+      // the session has to fit inside, not merely where it may begin.
+      await makeRoom('Room 1');
+      const t = await clinicianWorkingTuesdays();
+      const c = await makeClient(t.id);
+      await expect(
+        bookAppointment(actor(desk), {
+          clientId: c.id, clinicianId: t.id, date: TUESDAY, startMinute: 16 * 60 + 30,
+          type: 'standard', modality: 'in_person',
+        }),
+      ).rejects.toMatchObject({ code: 'outside_hours' });
+    });
+
+    it('refuses a weekday the clinician does not work at all', async () => {
+      await makeRoom('Room 1');
+      const t = await clinicianWorkingTuesdays();
+      const c = await makeClient(t.id);
+      await expect(
+        bookAppointment(actor(desk), {
+          clientId: c.id, clinicianId: t.id, date: '2026-09-02', startMinute: THREE_PM,
+          type: 'standard', modality: 'in_person',
+        }),
+      ).rejects.toMatchObject({ code: 'outside_hours' });
+    });
+
+    it('still books into a week the clinician is away, because somebody has to ring them', async () => {
+      // The pattern, not the overrides. A standing client against a week off is
+      // this domain's cascade: the session is created, `vacationImpact` puts it
+      // on the reschedule work list, and a human makes the call. Refusing it
+      // here would turn the cascade into a silent gap — the outcome the work
+      // list exists to prevent.
+      await makeRoom('Room 1');
+      const t = await clinicianWorkingTuesdays();
+      const c = await makeClient(t.id);
+      await prisma.availabilityOverride.create({
+        data: {
+          userId: t.id, kind: 'unavailable',
+          fromDate: new Date(`${TUESDAY}T00:00:00Z`), toDate: new Date(`${TUESDAY}T00:00:00Z`),
+          reason: 'Annual leave',
+        },
+      });
+
+      // The slot-finder will not offer it, which is the right answer for a new
+      // booking...
+      expect(await availableSlots({ clinicianId: t.id, date: TUESDAY, type: 'standard', modality: 'in_person' }))
+        .toEqual([]);
+      // ...and the standing session is still created, which is the right answer
+      // for one that already exists.
+      await expect(
+        bookAppointment(actor(desk), {
+          clientId: c.id, clinicianId: t.id, date: TUESDAY, startMinute: THREE_PM,
+          type: 'standard', modality: 'in_person',
+        }),
+      ).resolves.toBeTruthy();
+    });
+
+    it('measures the window against the type, so an intake needs more of it', async () => {
+      // 15:55 fits a fifty-minute session and not a seventy-five-minute intake.
+      await makeRoom('Room 1');
+      const t = await clinicianWorkingTuesdays();
+      const c = await makeClient(t.id);
+      const at = (type: 'standard' | 'intake') =>
+        bookAppointment(actor(desk), {
+          clientId: c.id, clinicianId: t.id, date: TUESDAY, startMinute: 15 * 60 + 55, type,
+          modality: 'in_person' as const,
+        });
+      await expect(at('intake')).rejects.toMatchObject({ code: 'outside_hours' });
+      await expect(at('standard')).resolves.toBeTruthy();
+    });
   });
 
   it('refuses a second in-person session for the same clinician at the same hour', async () => {
@@ -358,11 +458,17 @@ describe('recurring series', () => {
 
   it('does not refill a slot a rescheduled instance moved out of', async () => {
     for (let i = 1; i <= 4; i++) await makeRoom(`Room ${i}`);
-    const { series } = await makeSeries();
+    const { t, series } = await makeSeries();
     await materialiseSeries(actor(desk), series.id, { from: TUESDAY, horizonDays: 21 });
 
     const second = await prisma.appointment.findFirstOrThrow({
       where: { startAt: { gte: zonedToUtc('2026-09-08', 0) } }, orderBy: { startAt: 'asc' },
+    });
+    // The 10th is a Thursday, and a reschedule is now held to the same rule a
+    // booking is: front desk cannot move a client onto a day their clinician
+    // does not work.
+    await prisma.availability.create({
+      data: { userId: t.id, weekday: 4, startMinute: 540, endMinute: 1020 },
     });
     const moved = await rescheduleAppointment(actor(desk), second.id, { date: '2026-09-10', startMinute: 600 });
     expect(moved.detached).toBe(true);
@@ -374,10 +480,16 @@ describe('recurring series', () => {
 
   it('regenerates only future instances when the pattern moves', async () => {
     for (let i = 1; i <= 4; i++) await makeRoom(`Room ${i}`);
-    const { series } = await makeSeries();
+    const { t, series } = await makeSeries();
     await materialiseSeries(actor(desk), series.id, { from: TUESDAY, horizonDays: 21 });
 
-    // The client moves to Thursdays from the 15th onward.
+    // The client moves to Thursdays from the 15th onward — which the clinician
+    // has to actually work. The fixture never said so, and before the pattern
+    // check the app booked a Tuesday-only therapist onto Thursdays without
+    // comment.
+    await prisma.availability.create({
+      data: { userId: t.id, weekday: 4, startMinute: 540, endMinute: 1020 },
+    });
     await prisma.appointmentSeries.update({ where: { id: series.id }, data: { weekday: 4 } });
     const run = await materialiseSeries(actor(desk), series.id, { from: '2026-09-15', horizonDays: 14 });
 

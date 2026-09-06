@@ -14,6 +14,15 @@ const THREE_PM = 15 * 60;
 let desk: Awaited<ReturnType<typeof makeUser>>;
 let clinician: Awaited<ReturnType<typeof makeUser>>;
 
+/** A second therapist keeping the same Tuesdays, for the room-contention tests. */
+async function otherClinician() {
+  const u = await makeUser('therapist');
+  await prisma.availability.create({
+    data: { userId: u.id, weekday: 2, startMinute: 540, endMinute: 1020 },
+  });
+  return u;
+}
+
 async function attendees(n: number) {
   const out = [];
   for (let i = 0; i < n; i++) out.push(await makeClient(clinician.id));
@@ -72,7 +81,7 @@ describe('one hour, one clinician, one room, N clients', () => {
     await makeRoom('Room 1');
     await book((await attendees(3)).map((c) => c.id));
 
-    const other = await makeUser('therapist');
+    const other = await otherClinician();
     const theirs = await makeClient(other.id);
     await expect(
       bookAppointment(actor(desk), {
@@ -85,7 +94,7 @@ describe('one hour, one clinician, one room, N clients', () => {
   it('moves the whole group to the next free room, never splitting it', async () => {
     await makeRoom('Room 1');
     await makeRoom('Room 2');
-    const other = await makeUser('therapist');
+    const other = await otherClinician();
     const theirs = await makeClient(other.id);
     const taken = await bookAppointment(actor(desk), {
       clientId: theirs.id, clinicianId: other.id, date: TUESDAY,
@@ -105,7 +114,7 @@ describe('one hour, one clinician, one room, N clients', () => {
 
   it('refuses the whole booking when no room is free, leaving nothing behind', async () => {
     await makeRoom('Room 1');
-    const other = await makeUser('therapist');
+    const other = await otherClinician();
     const theirs = await makeClient(other.id);
     await bookAppointment(actor(desk), {
       clientId: theirs.id, clinicianId: other.id, date: TUESDAY,
@@ -264,7 +273,7 @@ describe('leaving and ending a group', () => {
       clock: fixedClock(new Date(group.appointments[0]!.startAt.getTime() - 5 * DAY)),
     });
 
-    const other = await makeUser('therapist');
+    const other = await otherClinician();
     const theirs = await makeClient(other.id);
     await expect(
       bookAppointment(actor(desk), {
