@@ -18,8 +18,12 @@ discipline. It is **not** HIPAA-compliant software and must never hold real clie
 data. Mental-health data is among the most sensitive that exists; modeling the
 protections is the lesson, claiming them would be the credibility-killer.
 
-**Nothing sends, and nothing charges.** `OutboxMessage` rows are the stub for every
-reminder — there is no carrier integration — and `chargeFeeCents` is a chargeable
+**Nothing sends, nothing is received, and nothing charges.** `OutboxMessage` rows
+are the stub for every reminder — there is no carrier integration — and an
+inbound reply arrives through `npm run inbound:simulate` rather than a webhook,
+deliberately: an unauthenticated endpoint that writes to a client's record needs
+a provider signature to verify, and a signature nobody issues is a security
+control that only looks like one. `chargeFeeCents` is a chargeable
 *flag* in integer cents with no payment processing anywhere behind it. The
 automatic no-show fee for a client who never answers is a **modeled mechanism,
 not clinical or legal advice**: a real practice cannot switch that policy on
@@ -73,7 +77,11 @@ and a test greps the rest of `src/` to prove no endpoint re-implements a role ch
 - **Clients never log in.** Forms, confirmations and their own schedule arrive by
   tokenized link. The portal shows appointment times and nothing clinical, and a
   reschedule request is a reason code rather than a message — there is no
-  free-text channel from a client to the front desk.
+  free-text channel from a client to the front desk. A client who texts back in
+  words anyway is understood rather than ignored: the message is classified as
+  `confirm`, `decline` or `unparsed` and the words are then dropped, with no
+  column anywhere to hold them. An `unparsed` reply reaches the treating
+  clinician as a reason code and reaches front desk as "call them".
 - **All outbound messages are outbox stubs.** Nothing is actually sent.
 
 ## Stack
@@ -87,8 +95,18 @@ createdb clearpath_dev clearpath_test clearpath_e2e clearpath_shadow
 npm install
 npm run db:setup     # migrate all three, generate the client, seed dev + e2e
 npm run dev          # http://localhost:3700
-npm test             # 1,252 unit + integration tests
-npm run test:e2e     # 19 Playwright tests against a production build
+npm test             # 1,552 unit + integration tests
+npm run test:e2e     # 24 Playwright tests against a production build
+```
+
+The confirmation loop runs as commands rather than as a scheduler, because the
+due times derive from `startAt` and an injected clock — so the schedule is an
+implementation detail of whatever calls them:
+
+```bash
+npm run reminders:run      # queue every reminder stage that has come due
+npm run nonresponse:run    # the half with money attached, stoppable on its own
+npm run inbound:simulate -- 555-0101 "can we talk first"   # a client writes back
 ```
 
 Local Postgres only, three databases and each for one job:

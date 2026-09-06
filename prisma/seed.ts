@@ -25,6 +25,7 @@ const { stageDueAt } = await import('../src/scheduling/confirmation');
 const { ensurePortalLink } = await import('../src/portal/service');
 const { queueToClient } = await import('../src/messaging/outbox');
 const { systemClock } = await import('../src/clock');
+const { receiveInbound, resolveInboundReply } = await import('../src/messaging/inbound');
 
 /** mulberry32 — small, fast, and identical on every machine. */
 function rng(seed: number) {
@@ -259,9 +260,10 @@ async function main() {
   async function asked(
     appt: { id: string; clientId: string; startAt: Date },
     answer: 'pending' | 'confirmed' | 'declined' | 'no_response',
+    stages: readonly ('d5' | 'd1' | 'd0')[] = ['d5', 'd1', 'd0'],
   ) {
     const link = await ensurePortalLink(appt.clientId, systemClock);
-    for (const stage of ['d5', 'd1', 'd0'] as const) {
+    for (const stage of stages) {
       const dueAt = stageDueAt(appt.startAt, stage, { graceMinutes: 20, dayOfLeadHours: 3 });
       const message = await queueToClient({
         clientId: appt.clientId,
@@ -381,6 +383,59 @@ async function main() {
     data: { status: 'cancelled', cancelledAt: now, cancelReason: 'client declined' },
   });
   log(`1 group session of ${group.appointments.length} — 1 declined, 1 still silent, the rest confirmed`);
+
+
+  // ── P1-2: the standing client who has earned quiet ─────────────────────
+  //
+  // Four confirmations in a row, and then the next session asked about once,
+  // the day before. Constructed rather than left to a horizon run, for the same
+  // reason as everything else here: a fixture the seed only probably produces
+  // is a demo that only probably shows the feature.
+  const reliable = clients[50]!;
+  await prisma.client.update({ where: { id: reliable.id }, data: { reminderPreference: 'email' } });
+  const theirLastFour = await prisma.appointment.findMany({
+    where: { clientId: reliable.id, status: 'completed' },
+    orderBy: { startAt: 'desc' },
+    take: 4,
+  });
+  for (const appt of theirLastFour) await asked(appt, 'confirmed');
+  const nextForReliable = await prisma.appointment.findFirst({
+    where: { clientId: reliable.id, status: 'scheduled', startAt: { gte: now } },
+    orderBy: { startAt: 'asc' },
+  });
+  if (nextForReliable) await asked(nextForReliable, 'pending', ['d1']);
+  log(`1 client with ${theirLastFour.length} confirmations in a row — their next session asked about once, not three times`);
+
+  // ── P1-3: the clients who wrote back in words ──────────────────────────
+  //
+  // Through the real path, so the alert, the auto-reply and the audit row are
+  // the ones the application writes. The bodies below exist only inside
+  // `receiveInbound`: none of them reaches a column, which is the entire point
+  // and is worth seeing proved against seeded data rather than only in a test.
+  const writers = [clients[51]!, clients[52]!, clients[53]!, clients[54]!];
+  for (const c of writers) {
+    await prisma.client.update({ where: { id: c.id }, data: { reminderPreference: 'sms' } });
+  }
+  const numberOf = async (id: string) =>
+    (await prisma.client.findUniqueOrThrow({ where: { id }, select: { phone: true } })).phone!;
+
+  await receiveInbound({ from: await numberOf(writers[0]!.id), body: 'Y' });
+  // A decline in words. The hour still stands and the fee is untouched: a text
+  // cannot carry the disclosure the portal shows, so front desk rings them.
+  await receiveInbound({ from: await numberOf(writers[1]!.id), body: "Can't make it" });
+  await receiveInbound({
+    from: await numberOf(writers[2]!.id),
+    body: 'no sorry, things have been really hard this week and I am not up to it',
+  });
+  await receiveInbound({ from: await numberOf(writers[3]!.id), body: 'who is this?' });
+
+  // One already dealt with, so the list has a cleared row in it as well as an
+  // open one — a queue that is only ever empty or only ever full demos badly.
+  const handled = await prisma.inboundReply.findFirst({
+    where: { clientId: writers[3]!.id, classification: 'unparsed' },
+  });
+  if (handled) await resolveInboundReply(desk, handled.id);
+  log('4 inbound replies: 1 confirm, 1 decline that freed nothing, 2 unparsed (1 already called back)');
 
   // ── notes ─────────────────────────────────────────────────────────────
   const byClinician = new Map<string, typeof past>();

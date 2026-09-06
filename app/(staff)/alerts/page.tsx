@@ -18,6 +18,17 @@ const REASON_TEXT: Record<string, string> = {
   'threshold:moderate': 'The total score reached the moderate band.',
   'threshold:moderately_severe': 'The total score reached the moderately severe band.',
   'threshold:severe': 'The total score reached the severe band.',
+  // P1-3. There is nothing further to render, and that is the whole design:
+  // the words were classified once and dropped, so this alert can only ever
+  // say that a client wrote — never what they wrote.
+  'inbound:unparsed': 'This client replied to a reminder in words. The message was not stored anywhere; please contact them.',
+};
+
+/** The chip each kind wears. A third kind is a badge, not another ternary. */
+const KIND_BADGE: Record<string, { tone: 'danger' | 'warning' | 'info'; glyph: string; label: string }> = {
+  screener_critical_item: { tone: 'danger', glyph: '◆', label: 'Critical item' },
+  screener_threshold: { tone: 'warning', glyph: '▲', label: 'Threshold' },
+  inbound_unparsed: { tone: 'info', glyph: '✉', label: 'Client wrote in' },
 };
 
 async function AlertsPage() {
@@ -38,7 +49,8 @@ async function AlertsPage() {
 
       {open.length === 0 ? (
         <EmptyState title="Nothing outstanding">
-          Screener responses that cross a threshold or flag a critical item arrive here.
+          Screener responses that cross a threshold or flag a critical item arrive here, and
+          so does a client writing back in words nobody could safely classify.
         </EmptyState>
       ) : (
         <ul className="space-y-3">
@@ -52,9 +64,9 @@ async function AlertsPage() {
                         {a.client.lastName}, {a.client.firstName}
                       </Link>
                       <span className="font-mono text-caption text-subtle">{a.client.code}</span>
-                      {a.kind === 'screener_critical_item'
-                        ? <Badge tone="danger" glyph="◆">Critical item</Badge>
-                        : <Badge tone="warning" glyph="▲">Threshold</Badge>}
+                      <Badge tone={KIND_BADGE[a.kind]!.tone} glyph={KIND_BADGE[a.kind]!.glyph}>
+                        {KIND_BADGE[a.kind]!.label}
+                      </Badge>
                     </div>
                     <ul className="mt-1.5 space-y-0.5 text-body text-muted">
                       {a.reasons.map((r) => (

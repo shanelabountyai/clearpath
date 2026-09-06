@@ -50,6 +50,7 @@ model User {
 
   createdAt                 DateTime            @default(now())
   rescheduleRequestsHandled RescheduleRequest[]
+  inboundRepliesHandled     InboundReply[]
 }
 
 enum ReminderPreference {
@@ -101,6 +102,7 @@ model Client {
   createdAt          DateTime            @default(now())
   portalLinks        PortalLink[]
   rescheduleRequests RescheduleRequest[]
+  inboundReplies     InboundReply[]
 
   @@index([treatingClinicianId])
 }
@@ -123,15 +125,20 @@ model PracticeSettings {
   /// A no-show is its own policy. Ships at the late-cancel figure so the field
   /// changes no behaviour on the day it lands; the practice raises it without a
   /// code change. Integer cents.
-  noShowFeeCents        Int    @default(9000)
+  noShowFeeCents         Int     @default(9000)
   /// Lead time for the day-of confirmation stage.
-  dayOfLeadHours        Int    @default(3)
+  dayOfLeadHours         Int     @default(3)
   /// Below this much notice there was no time to ask, and after this much of
   /// the session has passed, silence is an answer.
-  graceMinutes          Int    @default(20)
+  graceMinutes           Int     @default(20)
   /// Gates only the automatic `no_show` transition and its fee. With it off,
   /// non-response is still recorded — the evidence is never optional.
   autoNoShowOnNoResponse Boolean @default(true)
+  /// The number a client is asked to ring when the practice cannot answer them
+  /// where they wrote. Client-facing, so it is the practice's own line — the
+  /// auto-reply that carries it is the one message allowed to name an outside
+  /// service's number as well (P1-3).
+  practicePhone          String  @default("(555) 010-0199")
   /// P1-2. After this many consecutive confirmations a client drops to the
   /// day-before stage alone, until they miss one. Zero turns the cap off.
   /// A weekly client otherwise receives three messages a week, indefinitely,
@@ -303,7 +310,7 @@ model Appointment {
   chargeFeeCents Int?
 
   /// Written by the cadence job and the client's own door, by nothing else.
-  confirmation   AppointmentConfirmation @default(not_required)
+  confirmation AppointmentConfirmation @default(not_required)
 
   /// A waiver zeroes the flag and records who decided. The original amount
   /// stays recoverable from the audit trail rather than being overwritten out
@@ -319,6 +326,7 @@ model Appointment {
   processNotes       ProcessNote[]
   rescheduleRequests RescheduleRequest[]
   reminders          AppointmentReminder[]
+  inboundReplies     InboundReply[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -554,6 +562,9 @@ model FormSubmission {
 enum AlertKind {
   screener_threshold
   screener_critical_item
+  /// A client wrote back in words the classifier could not place. The alert
+  /// carries the code and nothing else, because the words were never stored.
+  inbound_unparsed
 }
 
 /// Routes to the treating clinician only. Never a shared surface, never front
@@ -705,5 +716,44 @@ model RescheduleRequest {
   handledAt   DateTime?
 
   @@index([status, createdAt])
+  @@index([clientId])
+}
+
+// ──────────────────────────── inbound replies ────────────────────────────
+
+/// What a client's reply meant. Never what it said.
+enum InboundClassification {
+  confirm
+  decline
+  unparsed
+}
+
+/// A client wrote back, and this is the whole of what the practice kept.
+///
+/// There is no body column, and that is the feature (D-04). A client can reply
+/// with anything to a number front desk monitors, including the most acute
+/// thing this practice ever receives — so the words are classified in memory
+/// and dropped, and what lands in a row is one of three codes. An `unparsed`
+/// raises an alert to the treating clinician and tells front desk "call them",
+/// which is the most either of them can safely be given.
+///
+/// `handledAt` is the same shape as `RescheduleRequest`, for the same reason: a
+/// list front desk cannot clear is a list front desk stops reading.
+model InboundReply {
+  id            String       @id @default(cuid())
+  clientId      String
+  client        Client       @relation(fields: [clientId], references: [id])
+  /// The appointment the reply was taken to be about, where there was one.
+  appointmentId String?
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
+
+  classification InboundClassification
+
+  receivedAt  DateTime  @default(now())
+  handledById String?
+  handledBy   User?     @relation(fields: [handledById], references: [id])
+  handledAt   DateTime?
+
+  @@index([classification, handledAt])
   @@index([clientId])
 }

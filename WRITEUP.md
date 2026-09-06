@@ -21,6 +21,8 @@ Kept as the work happens, not reconstructed afterwards.
    was not building it.
 10. **The non-response fee** — an automatic charge, and the four separate
    things that stop it reaching somebody who does not deserve it.
+11. **The three P1s** — the phone call the fee depends on, the message volume
+   the loop creates, and an inbound channel designed around forgetting.
 
 ---
 
@@ -581,6 +583,131 @@ the clients least able to answer. That is a clinical decision rather than an
 engineering one, and the settings page says so beside the switch.
 
 
+## 11. The three P1s: the phone call, the volume, and the words
+
+The P0 loop asks, waits, and charges. These three are what a practice actually
+runs into once it does — nobody was rung, everybody was over-messaged, and
+somebody replied in words to a system that only understood taps.
+
+### The work list has to carry a phone number
+
+The whole fee argument rests on the practice having given the client a chance to
+answer. That argument is only honest if somebody at the front desk can see who
+has not, in time to ring them — so `unconfirmedSoon` is sessions starting in the
+next 48 hours that nobody has answered about, soonest first, **with the number on
+the row**. A work list you have to click through twice to act on is a work list
+nobody works.
+
+The filter is `confirmation` NOT `confirmed`, rather than `pending`. Three
+different silences turn out to be the same phone call: the client nobody could
+ask (`not_required` — on `reminderPreference: 'none'`, or booked inside the grace
+window), the client who was asked and has not answered (`pending`), and the
+client who said no in a way that could not free the room (`declined` on a session
+still standing, which is what a keyword decline leaves behind). Narrowing to
+`pending` would have hidden precisely the clients most likely not to turn up.
+`status: 'scheduled'` is what keeps it short — an hour front desk already marked
+confirmed by hand is an hour somebody has already spoken to them about.
+
+No new matrix row. Front desk reads it under the `appointment` read they already
+have, so the 546-cell coverage assertion did not move.
+
+### The cap, and what it is not allowed to touch
+
+A weekly client receives three messages a week, indefinitely. Seventy of them is
+~11,000 messages a year, and the failure mode is not the bill — it is the
+reminder becoming wallpaper, which degrades the one signal the fee is derived
+from. So after `confirmationStreakCap` consecutive confirmations (default 4) a
+client is asked once, the day before, until they miss one.
+
+`cadenceStages(recent, cap)` is pure and sits beside the other two confirmation
+rules, so a four-week track record is a test that runs in a millisecond. It
+composes rather than overrides: `dueStages` gained an `allowed` set, not a
+branch, so every rule that applied before still applies. The cap can take
+messages away and cannot move one earlier.
+
+The thing it deliberately does not touch is the promotion to `pending`. Fewer
+messages is still a message, so a capped client's silence rests on exactly the
+same `OutboxMessage` row as anybody else's — the fee's evidence was never the
+count. Three smaller decisions carry their own comments: only *decided*
+appointments move the streak (so a client on `none`, who can never confirm
+anything, does not read as permanently unreliable); only *past* ones (or a client
+could mute their own reminders by answering early); and a miss of either kind
+lifts the cap immediately, because a streak is answering, not agreeing.
+
+### Words, and how little the system is allowed to keep
+
+D-03 chose a tokenized link over a `YES`/`NO` keyword and that choice stands. But
+a client who texts back anyway should be understood rather than met with silence,
+so P1-3 classifies an inbound body as `confirm | decline | unparsed` and **stores
+only the classification**. There is no body column. `classifyInbound` is the only
+function in the codebase that ever sees the words, they live for exactly one
+expression, and `InboundReply` has nowhere to put a sentence.
+
+**The classifier is strict on purpose.** Whole-message exact matches after
+normalising, not "starts with yes". `no I cannot come, my mother died last night`
+begins with a keyword and is not a keyword reply — it is a person telling their
+practice something, and a substring rule would classify it, cancel a session on
+it, and drop the rest on the floor with nobody told. The cost of the strictness
+is a polite `yes thanks` reaching a clinician who did not need it. That is not a
+close call.
+
+**A keyword decline records the answer and cancels nothing.** This is the
+decision the feature turns on, and it came from asking what the sender actually
+proves. A portal link carries 24 random bytes and shows the fee before it
+applies; a phone number is public and spoofable. So an inbound keyword may write
+an answer and may never move money — which means the worst a forged `NO`
+achieves is a phone call the client was going to get anyway. It also happens to
+be *less* code than the alternative: no window logic, no interstitial, no second
+cancellation path. The declined-but-standing hour lands on the front-desk list
+from the previous section, which is why that list filters on "not confirmed"
+rather than on "pending".
+
+**A shared phone is treated as nobody's phone.** A couple, a parent and a
+teenager, a carer — one number, two records is ordinary here. Confirming the
+wrong person's hour is the mild version; an `unparsed` from a shared line would
+raise an alert about the wrong client to the wrong clinician, which is a
+disclosure. Two matches is handled identically to zero.
+
+**The auto-reply is the one message allowed to name an outside service's
+number, and it names it in digits.** An `unparsed` reply has to leave the sender
+a route to help, and it arrives on a lock screen somebody else may be holding. So
+it gives the practice's line and 988 — and *not* the name of the line, because
+988 is the Suicide & Crisis Lifeline and both of those words are on the messaging
+deny-list. Correctly: the safest possible message would fail its own send if it
+named the service it points at. That tension is the clearest evidence the
+deny-list is doing real work rather than decorating a template.
+
+**Front desk learns "call them", the clinician learns "they wrote".** The alert
+goes to the treating clinician alone (hard rule 9) carrying the reason code
+`inbound:unparsed` and nothing else. The audit row carries the same code. Front
+desk gets a name, a number, and a button that says *Called them*.
+
+**Checked by looking, not by trusting.** The behavioural spec plants a
+distinctive sentence and then hunts for it in every column it could have reached
+— the outbox it triggered, the audit row that recorded it, the alert that routed
+it, the appointment it was about. The structural half is the one that matters
+next month: a migration adding a `body` column "just for debugging" would pass
+every behavioural test, because none of them would write to it. So the lint reads
+the model out of `schema.prisma` and asserts that its only `String` fields are
+identifiers. The same discipline as the author-only, `no_show` and `no_response`
+rules.
+
+**It is a command, not an HTTP route.** The PRD says "simulated inbound
+endpoint"; what shipped is `receiveInbound()` plus `npm run inbound:simulate`. An
+unauthenticated public POST that writes to a client's record needs a provider
+signature to verify, and a signature nobody issues is a security control that
+only looks like one. The rest of the system is honest about nothing being sent;
+this is honest about nothing being received.
+
+**What it still does not do.** Carrier opt-out keywords (`STOP`, `UNSUBSCRIBE`)
+classify as `unparsed` and reach a person, rather than silently setting
+`reminderPreference: 'none'`. That is deliberate for a simulation — real opt-out
+is enforced by the carrier and the provider above this layer, and a half-built
+version here would read as compliance without being it. The sender match is also
+a scan over clients with a phone, compared in JS: fine for one practice, and it
+wants a stored normalised-number column before it is anything larger.
+
+
 ## Decisions log
 
 | Decision | Why |
@@ -643,6 +770,19 @@ engineering one, and the settings page says so beside the switch.
 | The waiver is a new `waive` action on `fee`, not an `update` | Reversing money the practice already decided to charge is a different power from setting a sliding-scale rate, and the whole argument of `permissions.ts` is that a power nobody named is a power nobody reviewed. Front desk keeps `fee: read` and gets a 403 on the waiver, logged — which turns the existing "waiving a fee is a management decision" comment from an intention into a rule |
 | The waived amount goes in the audit row's reason code, and the waiver leaves `status` and `confirmation` alone | The client still did not turn up; the practice chose not to charge, and the record should say both. Zeroing `chargeFeeCents` would otherwise be the only trace of what was reversed, and the audit table is append-only by a database rule — so the amount survives in the one place the waiver cannot rewrite |
 | `no_response` writes get their own structural lint | It is the only confirmation value a fee can be derived from, and `confirmationRequired` is the only thing between it and a client who was never asked. The behavioural specs cover the sweep that exists; they say nothing about the batch job written next month that sets `no_response` from a query of its own and passes every one of them. Grep over `src/` and `app/`, verified by planting a violation — the same discipline as the author-only and `no_show` rules |
+| The unconfirmed work list filters on "not confirmed", not on "pending" | Three different silences are the same phone call: nobody could be asked, nobody has answered yet, and somebody said no in a way that could not free the room. Narrowing to `pending` would hide the clients least likely to turn up — including every client on `reminderPreference: 'none'`, who can never confirm anything and are exactly who front desk has to ring |
+| The client's phone number is on the work-list row, not one click away | The fee rests on the practice having given the client a chance to answer, and that is only true if somebody can actually make the call. A list that needs a second navigation to act on is a list that gets skimmed |
+| The cadence cap narrows a set rather than adding a branch | `dueStages` gained an `allowed` argument, so every rule it already applied still runs. The cap can therefore only ever remove messages — a capped client booked inside the day-before lead still gets nothing, and no configuration of the cap can manufacture a stage that was never sendable |
+| The cap does not touch the promotion to `pending` | Fewer messages is still a message. A capped client's silence rests on exactly the same outbox row as anybody else's, because the fee's evidence was never the number of times the practice asked. Had the cap suppressed the promotion, turning it on would have quietly exempted the practice's most reliable clients from a policy they are the least likely to trigger |
+| Only *decided* and only *past* appointments move a confirmation streak | `not_required` and `pending` say nothing in either direction, which stops a client on `reminderPreference: 'none'` — who can never confirm anything — from reading as permanently unreliable. Past-only, because "until they miss one" is knowable only after the hour has gone; counting future confirmations would let a client mute their own reminders by answering early |
+| A `declined` breaks a streak as surely as a `no_response` | A streak is a record of answering, not of agreeing. A client who is starting to decline is a client whose pattern is changing, and the five-day message exists for exactly that |
+| The inbound classifier matches whole messages, never prefixes | `no I cannot come, my mother died last night` starts with a keyword and is not a keyword reply. A substring rule would classify it, act on it, and discard the rest with nobody told. The cost of strictness is a polite `yes thanks` reaching a clinician who did not need it; the cost of looseness is a disclosure nobody reads |
+| A keyword decline records the answer and cancels nothing | The portal link carries 24 random bytes and shows the fee before it applies; a phone number is public and spoofable. Authentication is what is weaker over SMS, not authorization — so the inbound path writes an answer and never moves money, and the worst a forged `NO` achieves is a phone call the client was going to get anyway. It is also less code than the alternative: no window logic, no interstitial, no second cancellation path |
+| Two clients sharing a phone number is treated as nobody's number | One line, two records is ordinary in this domain — a couple, a parent and a teenager, a carer. Confirming the wrong person's hour is the mild failure; an `unparsed` from a shared line would raise an alert about the wrong client to the wrong clinician, which is a disclosure. Two matches is handled identically to zero |
+| The unparsed auto-reply names 988 in digits, not by name | It has to leave somebody a route to urgent help, and it arrives on a lock screen a roommate may be holding. The line is called the Suicide & Crisis Lifeline and both words are on the messaging deny-list — so the safest possible message would fail its own send if it named the service it points at. Naming the digits is what the sender actually needs; naming the service is what the deny-list exists to stop. The clearest evidence in the codebase that the deny-list is doing work rather than decorating a template |
+| `InboundReply` gets a structural lint on its *columns*, not just behavioural tests | The specs prove the current code stores no body. They say nothing about the migration that adds a `body` column "just for debugging" next month — every one of them would still pass, because none of them would write to it. So the lint reads the model out of `schema.prisma` and asserts its only `String` fields are identifiers |
+| The inbound channel is a command, not an HTTP route | The PRD asked for a "simulated inbound endpoint". An unauthenticated public POST that writes to a client's record needs a provider signature to verify, and a signature nobody issues is a security control that only looks like one. `npm run inbound:simulate` is honest about being a stub, the same way nothing sending is |
+| Carrier opt-out keywords are left unparsed, reaching a person | `STOP` silently setting `reminderPreference: 'none'` would look like compliance without being it — real opt-out is enforced by the carrier and the provider above this layer. Routing it to a human is the honest behaviour for a simulation, and the wrong one to fake |
 
 ## What this project deliberately is not
 

@@ -39,6 +39,28 @@ test.describe('the calendar', () => {
     await expect(page.getByText('Annual leave')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Continuity of care' })).toBeVisible();
   });
+
+  /**
+   * P1-3, rendered. The seeded practice contains a client who wrote a sentence
+   * to the reminder number; the front desk surface has to show that they wrote
+   * and none of what they wrote — so the spec asserts against the words
+   * themselves, taken from the seed.
+   */
+  test('shows front desk that a client wrote in, and nothing they wrote', async ({ page }) => {
+    await actAs(page, USERS.frontDesk);
+    await page.goto('/worklists');
+
+    await expect(page.getByRole('heading', { name: 'Clients who wrote back — call them' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Called them' }).first()).toBeVisible();
+    await expect(page.getByText(/really hard this week/)).toHaveCount(0);
+    await expect(page.getByText(/not up to it/)).toHaveCount(0);
+  });
+
+  test('lists the sessions nobody has answered about, with a number to ring', async ({ page }) => {
+    await actAs(page, USERS.frontDesk);
+    await page.goto('/worklists');
+    await expect(page.getByRole('heading', { name: 'Nobody has said they are coming' })).toBeVisible();
+  });
 });
 
 test.describe('the client form', () => {

@@ -13,6 +13,7 @@ describe('the discretion lint', () => {
   it('passes a reminder that says when and where and nothing else', () => {
     const { body } = CLIENT_TEMPLATES.appointment_reminder!({
       practice: 'Stillwater',
+      phone: '(555) 010-0199',
       startAt: new Date('2026-09-01T19:00:00Z'),
       link: 'http://localhost:3700/p/abc123',
     });
@@ -45,7 +46,8 @@ describe('the discretion lint', () => {
   it('keeps every shipped client template clean', () => {
     for (const [key, build] of Object.entries(CLIENT_TEMPLATES)) {
       const { subject, body } = build({
-        practice: 'Stillwater', startAt: new Date('2026-09-01T19:00:00Z'), link: 'https://example.test/f/abc',
+        practice: 'Stillwater', phone: '(555) 010-0199',
+        startAt: new Date('2026-09-01T19:00:00Z'), link: 'https://example.test/f/abc',
       });
       expect(indiscreetTerms(body), key).toEqual([]);
       expect(indiscreetTerms(subject ?? ''), key).toEqual([]);

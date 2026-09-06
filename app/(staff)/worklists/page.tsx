@@ -3,7 +3,8 @@ import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
 import { continuityQueue, unconfirmedSoon, vacationImpact, waitlistMatches } from '../../../src/scheduling/worklists';
 import { openRescheduleRequests } from '../../../src/portal/service';
-import { handleRescheduleRequest } from './actions';
+import { openInboundReplies } from '../../../src/messaging/inbound';
+import { handleRescheduleRequest, markInboundHandled } from './actions';
 import { addDays, localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
 import { Badge, Card, CONFIRMATION_META, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
@@ -38,6 +39,7 @@ async function WorkListsPage() {
 
   const waiting = await waitlistMatches(actor, { date: addDays(today, 1), startMinute: 15 * 60 }).catch(() => []);
   const rescheduleAsks = await openRescheduleRequests(actor).catch(() => []);
+  const wroteBack = await openInboundReplies(actor).catch(() => []);
 
   return (
     <>
@@ -83,6 +85,56 @@ async function WorkListsPage() {
                     </li>
                   );
                 })}
+              </ul>
+            </Card>
+          )}
+        </section>
+
+        <section>
+          <h2 className="mb-2 text-subhead font-semibold">Clients who wrote back — call them</h2>
+          <p className="mb-3 max-w-prose text-body text-muted">
+            A client replied to a reminder in words rather than tapping the link. The
+            message was read once, classified, and dropped: it is not stored here, in the
+            audit log, or anywhere else, because a reply to this number could be anything.
+            Their clinician has been told that they wrote. Ring them and ask.
+          </p>
+          {wroteBack.length === 0 ? (
+            <EmptyState title="Nobody has written in" />
+          ) : (
+            <Card className="p-0">
+              <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                {wroteBack.map((r) => (
+                  <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body">
+                    <span>
+                      <Link href={`/clients/${r.clientId}`} className="font-medium text-accent hover:underline">
+                        {r.client.lastName}, {r.client.firstName}
+                      </Link>{' '}
+                      <span className="font-mono text-caption text-subtle">{r.client.code}</span>
+                      {r.appointment && (
+                        <span className="ml-2 text-muted">
+                          about {WEEKDAYS[utcToZoned(r.appointment.startAt).weekday]}{' '}
+                          {utcToZoned(r.appointment.startAt).date}{' '}
+                          {minutesToHHMM(utcToZoned(r.appointment.startAt).minutes)}
+                          {' · '}{r.appointment.clinician.name}
+                        </span>
+                      )}
+                    </span>
+                    <span className="flex items-center gap-2">
+                      {r.client.phone
+                        ? <span className="font-mono text-body">{r.client.phone}</span>
+                        : <span className="text-caption text-subtle">no number on file</span>}
+                      <form action={markInboundHandled}>
+                        <input type="hidden" name="replyId" value={r.id} />
+                        <button
+                          className="rounded-[var(--radius)] border px-2 py-1 text-caption font-medium"
+                          style={{ borderColor: 'var(--border-strong)' }}
+                        >
+                          Called them
+                        </button>
+                      </form>
+                    </span>
+                  </li>
+                ))}
               </ul>
             </Card>
           )}

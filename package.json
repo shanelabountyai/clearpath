@@ -30,7 +30,8 @@
     "db:seed:prod": "CLEARPATH_ALLOW_CLOUD_DB=1 dotenv -e .env.production -- tsx prisma/seed.ts",
     "db:seed:e2e": "dotenv -e .env.e2e -- tsx prisma/seed.ts",
     "reminders:run": "dotenv -e .env -- tsx scripts/reminders-run.ts",
-    "nonresponse:run": "dotenv -e .env -- tsx scripts/nonresponse-run.ts"
+    "nonresponse:run": "dotenv -e .env -- tsx scripts/nonresponse-run.ts",
+    "inbound:simulate": "dotenv -e .env -- tsx scripts/inbound-simulate.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
