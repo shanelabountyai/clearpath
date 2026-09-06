@@ -153,7 +153,53 @@ sharing one database means whichever suite ran last decides what the other sees.
 There is no login. The dev switcher in the sidebar runs the app as any seeded
 person — see **Known limitations**. Authorization is real either way.
 
-### The 60-second demo
+### The 60-second demo: the confirmation loop
+
+Three clients and one rule. The practice texts before every session, requires an
+answer, and charges for silence — and the whole design is about what silence is
+*not* allowed to mean.
+
+1. Act as **Marion Whitlock** (front desk) → **Work lists**. Three lists, and
+   the order is the argument: clients who replied in words nobody here may read,
+   clients the carrier could not reach, and sessions starting soon that nobody
+   has answered for. A practice should work this list with a telephone before it
+   ever charges anybody.
+
+   ![The front-desk work lists. Clients who texted back in words, with a phone number and a "Called them" button and nothing to read, because nothing was stored. Below it, clients the carrier could not deliver to, marked unreachable and exempt from the fee. Below that, unconfirmed sessions starting soon.](docs/screenshots/work-lists.png)
+
+2. Open any client → the **Reminders** row. Channel, cadence and language are
+   one decision and one form. `None` is not "fewer messages": it is the safety
+   setting, and a client on it is never asked and so can never be charged.
+
+3. Open a Spanish-speaking client's own door — the tokenized link from their
+   reminder. The message, the weekday, the buttons and the fee disclosure are
+   all in the language the reminder was written in, because a translated message
+   pointing at an untranslated page is a loop the client cannot complete.
+
+   ![The client's portal in Spanish: "Hola Test", their next appointments with weekday names in Spanish, a confirm button, a decline with a reason picker, and a separate "or, if you would rather keep it and move it" request.](docs/screenshots/client-door-es.png)
+
+4. Act as **Elena Sarkis** (practice manager) → **Practice report** →
+   **Confirmation**. What the policy did and what it cost, including the
+   sessions it stood down on: undelivered reminders charge nobody, and neither
+   do reminders that arrived too late to answer.
+
+   ![The confirmation report: 70.9% confirmed, 10.4% declined, 17.8% no reply, and 31 sessions charged for silence totalling $2,790. Beneath it, reminders as the carrier reported them — 951 delivered, 16 undelivered, 17 reached too late — and a per-clinician table.](docs/screenshots/confirmation-report.png)
+
+5. Act as **Owen Delacroix** (auditor) → filter to a charged session. Three
+   sends, zero answers, one determination, one fee. Ids and reason codes only.
+
+**The client that is the whole feature** is none of the ones above: it is any of
+the 91 sessions in the seeded quarter that end `completed` / `no_response`.
+Somebody who never answered a message and then walked in. They are charged the
+session fee like anybody else, because confirmation and attendance were never
+the same field — and a query in `prisma/metrics.ts` fails the seed if that ever
+stops being true.
+
+`e2e/money.spec.ts`, `e2e/cadence.spec.ts` and `e2e/portal.spec.ts` are that
+walkthrough as tests; the numbers on the report are the seeded quarter's own,
+checked by `npm run verify:seed`.
+
+### The 60-second demo: the access rule
 
 1. Act as **Rosa Iyer** (supervisor) → **Co-sign queue** → co-sign one of Priya
    Vance's progress notes.
@@ -180,7 +226,7 @@ process-note refusal.
 
 The quarter is **simulated rather than assigned**. Every day of it gets a
 reminder-horizon run, the clients who answer answer through their own tokenized
-link, and the non-response sweep runs at midnight — so the 1,176 reminders, the
+link, and the non-response sweep runs at midnight — so the 1,094 reminders, the
 outbox rows and the audit trail are consequences of the shipped code rather than
 fixtures shaped to look like consequences. Client behaviour is dealt from a fixed
 cycle (70% confirm, 10% decline, 15% silent but present, 5% silent and absent)
@@ -192,14 +238,17 @@ real undelivered reminders rather than a uniformly perfect wire.
 The seed then checks itself. Forty-four success metrics run as queries at the end of
 `npm run db:seed`, and it refuses to finish if any fails — no fee for a client on
 `reminderPreference: 'none'`, **no fee without a delivered message behind it**,
-no more than 5% of eligible sessions charged, and every one of the 102 clients
-who attended without ever answering charged the session fee rather than the
-no-show fee. That last group is the row the confirmation feature is judged on.
+no more than 5% of eligible sessions charged, and every one of the 91 sessions
+that ended with a client attending after never answering charged the session fee
+rather than the no-show fee. That last group is the row the confirmation feature is judged on.
 
-Requiring delivery rather than a queued send cost the policy almost nothing and
-made it defensible: **33 fees from 685 eligible sessions (4.82%), against 34 from
-692 (4.91%) when a queued row was enough.** Seven sessions were asked about and
-never reached, and none of them was charged.
+Four preconditions now stand between a silent client and a charge: the practice
+had to be allowed to ask, a carrier had to confirm the message arrived, it had to
+arrive with time to answer, and there has to be a body in a language the client
+reads. Each was added because the one before it turned out not to be enough, and
+together they cost the policy very little: **31 fees from 679 eligible sessions,
+4.57%.** Sixteen reminders were never delivered and seventeen arrived too late to
+answer; none of those sessions was charged.
 
 ## Design
 

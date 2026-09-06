@@ -40,6 +40,8 @@ export interface PortalCopy {
   feeConfirmButton: string;
   feeKeepLink: string;
   reasonLabel: string;
+  /** Separates the request from the cancellation directly above it. */
+  rescheduleLead: string;
   askToChange: string;
   changePending: string;
   footer: string;
@@ -77,6 +79,7 @@ export const PORTAL_COPY: Record<Language, PortalCopy> = {
     feeConfirmButton: 'Yes, cancel it',
     feeKeepLink: 'Keep the appointment',
     reasonLabel: 'Reason',
+    rescheduleLead: 'Or, if you would rather keep it and move it:',
     askToChange: 'Ask to change this',
     changePending: 'You have asked to change this one. Someone will call you.',
     footer: 'This link is personal to you. Please do not forward it.',
@@ -129,6 +132,7 @@ export const PORTAL_COPY: Record<Language, PortalCopy> = {
     feeConfirmButton: 'Sí, cancelarla',
     feeKeepLink: 'Mantener la cita',
     reasonLabel: 'Motivo',
+    rescheduleLead: 'O, si prefiere mantenerla y cambiarla de hora:',
     askToChange: 'Pedir un cambio',
     changePending: 'Ha pedido cambiar esta cita. Alguien le llamará.',
     footer: 'Este enlace es personal. Por favor no lo reenvíe.',

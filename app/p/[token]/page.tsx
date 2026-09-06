@@ -127,7 +127,18 @@ export default async function ClientPortalPage({
                 )}
 
                 {a.confirmation === 'pending' && q.fee !== a.id && (
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                  /*
+                   * Two rows, not one, and the screenshot pass is what
+                   * settled it. Side by side, the decline's reason picker sat
+                   * between the two buttons and read as belonging to neither
+                   * — and directly above the reschedule request's picker, in
+                   * the same words, so the page appeared to ask the same
+                   * question twice with no way to tell which answer went
+                   * where. On its own row the select is unambiguously the
+                   * decline's, and confirming stays the single unobstructed
+                   * tap it is supposed to be.
+                   */
+                  <div className="mt-3 space-y-2">
                     <form action={sayYes}>
                       <input type="hidden" name="token" value={token} />
                       <input type="hidden" name="appointmentId" value={a.id} />
@@ -142,7 +153,7 @@ export default async function ClientPortalPage({
                         one question, one vocabulary, and still no box to type
                         in. It defaults to the plainest of them, so declining
                         stays one tap for a client who does not want to say. */}
-                    <form action={sayNo} className="flex flex-wrap items-center gap-2">
+                    <form action={sayNo} className="flex flex-wrap items-center gap-2 pt-1">
                       <input type="hidden" name="token" value={token} />
                       <input type="hidden" name="appointmentId" value={a.id} />
                       <label className="sr-only" htmlFor={`decline-reason-${a.id}`}>{copy.reasonLabel}</label>
@@ -167,7 +178,20 @@ export default async function ClientPortalPage({
                 {pending ? (
                   <p className="mt-3 text-body text-subtle">{copy.changePending}</p>
                 ) : (
-                  <form action={askToReschedule} className="mt-3 flex flex-wrap items-center gap-2">
+                  <>
+                  {/*
+                   * Said out loud, because the two controls beneath an
+                   * appointment look alike and do opposite things: one
+                   * cancels the hour, possibly with a fee attached, and one
+                   * only asks. Identical reason pickers stacked with nothing
+                   * between them is how a client cancels a session they meant
+                   * to move — the screenshot pass is where that became
+                   * obvious.
+                   */}
+                  {a.confirmation === 'pending' && q.fee !== a.id && (
+                    <p className="mt-4 text-caption text-subtle">{copy.rescheduleLead}</p>
+                  )}
+                  <form action={askToReschedule} className="mt-2 flex flex-wrap items-center gap-2">
                     <input type="hidden" name="token" value={token} />
                     <input type="hidden" name="appointmentId" value={a.id} />
                     <label className="sr-only" htmlFor={`reason-${a.id}`}>{copy.reasonLabel}</label>
@@ -186,6 +210,7 @@ export default async function ClientPortalPage({
                       {copy.askToChange}
                     </button>
                   </form>
+                  </>
                 )}
               </li>
             );

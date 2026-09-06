@@ -52,5 +52,46 @@ test.describe('README screenshots', () => {
       mask: [page.locator('tbody td:first-child')],
       maskColor: '#a8a29a',
     });
+
+    // ── the confirmation loop, which is most of what this project is now ──
+    //
+    // Four phases of it were invisible in the README: the reminder cadence,
+    // the fee for silence, the carrier that has to prove delivery, and two
+    // languages. These are the pictures of that.
+
+    // The half a practice should ship before the money: a list somebody works
+    // with a phone, and above it the clients who wrote back in words nobody
+    // here is allowed to read.
+    await actAs(page, USERS.frontDesk);
+    await page.goto('/worklists');
+    await expect(page.getByRole('heading', { name: 'Unconfirmed, starting soon' })).toBeVisible();
+    // Full page: the three lists are the point, and the third sits below the
+    // fold at any sane viewport.
+    await page.screenshot({ path: `${shot}/work-lists.png`, fullPage: true });
+
+    // The client's own door, in the language the reminder was written in.
+    // Chosen rather than hoped for: a Spanish-speaking client with a live link
+    // and something still to answer.
+    const spanishToken = sql(
+      `select l.token from "PortalLink" l join "Client" c on c.id = l."clientId"`
+      + ` where c.language = 'es' and l."expiresAt" > now()`
+      + ` and exists (select 1 from "Appointment" a where a."clientId" = c.id`
+      + `   and a.confirmation = 'pending' and a."startAt" > now())`
+      + ` order by l."expiresAt" desc limit 1`,
+    );
+    if (spanishToken) {
+      await page.context().clearCookies();
+      await page.goto(`/p/${spanishToken}`);
+      await expect(page.getByRole('heading', { name: /^Hola / })).toBeVisible();
+      await page.screenshot({ path: `${shot}/client-door-es.png` });
+    }
+
+    // And what the policy actually did, for the person deciding whether to
+    // keep it: the rates, the money, and the sessions it stood down on.
+    await actAs(page, USERS.manager);
+    await page.goto('/reports');
+    await expect(page.getByRole('heading', { name: 'Confirmation' })).toBeVisible();
+    await page.locator('section, .lg\\:col-span-2').filter({ hasText: 'Confirmation' }).first()
+      .screenshot({ path: `${shot}/confirmation-report.png` });
   });
 });
