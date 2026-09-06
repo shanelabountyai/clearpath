@@ -68,7 +68,18 @@ export async function daySchedule(actor: Actor, date: LocalDate) {
             toDate: { gte: dateColumn(date) },
           },
           select: { userId: true, kind: true, fromDate: true, toDate: true, startMinute: true, endMinute: true, reason: true },
-          orderBy: { fromDate: 'asc' },
+          // `fromDate` alone is not an order: two blocks bitten out of the same
+          // day tie on it, and the banner joins their reasons in the order they
+          // arrive — so "Dentist; School run" and "School run; Dentist" were
+          // both correct answers depending on physical row order. The same
+          // untied-orderBy shape as the appointments query above. A whole-day
+          // override has no `startMinute`; it is the largest absence there is,
+          // so it leads.
+          orderBy: [
+            { fromDate: 'asc' },
+            { startMinute: { sort: 'asc', nulls: 'first' } },
+            { id: 'asc' },
+          ],
         }),
         tx.availability.findMany({
           where: { user: onScreen },

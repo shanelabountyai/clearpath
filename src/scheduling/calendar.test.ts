@@ -240,6 +240,27 @@ describe('who is out, and for how much of the day', () => {
     expect(out?.reason).toBe('Dentist; School run');
   });
 
+  it('lists the two reasons in the order of the day, not the order they were written', async () => {
+    // The assertion above was passing on insertion order. Writing them the
+    // other way round is what tells the two apart, and it is the shape the
+    // calendar screenshot flake had: `orderBy` on a column that ties leaves
+    // Postgres free to answer differently between two identical reads.
+    await absence({ startMinute: 840, endMinute: 900, reason: 'School run' });
+    await absence({ startMinute: 600, endMinute: 660, reason: 'Dentist' });
+
+    const [out] = (await daySchedule(actor(desk), TUESDAY)).absences;
+    expect(out?.reason).toBe('Dentist; School run');
+  });
+
+  it('leads with the whole-day reason when a day off and a block overlap', async () => {
+    await absence({ startMinute: 600, endMinute: 660, reason: 'Dentist' });
+    await absence({ reason: 'Vacation' });
+
+    const [out] = (await daySchedule(actor(desk), TUESDAY)).absences;
+    expect(out?.reason).toBe('Vacation; Dentist');
+    expect(out?.allDay).toBe(true);
+  });
+
   it('falls back to a reason when the override carries none', async () => {
     await absence({});
     const [out] = (await daySchedule(actor(desk), TUESDAY)).absences;
