@@ -2,7 +2,7 @@ import { guarded } from '../auth/guard';
 import { SYSTEM_ACTOR } from '../auth/permissions';
 import { DAY, systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
-import { queueToClient } from '../messaging/outbox';
+import { canRender, queueToClient } from '../messaging/outbox';
 import { ensurePortalLink } from '../portal/service';
 import {
   cadenceCapped,
@@ -137,7 +137,7 @@ export async function runReminderHorizon(
       startAt: true,
       createdAt: true,
       confirmation: true,
-      client: { select: { reminderPreference: true, reminderCadence: true, email: true, phone: true } },
+      client: { select: { reminderPreference: true, reminderCadence: true, language: true, email: true, phone: true } },
       reminders: { select: { stage: true } },
     },
     orderBy: { startAt: 'asc' },
@@ -153,14 +153,25 @@ export async function runReminderHorizon(
   const result: HorizonResult = { queued: [], promoted: [], exempted: [], capped: [] };
 
   for (const appt of candidates) {
-    if (!confirmationRequired(appt.client, appt, settings)) {
+    // A language the reminder has no body in is a client the practice cannot
+    // ask, so it is decided here beside every other eligibility rule rather
+    // than discovered halfway through a write. Falling back to English would
+    // count an unreadable message as having asked, and the sweep would charge
+    // somebody for not answering a question they could not read.
+    //
+    // A completeness test refuses a partially translated language outright, so
+    // this branch is a safety net rather than a plan — the condition it guards
+    // against is one the suite will not let anybody ship.
+    const untranslated = !canRender('appointment_reminder', appt.client.language);
+
+    if (untranslated || !confirmationRequired(appt.client, appt, settings)) {
       // A client who switched to `none` — or lost the address their channel
       // needs — mid-cadence. The remaining stages stop here, and the live
       // `pending` goes back to `not_required` so the sweep can never turn it
       // into `no_response`. The safety setting is not allowed to become a
       // billing trap by arriving late.
       if (appt.confirmation === 'pending') {
-        await guarded(auditFor(appt, 'confirmation_not_required'), (tx) =>
+        await guarded(auditFor(appt, untranslated ? 'confirmation_untranslated' : 'confirmation_not_required'), (tx) =>
           tx.appointment.update({ where: { id: appt.id }, data: { confirmation: 'not_required' } }));
         result.exempted.push(appt.id);
       }

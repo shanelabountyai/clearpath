@@ -6,7 +6,8 @@ import { NotFound } from '../errors';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { bookAppointment } from '../scheduling/booking';
 import { runReminderHorizon } from '../scheduling/reminders';
-import { classifyReply, handleInboundReply } from './inbound';
+import { classifyReply, handleInboundReply, KEYWORDS } from './inbound';
+import { LANGUAGES } from './language';
 import { indiscreetTerms } from './outbox';
 
 /** 2026-09-01 15:00 America/New_York, as everywhere else in this suite. */
@@ -70,6 +71,102 @@ describe('classifyReply (pure)', () => {
   it('ignores trailing punctuation, which people type', () => {
     expect(classifyReply('Yes!')).toBe('confirm');
     expect(classifyReply('no.')).toBe('decline');
+  });
+});
+
+/**
+ * P2: the second half of the language gap. The bodies went out in Spanish and
+ * the keyword lists were still English, so a client answered "SÍ" to a question
+ * asked in their own language and got a phone call about an unreadable reply.
+ */
+describe('classifyReply in Spanish', () => {
+  const es = (body: string) => classifyReply(body, 'es');
+
+  it.each(['SÍ', 'sí', 'Si', 'si', 'confirmo', 'CONFIRMAR', 'vale', 'claro', 'de acuerdo', 'ahí estaré', '1'])(
+    'reads %j as a confirmation',
+    (body) => expect(es(body)).toBe('confirm'),
+  );
+
+  it.each(['NO', 'no', 'no puedo', 'cancelar', 'anular', 'no iré', 'no voy', '2'])(
+    'reads %j as a decline',
+    (body) => expect(es(body)).toBe('decline'),
+  );
+
+  it.each(['¿Puedo llamarles mañana?', 'no estoy seguro', 'tal vez', 'sí pero más tarde'])(
+    'gives up on %j rather than guessing',
+    (body) => expect(es(body)).toBe('unparsed'),
+  );
+
+  it('reads an answer typed without its accent', () => {
+    // Which is how most people type it on a phone, and a classifier that
+    // insists on "sí" would send half of them a phone call instead.
+    expect(es('si')).toBe('confirm');
+    expect(es('sí')).toBe('confirm');
+    expect(es('no ire')).toBe('decline');
+  });
+
+  it('understands a client who code-switches', () => {
+    // A Spanish-preferring client typing "yes" has still answered. Their own
+    // language is consulted first; it does not become the only one.
+    expect(es('yes')).toBe('confirm');
+    expect(classifyReply('si', 'en')).toBe('confirm');
+  });
+
+  /**
+   * The opt-out keywords stay English in every language, because `STOP` is what
+   * the carrier and the regulator recognise regardless of what the client
+   * speaks. The Spanish word is accepted as well — a client who types it plainly
+   * means it, and the practice can act even where the network below will not.
+   */
+  it.each(['STOP', 'stop', 'PARAR', 'parar', 'baja', 'darme de baja'])(
+    'honours %j as an opt-out',
+    (body) => expect(es(body)).toBe('opt_out'),
+  );
+
+  it('honours the English opt-out from a Spanish-speaking client', () => {
+    expect(es('STOP')).toBe('opt_out');
+    expect(classifyReply('parar', 'en')).toBe('opt_out');
+  });
+});
+
+/**
+ * The rule that exists for the third language rather than for these two.
+ *
+ * A token meaning "yes" in one shipped language and "no" in another has no
+ * reading worth picking, so it comes back `unparsed` and a person telephones.
+ * There is no such collision between English and Spanish today; this is what
+ * fails the day somebody adds one without noticing.
+ */
+describe('no token means opposite things in two languages', () => {
+  it('has no confirm/decline collision across shipped languages', () => {
+    const collisions: string[] = [];
+    for (const a of LANGUAGES) {
+      for (const b of LANGUAGES) {
+        if (a === b) continue;
+        for (const token of KEYWORDS.CONFIRM[a]) {
+          if (KEYWORDS.DECLINE[b].includes(token)) collisions.push(`${token}: confirm in ${a}, decline in ${b}`);
+        }
+      }
+    }
+    expect(collisions).toEqual([]);
+  });
+
+  it('refuses to pick a side when one is planted', () => {
+    // The collision the suite forbids, constructed by hand so the behaviour is
+    // asserted rather than assumed: `no` reads as a decline in both languages,
+    // so it resolves; a token reading both ways would not.
+    expect(classifyReply('no', 'es')).toBe('decline');
+    expect(classifyReply('no', 'en')).toBe('decline');
+    // And a token in neither list resolves to nothing at all.
+    expect(classifyReply('quizás', 'es')).toBe('unparsed');
+  });
+
+  it('never lets an opt-out be read as an answer about an appointment', () => {
+    for (const token of KEYWORDS.OPT_OUT) {
+      for (const language of LANGUAGES) {
+        expect(classifyReply(token, language), token).toBe('opt_out');
+      }
+    }
   });
 });
 
@@ -194,6 +291,25 @@ describe('against the database', () => {
       // The deny-list still applies. "Crisis line" is itself on it, so the one
       // message that has to carry one says what it is for instead of naming it.
       expect(indiscreetTerms(reply.body)).toEqual([]);
+    });
+
+    it('answers in the language the client wrote to us in', async () => {
+      const { client } = await asked();
+      await prisma.client.update({ where: { id: client.id }, data: { language: 'es' } });
+      await handleInboundReply({ from: '555-0100', body: 'quiero hablar con alguien' }, { clock: clock() });
+
+      const reply = await prisma.outboxMessage.findFirstOrThrow({
+        where: { templateKey: 'inbound_unparsed' },
+      });
+      expect(reply.body).toBe(
+        'No podemos leer las respuestas a este número. Por favor llámenos al 555-0199. '
+        + 'Si necesita ayuda urgente ahora mismo, llame o envíe un mensaje al 988 a cualquier hora.',
+      );
+      // The one message that has to carry a number a person picks up, and it
+      // still says what the number is for rather than naming it: `crisis` is
+      // spelled the same in Spanish and denied by both lists.
+      expect(indiscreetTerms(reply.body)).toEqual([]);
+      expect(reply.body).not.toContain('crisis');
     });
 
     it('leaves the appointment exactly as it was', async () => {

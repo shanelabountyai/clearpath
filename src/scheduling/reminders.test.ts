@@ -316,6 +316,40 @@ describe('the reminder body', () => {
     expect(indiscreetTerms(msg.body)).toEqual([]);
   });
 
+  /**
+   * P2: the last named gap. A Spanish-speaking client got a reminder that was
+   * neutral in a language they might not read, checked against a deny-list that
+   * did not contain the word "terapia".
+   */
+  it('says the same thing in the language the client reads', async () => {
+    const appt = await appointmentBooked(30 * DAY);
+    await prisma.client.update({ where: { id: appt.clientId }, data: { language: 'es' } });
+    await runReminderHorizon(fixedClock(new Date(START.getTime() - 5 * DAY)));
+
+    const link = await prisma.portalLink.findFirstOrThrow({ where: { clientId: appt.clientId } });
+    const msg = await prisma.outboxMessage.findFirstOrThrow({ where: { templateKey: 'appointment_reminder' } });
+    expect(msg.subject).toBe('Recordatorio de cita');
+    expect(msg.body).toBe(
+      `Recordatorio de cita: martes 15:00, Stillwater. Avísenos si va a venir: http://localhost:3700/p/${link.token}. El enlace es personal — por favor no lo reenvíe.`,
+    );
+    // The weekday is translated too. A Spanish body that says "Tuesday" is a
+    // translation somebody stopped halfway through, and the day is the one
+    // word in the message the client actually has to act on.
+    expect(msg.body).not.toContain('Tuesday');
+    expect(indiscreetTerms(msg.body)).toEqual([]);
+  });
+
+  it('asks a Spanish-speaking client exactly as it asks anybody else', async () => {
+    const appt = await appointmentBooked(30 * DAY);
+    await prisma.client.update({ where: { id: appt.clientId }, data: { language: 'es' } });
+
+    await runReminderHorizon(fixedClock(new Date(START.getTime() - HOUR)));
+    // Same stages, same promotion, same fee-eligibility. A translated client is
+    // not a lighter-touch client — the cadence does not know the difference.
+    expect(await stagesFor(appt.id)).toEqual(['d5', 'd1', 'd0']);
+    expect((await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } })).confirmation).toBe('pending');
+  });
+
   it('reuses the client\'s live door rather than minting one per stage', async () => {
     const appt = await appointmentBooked(30 * DAY);
     // Two stages queue in one run; a third a day later.

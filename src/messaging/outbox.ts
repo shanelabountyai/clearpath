@@ -1,6 +1,7 @@
 import { prisma, type Tx } from '../db';
 import { systemClock } from '../clock';
-import { minutesToHHMM, utcToZoned, WEEKDAYS } from '../time';
+import { minutesToHHMM, utcToZoned } from '../time';
+import { ALL_DENIED, LANGUAGES, WEEKDAY_NAMES, normalise, type Language } from './language';
 
 /**
  * Everything the practice sends a client, and the rule that governs it.
@@ -18,24 +19,10 @@ import { minutesToHHMM, utcToZoned, WEEKDAYS } from '../time';
  */
 
 /**
- * Words that must never reach a client-facing message. Substring matched and
- * case-insensitive, so "Counseling", "counsellor" and "PSYCHIATRY" all fail.
- *
- * Deliberately blunt: a false positive costs somebody a rewrite, a false
- * negative costs a client their privacy.
+ * The deny-list lives in `language.ts` now, one per language, and this checks
+ * the union of all of them. A body has to be discreet to whoever picks up the
+ * phone rather than only to the client — see the note at the top of that file.
  */
-export const DENY_LIST = [
-  'therapy', 'therapist', 'therapeutic',
-  'counseling', 'counselling', 'counselor', 'counsellor',
-  'psychiatr', 'psycholog', 'psychotherapy',
-  'mental health', 'behavioral health', 'behavioural health',
-  'depression', 'depressive', 'anxiety', 'trauma', 'ptsd', 'bipolar',
-  'addiction', 'substance', 'suicide', 'self-harm', 'crisis',
-  'diagnosis', 'diagnostic', 'treatment plan', 'clinical',
-  'intake', 'screener', 'screening', 'assessment',
-  'supervis', 'progress note', 'process note',
-] as const;
-
 export class IndiscreetMessage extends Error {
   constructor(readonly terms: string[]) {
     super(`Message would disclose why the client is attending: ${terms.join(', ')}`);
@@ -43,10 +30,10 @@ export class IndiscreetMessage extends Error {
   }
 }
 
-/** Terms from the deny-list present in the text. */
+/** Terms from any shipped language's deny-list present in the text. */
 export function indiscreetTerms(text: string): string[] {
-  const haystack = text.toLowerCase();
-  return DENY_LIST.filter((term) => haystack.includes(term));
+  const haystack = normalise(text);
+  return ALL_DENIED.filter((term) => haystack.includes(term));
 }
 
 /**
@@ -67,34 +54,88 @@ interface ClientMessageContext {
   contactPhone?: string;
 }
 
-/** Neutral by construction. Editable by the practice; still lint-gated on send. */
-export const CLIENT_TEMPLATES: Record<string, (c: ClientMessageContext) => { subject?: string; body: string }> = {
+type Renderer = (c: ClientMessageContext) => { subject?: string; body: string };
+
+/**
+ * When a session is, said in the client's own language.
+ *
+ * The time stays 24-hour in both, which is a choice rather than an oversight:
+ * `15:00` is unambiguous to a Spanish reader and to an English one, where
+ * "3:00 PM" has to be translated and a mistranslated hour is a client arriving
+ * at the wrong time.
+ */
+const whenLabel = (language: Language, startAt: Date | undefined, fallback: string): string => {
+  if (!startAt) return fallback;
+  const when = utcToZoned(startAt);
+  return `${WEEKDAY_NAMES[language][when.weekday]} ${minutesToHHMM(when.minutes)}`;
+};
+
+/**
+ * Every body the practice sends a client, in every language it can send it in.
+ *
+ * Keyed template-first rather than language-first so that a missing
+ * translation is visible as a hole in one object rather than as a shorter list
+ * three screens away — and so `templateLanguages` can answer "who can receive
+ * this" without walking the whole registry.
+ *
+ * **A template with no body in a client's language is not sent.** Not English
+ * as a fallback: an unreadable message counts as having asked, and the sweep
+ * would charge somebody for not answering a question they could not read,
+ * which is the exact failure this feature exists to make unreachable. The
+ * cadence therefore treats an untranslated reminder the way it treats
+ * `reminderPreference: 'none'` — nothing queued, nothing promoted, no fee. The
+ * test below refuses a partially translated language outright, so that branch
+ * is a safety net rather than a plan.
+ *
+ * Neutral by construction in both. Editable by the practice; still lint-gated
+ * on send, and the lint is now the union of every language's list.
+ */
+export const CLIENT_TEMPLATES: Record<string, Partial<Record<Language, Renderer>>> = {
   // The cadence's body. It carries the client's own door, because the required
   // response is one tap on a link rather than a `YES` texted back to a short
   // code: a compulsory reply is conspicuous on a lock screen in a way the
   // deny-list cannot fix, and it would open an inbound channel nobody here can
   // safely read. Says when, where, and what to tap. Never why.
-  appointment_reminder: ({ practice, startAt, link }) => {
-    const when = startAt ? utcToZoned(startAt) : null;
-    const label = when ? `${WEEKDAYS[when.weekday]} ${minutesToHHMM(when.minutes)}` : 'your appointment';
-    return {
+  appointment_reminder: {
+    en: ({ practice, startAt, link }) => ({
       subject: 'Appointment reminder',
-      body: `Appointment reminder: ${label}, ${practice}. Please let us know if you are coming: ${link}. The link is personal to you — please do not forward it.`,
-    };
+      body: `Appointment reminder: ${whenLabel('en', startAt, 'your appointment')}, ${practice}. Please let us know if you are coming: ${link}. The link is personal to you — please do not forward it.`,
+    }),
+    es: ({ practice, startAt, link }) => ({
+      subject: 'Recordatorio de cita',
+      body: `Recordatorio de cita: ${whenLabel('es', startAt, 'su cita')}, ${practice}. Avísenos si va a venir: ${link}. El enlace es personal — por favor no lo reenvíe.`,
+    }),
   },
-  appointment_confirmed: ({ practice, startAt }) => {
-    const when = startAt ? utcToZoned(startAt) : null;
-    const label = when ? `${WEEKDAYS[when.weekday]} ${minutesToHHMM(when.minutes)}` : 'your appointment';
-    return { subject: 'Appointment confirmed', body: `Confirmed: ${label}, ${practice}.` };
+  appointment_confirmed: {
+    en: ({ practice, startAt }) => ({
+      subject: 'Appointment confirmed',
+      body: `Confirmed: ${whenLabel('en', startAt, 'your appointment')}, ${practice}.`,
+    }),
+    es: ({ practice, startAt }) => ({
+      subject: 'Cita confirmada',
+      body: `Confirmada: ${whenLabel('es', startAt, 'su cita')}, ${practice}.`,
+    }),
   },
-  form_request: ({ practice, link }) => ({
-    subject: 'A form to complete before your visit',
-    body: `${practice} has sent you a form to complete before your visit: ${link}. The link is personal to you — please do not forward it.`,
-  }),
-  portal_link: ({ practice, link }) => ({
-    subject: 'Your upcoming appointments',
-    body: `You can see your upcoming appointments with ${practice} here: ${link}. The link is personal to you — please do not forward it.`,
-  }),
+  form_request: {
+    en: ({ practice, link }) => ({
+      subject: 'A form to complete before your visit',
+      body: `${practice} has sent you a form to complete before your visit: ${link}. The link is personal to you — please do not forward it.`,
+    }),
+    es: ({ practice, link }) => ({
+      subject: 'Un formulario para completar antes de su visita',
+      body: `${practice} le ha enviado un formulario para completar antes de su visita: ${link}. El enlace es personal — por favor no lo reenvíe.`,
+    }),
+  },
+  portal_link: {
+    en: ({ practice, link }) => ({
+      subject: 'Your upcoming appointments',
+      body: `You can see your upcoming appointments with ${practice} here: ${link}. The link is personal to you — please do not forward it.`,
+    }),
+    es: ({ practice, link }) => ({
+      subject: 'Sus próximas citas',
+      body: `Puede ver sus próximas citas con ${practice} aquí: ${link}. El enlace es personal — por favor no lo reenvíe.`,
+    }),
+  },
   /**
    * P1-3. The answer to a message this system cannot read.
    *
@@ -102,27 +143,60 @@ export const CLIENT_TEMPLATES: Record<string, (c: ClientMessageContext) => { sub
    * a reply that reached nobody would be worse than no inbound channel at all,
    * because the client believes they have told somebody.
    *
-   * Note what it does *not* say. "Crisis line" is on the deny-list — it names
-   * why somebody might be attending, on a lock screen, which is exactly the
-   * disclosure the list exists to stop — so the message says what the number is
-   * for instead of what it is called. The information survives the constraint;
-   * dropping either would have been the easy wrong answer.
+   * Note what neither version says. "Crisis line" is on the deny-list — it
+   * names why somebody might be attending, on a lock screen, which is exactly
+   * the disclosure the list exists to stop — so both say what the number is for
+   * instead of what it is called. `crisis` is spelled identically in Spanish
+   * and denied by both lists, so the constraint did not need re-deriving; the
+   * Spanish body was written to it from the start rather than translated into
+   * a violation and then fixed.
    *
    * 988 is the United States Suicide & Crisis Lifeline, and it is the only real
    * external number in this codebase. A placeholder here would be a plausible
-   * -looking dead end on the one path where that matters most.
+   * -looking dead end on the one path where that matters most. It takes calls
+   * and texts in Spanish, which is why the Spanish body can point at the same
+   * number rather than needing one of its own.
    */
-  inbound_unparsed: ({ contactPhone }) => ({
-    subject: 'We received your message',
-    body:
-      `We cannot read replies to this number. Please call us on ${contactPhone}. `
-      + 'If you need urgent help right now, call or text 988 at any hour.',
-  }),
-  appointment_cancelled: ({ practice }) => ({
-    subject: 'Appointment cancelled',
-    body: `Your appointment with ${practice} has been cancelled. Reply to this message to rebook.`,
-  }),
+  inbound_unparsed: {
+    en: ({ contactPhone }) => ({
+      subject: 'We received your message',
+      body:
+        `We cannot read replies to this number. Please call us on ${contactPhone}. `
+        + 'If you need urgent help right now, call or text 988 at any hour.',
+    }),
+    es: ({ contactPhone }) => ({
+      subject: 'Recibimos su mensaje',
+      body:
+        `No podemos leer las respuestas a este número. Por favor llámenos al ${contactPhone}. `
+        + 'Si necesita ayuda urgente ahora mismo, llame o envíe un mensaje al 988 a cualquier hora.',
+    }),
+  },
+  appointment_cancelled: {
+    en: ({ practice }) => ({
+      subject: 'Appointment cancelled',
+      body: `Your appointment with ${practice} has been cancelled. Reply to this message to rebook.`,
+    }),
+    es: ({ practice }) => ({
+      subject: 'Cita cancelada',
+      body: `Su cita con ${practice} ha sido cancelada. Responda a este mensaje para reservar otra.`,
+    }),
+  },
 };
+
+/** The languages a template can actually be sent in. */
+export const templateLanguages = (templateKey: string): Language[] =>
+  LANGUAGES.filter((l) => CLIENT_TEMPLATES[templateKey]?.[l] !== undefined);
+
+/**
+ * Whether the practice can put this message in front of this client at all.
+ *
+ * Pure, and exported because the cadence has to ask *before* it opens a
+ * transaction: a reminder it cannot render is a client it may not charge, and
+ * that has to be decided in the same breath as the other eligibility rules
+ * rather than discovered halfway through a write.
+ */
+export const canRender = (templateKey: string, language: Language): boolean =>
+  CLIENT_TEMPLATES[templateKey]?.[language] !== undefined;
 
 async function practiceVoice(db: Tx | typeof prisma) {
   const s = await db.practiceSettings.findUnique({
@@ -147,11 +221,18 @@ export async function queueToClient(input: QueueToClient, tx?: Tx) {
   const db = tx ?? prisma;
   const client = await db.client.findUnique({
     where: { id: input.clientId },
-    select: { reminderPreference: true },
+    select: { reminderPreference: true, language: true },
   });
   if (!client || client.reminderPreference === 'none') return null;
 
-  const { subject, body } = CLIENT_TEMPLATES[input.templateKey]!({
+  // No body in this client's language means no message. Not an English
+  // fallback: a message they cannot read would still count as the practice
+  // having asked, and the sweep would charge them for not answering it. The
+  // same shape as `reminderPreference: 'none'` above, for the same reason.
+  const render = CLIENT_TEMPLATES[input.templateKey]?.[client.language];
+  if (!render) return null;
+
+  const { subject, body } = render({
     ...(await practiceVoice(db)),
     startAt: input.startAt,
     link: input.link,

@@ -58,6 +58,17 @@ enum ReminderPreference {
   none
 }
 
+/// The language a client reads.
+///
+/// Deliberately a short enum rather than a locale string: every value here has
+/// to be backed by a full set of message bodies *and* its own deny-list, and a
+/// free-text locale invites `pt-BR` to be set on a client nobody can write to.
+/// Adding one is a checklist, and a test enforces the checklist.
+enum Language {
+  en
+  es
+}
+
 /// P2-3. The cadence a client asked for, as opposed to the one they earned.
 ///
 /// There is deliberately no value meaning "no messages". That is
@@ -102,6 +113,10 @@ model Client {
   feeCents Int?
 
   reminderPreference ReminderPreference @default(email)
+  /// What the practice may write to them in. A template with no body in this
+  /// language is not sent at all — see `queueToClient` — which means the client
+  /// is never asked and so can never be charged for not answering.
+  language           Language           @default(en)
   /// P2-3. How many of the three confirmation stages this client wants. A
   /// stated preference; the streak cap narrows `full` and nothing else.
   reminderCadence    ReminderCadence    @default(full)

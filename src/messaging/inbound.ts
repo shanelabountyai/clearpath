@@ -5,6 +5,7 @@ import { prisma } from '../db';
 import { NotFound } from '../errors';
 import { ensurePortalLink, confirmAppointment, declineAppointment } from '../portal/service';
 import { queueToClient } from './outbox';
+import { LANGUAGES, normalise, type Language } from './language';
 
 /**
  * A client texted back.
@@ -37,29 +38,90 @@ export type InboundClassification = 'confirm' | 'decline' | 'unparsed' | 'opt_ou
  * guessing wrong is a client's hour or a fee, the honest failure is `unparsed`
  * — which reaches a person, who can ask.
  */
-const CONFIRM = ['yes', 'y', 'yes please', 'confirm', 'confirmed', 'ok', 'okay', 'yep', 'yeah', 'sure', '1'];
-const DECLINE = ['no', 'n', 'cancel', 'decline', 'declined', 'nope', '2'];
+const CONFIRM: Record<Language, readonly string[]> = {
+  en: ['yes', 'y', 'yes please', 'confirm', 'confirmed', 'ok', 'okay', 'yep', 'yeah', 'sure', 'im coming'],
+  es: ['si', 'si gracias', 'confirmo', 'confirmar', 'confirmado', 'vale', 'claro', 'de acuerdo', 'ahi estare'],
+};
+const DECLINE: Record<Language, readonly string[]> = {
+  en: ['no', 'n', 'cancel', 'decline', 'declined', 'nope', 'cant make it'],
+  es: ['no', 'no puedo', 'cancelar', 'cancelo', 'anular', 'no ire', 'no voy'],
+};
 
 /**
- * Carrier opt-out keywords. Not answers about an appointment.
+ * Carrier opt-out keywords. Not answers about an appointment, and not
+ * translated either.
  *
- * A deliberate addition to the PRD's three classifications, and the reason is
- * that the alternative is worse in two directions: read as a decline, `STOP`
- * cancels a session the client never mentioned; read as `unparsed`, it earns an
- * auto-reply, and replying to an opt-out is the one thing a carrier forbids.
- * The correct response is to stop messaging them and say nothing.
+ * They stay English in every language on purpose: `STOP` is what the carrier
+ * recognises and what the regulator requires, regardless of what language the
+ * client speaks or what the practice writes to them in. Translating them would
+ * be inventing a second opt-out vocabulary that the network below this code
+ * does not honour — a client texting `PARAR` to a US short code is opted out by
+ * nobody. So the Spanish word is accepted here *as well*, because a client who
+ * types it plainly means it and the practice can act even where the carrier
+ * will not, and the English ones are honoured whoever sends them.
  */
-const OPT_OUT = ['stop', 'stopall', 'unsubscribe', 'cancelall', 'end', 'quit', 'revoke', 'optout', 'opt out'];
+const OPT_OUT: readonly string[] = [
+  'stop', 'stopall', 'unsubscribe', 'cancelall', 'end', 'quit', 'revoke', 'optout', 'opt out',
+  'parar', 'alto', 'baja', 'darme de baja', 'detener', 'cancelar suscripcion',
+];
 
-/** Classify, and keep nothing. Pure, so the whole table is assertable. */
-export function classifyReply(body: string): InboundClassification {
-  // Trailing punctuation is what people type; it is not a different answer.
-  const text = body.trim().toLowerCase().replace(/[.!?,\s]+$/g, '');
-  if (OPT_OUT.includes(text)) return 'opt_out';
-  if (CONFIRM.includes(text)) return 'confirm';
-  if (DECLINE.includes(text)) return 'decline';
-  return 'unparsed';
+/**
+ * Answers that mean the same thing in every language the practice ships.
+ *
+ * The digits are here rather than in each list because they are not words: a
+ * client replying `1` is answering the numbered prompt, and the prompt is the
+ * same shape in both languages.
+ */
+const UNIVERSAL_CONFIRM: readonly string[] = ['1', 'ok'];
+const UNIVERSAL_DECLINE: readonly string[] = ['2'];
+
+/**
+ * What a token means, if the languages agree.
+ *
+ * A token that means one thing in the client's language and the opposite in
+ * another is **not** resolved in the client's favour — it comes back
+ * `unparsed`, which puts a person on the phone. It is the same rule as "yes if
+ * my ride works out": when two readings are available and the cost of picking
+ * the wrong one is somebody's hour or somebody's money, this system does not
+ * pick. There is no such collision between English and Spanish today, and a
+ * test says so — the rule exists for the third language, added by somebody who
+ * will not think to check.
+ */
+function meaning(token: string, language: Language): InboundClassification {
+  if (OPT_OUT.includes(token)) return 'opt_out';
+  if (UNIVERSAL_CONFIRM.includes(token)) return 'confirm';
+  if (UNIVERSAL_DECLINE.includes(token)) return 'decline';
+
+  // The client's own language first, then the others — people code-switch, and
+  // a Spanish-preferring client who types "yes" has still answered.
+  const ordered: Language[] = [language, ...LANGUAGES.filter((l) => l !== language)];
+  const readings = new Set(
+    ordered
+      .map((l): InboundClassification | null =>
+        CONFIRM[l].includes(token) ? 'confirm' : DECLINE[l].includes(token) ? 'decline' : null)
+      .filter((r): r is InboundClassification => r !== null),
+  );
+
+  if (readings.size !== 1) return 'unparsed';
+  return [...readings][0]!;
 }
+
+/**
+ * Classify, and keep nothing. Pure, so the whole table is assertable.
+ *
+ * `language` is the client's, and it decides which list is consulted first —
+ * never which answer wins, because a token the languages disagree about has no
+ * winner worth having.
+ */
+export function classifyReply(body: string, language: Language = 'en'): InboundClassification {
+  // Accents and trailing punctuation are how people type; neither is a
+  // different answer. "Sí", "si" and "SI." are one word to this function.
+  const token = normalise(body).trim().replace(/[.!¡?¿,;\s]+$/g, '').replace(/\s+/g, ' ');
+  return meaning(token, language);
+}
+
+/** Every token this classifier understands, for the collision test. */
+export const KEYWORDS = { CONFIRM, DECLINE, OPT_OUT, UNIVERSAL_CONFIRM, UNIVERSAL_DECLINE };
 
 interface InboundMessage {
   /** The address it arrived from — a phone number, or an email address. */
@@ -89,13 +151,13 @@ export async function handleInboundReply(
 
   const client = await prisma.client.findFirst({
     where: { OR: [{ phone: message.from }, { email: message.from }] },
-    select: { id: true, treatingClinicianId: true, phone: true },
+    select: { id: true, treatingClinicianId: true, phone: true, language: true },
   });
   // A number the practice does not know is not a client, and the reply is not
   // recorded against anybody. Nothing to answer and nothing to file.
   if (!client) throw new NotFound('Client');
 
-  const classification = classifyReply(message.body);
+  const classification = classifyReply(message.body, client.language);
   const channel = message.from === client.phone ? 'sms' : 'email';
 
   // The question this reply is answering: their soonest session that is still
