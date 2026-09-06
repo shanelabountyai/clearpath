@@ -79,6 +79,14 @@ and a test greps the rest of `src/` to prove no endpoint re-implements a role ch
   tokenized link. The portal shows appointment times and nothing clinical, and a
   reschedule request is a reason code rather than a message — there is no
   free-text channel from a client to the front desk.
+- **English and Spanish, and a message with no version in the client's language
+  is not sent at all.** Every body, the deny-list that vets it, the inbound
+  keyword lists and the client's own page are per language. Sending nothing is
+  deliberate: an English fallback would count an unreadable message as the
+  practice having asked, and the fee would then land on somebody for not
+  answering a question they could not read. The intake forms are still English —
+  a screener's wording is validated per language and a mistranslated item changes
+  what the score means, so that is the remaining gap rather than an oversight.
 - **A client can text back, and nothing they write is kept.** An inbound reply is
   classified as `confirm`, `decline`, `opt_out` or `unparsed` in memory and then
   discarded — the `InboundReply` table has no column for a message body, which is
@@ -125,8 +133,8 @@ createdb clearpath_dev clearpath_test clearpath_e2e clearpath_shadow
 npm install
 npm run db:setup     # migrate all three, generate the client, seed dev + e2e
 npm run dev          # http://localhost:3700
-npm test             # 1,622 unit + integration tests
-npm run test:e2e     # 32 Playwright tests against a production build
+npm test             # 1,823 unit + integration tests
+npm run test:e2e     # 60 Playwright tests against a production build
 npm run verify:seed  # the seeded quarter, against its own success metrics
 ```
 
@@ -181,7 +189,7 @@ same hourly tick, failing a deterministic slice of messages — a few bad
 addresses, a few provider outages that clear on retry — so the quarter contains
 real undelivered reminders rather than a uniformly perfect wire.
 
-The seed then checks itself. Twenty-six success metrics run as queries at the end of
+The seed then checks itself. Forty-four success metrics run as queries at the end of
 `npm run db:seed`, and it refuses to finish if any fails — no fee for a client on
 `reminderPreference: 'none'`, **no fee without a delivered message behind it**,
 no more than 5% of eligible sessions charged, and every one of the 102 clients
@@ -215,6 +223,7 @@ means replacing that file's values and nothing else.
 | Whether the practice may ask, when, and which messages | [`src/scheduling/confirmation.ts`](src/scheduling/confirmation.ts) |
 | What silence means, and what it does not | [`src/scheduling/nonresponse.ts`](src/scheduling/nonresponse.ts) |
 | A reply classified and thrown away | [`src/messaging/inbound.ts`](src/messaging/inbound.ts) |
+| Two languages, and what neither may say | [`src/messaging/language.ts`](src/messaging/language.ts) |
 | The carrier port, "delivered", and "in time to answer" | [`src/messaging/carrier.ts`](src/messaging/carrier.ts) |
 | The freed hour, and who may be offered it | [`src/scheduling/openings.ts`](src/scheduling/openings.ts) |
 | The seed's own success metrics | [`prisma/metrics.ts`](prisma/metrics.ts) |

@@ -26,6 +26,12 @@ Kept as the work happens, not reconstructed afterwards.
 12. **The carrier, and what "we asked" is allowed to mean** — the fee's
     precondition moves from a message the practice queued to a message a carrier
     says arrived.
+13. **The hour a decline gives back** — a cancellation stops being a loss the
+    moment somebody waiting can take it.
+14. **The cadence a client chose** — a stated preference, and the question about
+    time to *answer* that shipping it exposed.
+15. **A deny-list in one language** — the privacy rule that protected clients in
+    English and nobody else, and what it took to mean it in two.
 
 ---
 
@@ -1279,6 +1285,121 @@ form, and it was not this item.
 
 ---
 
+## 15. A deny-list in one language protects clients in one language
+
+The last named P2 item read like a copy task — write the bodies in Spanish —
+and it was two gaps, one of which was a privacy hole.
+
+### The list, not the bodies
+
+The messaging module's argument has been the same since the first commit: a
+reminder arrives on a lock screen, in a shared inbox, on a phone somebody else
+picks up, so it says when and where and never why. `assertDiscreet` enforces
+that at send time. It was English-only. A Spanish-speaking client received a
+neutral English body vetted against a list that did not contain the word
+*terapia* — protected by a rule written for somebody else's language.
+
+Three decisions came out of fixing it.
+
+**A body must be discreet in every shipped language, not only the client's
+own.** The person reading a lock screen is whoever is standing there, and a
+practice serving two languages has clients whose partners and parents read the
+other one. Checking only the client's list would protect them from their own
+language and nobody else's. So the check is the union, an English body is now
+vetted against the Spanish list, and the false friend — a word innocuous in one
+language and disclosing in the other — is caught without anybody having to
+notice the coincidence.
+
+**Comparison folds accents**, because people type without them, and a list that
+catches *depresión* but not *depresion* has a hole in it shaped exactly like an
+ordinary keyboard. That fold closed a gap nobody was looking for: the Spanish
+entry `clinic` (from `clínic`) catches the bare English word, which the English
+list never had. It listed `clinical` and stopped. There is a spec pinning it,
+because it is the kind of thing a later cleanup removes as redundant.
+
+**The Spanish list is not a translation of the English one.** `consejeria` and
+`consejo psicologico` are separate words that both disclose; `trastorno` has no
+single entry above it; and `tratamiento` is listed bare where English lists
+`treatment plan`, because "su tratamiento" on a lock screen says as much as the
+full phrase does. Translating word for word would have produced a shorter and
+worse list — which is the general shape of the mistake this item invites.
+
+### A message nobody can read still counts as having asked
+
+The interesting rule is what happens when a template has no body in a client's
+language, and the answer is that **nothing is sent, so nothing can be charged**.
+
+The tempting alternative is an English fallback: the client gets *something*,
+which feels more helpful than silence. It is the trap. The cadence would count
+that message as the practice having asked, promote the row to `pending`, and
+the sweep would then charge somebody for not answering a question they could
+not read — the precise failure this whole feature was built to make
+unreachable. Sending nothing puts them in the same place as
+`reminderPreference: 'none'`: never asked, and so never billed.
+
+That branch is a safety net rather than a plan. A completeness test refuses to
+let a partially translated language ship at all, so the condition it guards
+against is one the suite will not allow — which is the right order: the
+structural check prevents it, and the runtime check means the prevention
+failing is not also a fee.
+
+### The token two languages disagree about
+
+The inbound keyword lists needed the same treatment, and one rule there is
+worth more than the vocabulary: **a token meaning "yes" in one shipped language
+and "no" in another comes back `unparsed`.**
+
+It is the same principle as "yes if my ride works out" — when two readings are
+available and the cost of picking wrong is somebody's hour or somebody's money,
+this system does not pick, it puts a person on the phone. The client's own
+language is consulted first, so a Spanish speaker who types "yes" is still
+understood, but being first is not the same as winning. There is no such
+collision between English and Spanish today and a test says so; the rule exists
+for the third language, added by somebody who will not think to check.
+
+**Opt-out keywords stay English in every language.** `STOP` is what the carrier
+and the regulator recognise regardless of what the client speaks, and
+translating them would invent a second opt-out vocabulary that the network
+below this code does not honour — a client texting `PARAR` to a US short code
+is opted out by nobody. `PARAR` is accepted here as well, because a client who
+types it plainly means it and the practice can act where the carrier will not.
+That asymmetry is the honest shape of a rule that is half regulation and half
+courtesy.
+
+### The half a translation stops at
+
+A Spanish reminder that says "avísenos si va a venir" and links to an English
+page with two English buttons is half a sentence. The client cannot complete
+the loop, and the fee rests on them completing it. So the door is translated
+too — every string, the weekday names, and the fee disclosure, which is the one
+sentence with money in it and keeps its figures as numbers in both languages so
+a translation cannot get the amount wrong.
+
+Two screens stay deliberately bilingual. A dead link resolves to nobody and so
+to no language either; whoever is holding one is exactly the person the page
+knows least about, and saying it twice is right there.
+
+The forms are still English, and that is the remaining gap rather than an
+oversight: a screener's wording is clinically validated per language, and a
+mistranslated item changes what the score means. That is not a copy task and
+should not be done by somebody who cannot validate it.
+
+### What the quarter says
+
+14 of 70 seeded clients read Spanish, derived from the client number rather
+than from the dice — the previous phase's handoff recorded that one extra
+`chance()` call in the client block moves the whole stream and breaks metrics
+unrelated to the change, so the fixture avoids the trap rather than rediscovering
+it. Every pre-existing figure is unchanged, charge rate included.
+
+The metric worth reading is that a translated client is charged at 4.48%
+against the practice-wide 4.57%. The claim is deliberately not "Spanish
+speakers are never charged" — that would be a different and worse policy,
+patronising in one direction and unfair in the other. It is that they are
+charged at the same rate, because they were asked in a language they read.
+
+---
+
 ## Decisions log
 
 | Decision | Why |
@@ -1383,6 +1504,14 @@ form, and it was not this item.
 | A permanent simulated failure is keyed on the destination; a transient one on the moment | A disconnected number is disconnected for every message sent to it. Keying it on the message id scattered single failures across many clients and produced a quarter in which nobody was ever unreachable — a simulation unable to produce the one population the feature exists to protect |
 | Nothing the simulated carrier decides is hashed from a cuid | Message ids are random per seed run, so hashing one made the quarter different every time, and these metrics are hand-checkable statements about a single quarter. Verified by running the seed twice and diffing it, which is the only way that property is ever actually held |
 | There is no flag to go back to charging on `queued` | Every other policy in this feature has a settings row behind it. This one does not, because that row would be a knob for turning the honesty off |
+| A body is checked against every shipped language's deny-list, not the client's own | The person who reads a lock screen is whoever is standing there, and a practice serving two languages has clients whose partners and parents read the other one. Checking only the client's list protects them from their own language and nobody else's — and the union catches the false friend, a word innocuous in one language and disclosing in the other, without anybody having to spot the coincidence |
+| Deny-list comparison folds accents | People type without them, and a list catching `depresión` but not `depresion` has a hole shaped like an ordinary keyboard. The fold also closed a gap nobody was hunting: the Spanish `clinic` catches the bare English word, which the English list never had — it listed `clinical` and stopped |
+| The Spanish deny-list was written, not translated | `consejeria` and `consejo psicologico` are separate words that both disclose, `trastorno` has no single English entry above it, and `tratamiento` is listed bare where English lists `treatment plan`. A word-for-word translation would have produced a shorter and worse list, which is the mistake this whole item invites |
+| A template with no body in the client's language is not sent, and so can never be charged for | An English fallback feels more helpful than silence and is the trap: the cadence would count an unreadable message as having asked, and the sweep would bill somebody for not answering a question they could not read. Sending nothing puts them where `reminderPreference: 'none'` does — never asked, never billed. A completeness test then forbids the condition outright, so the runtime branch is a safety net rather than a plan |
+| A keyword meaning opposite things in two shipped languages resolves to `unparsed` | The same rule as "yes if my ride works out": two readings, and the cost of picking wrong is an hour or a fee, so the system does not pick — it puts a person on the phone. The client's language is consulted first without winning. No such collision exists between English and Spanish; the rule is for the third language, added by somebody who will not check |
+| Carrier opt-out keywords stay English in every language, and the Spanish one is accepted too | `STOP` is what the carrier and the regulator recognise whatever the client speaks, so translating them would invent an opt-out vocabulary the network below does not honour. `PARAR` is honoured anyway, because a client who types it means it and the practice can act where the carrier will not — half regulation, half courtesy, and the asymmetry is the honest shape |
+| The client's door is translated with the message, and the intake forms are not | A Spanish reminder linking to two English buttons is a loop the client cannot complete, and the fee rests on them completing it. The forms stop at the line where copy becomes clinical instrument: a screener's wording is validated per language and a mistranslated item changes what the score means, which is not a task for somebody who cannot validate it |
+| Seeded language is derived from the client number, not rolled | The previous phase's handoff recorded that one extra `chance()` call in the client block moves the whole stream and breaks metrics unrelated to the change. Deriving it costs nothing and leaves every prior figure byte-identical — a handoff note is worth reading before it is worth rediscovering |
 | The cadence is a script and a function, with no scheduler dependency | Due times derive from `startAt` and the injected clock, so the job is idempotent and the schedule is an implementation detail of whatever calls it — cron, a timer, a hosted trigger, or a person typing `npm run reminders:run`. A missed hour costs lateness and nothing else, and the whole five-day cadence runs in a test in a millisecond because the clock is an argument |
 
 ## What this project deliberately is not
