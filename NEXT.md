@@ -1,91 +1,86 @@
 # Next
 
-**Item:** the last named P2 item is done. The practice writes in English and
-Spanish, and the deny-list that decides what a message may not say now speaks
-both — which was the half of "multi-language" that was a privacy hole rather
-than a copy task.
+**Item:** nothing outstanding. Every requirement in
+[prd-appointment-confirmation.md](prd-appointment-confirmation.md) is built, P0
+through P2, and so are the two follow-ups the P2 list never named. The next
+direction is a choice rather than a queue.
 
-**Every requirement in [prd-appointment-confirmation.md](prd-appointment-confirmation.md)
-is now built, P0 through P2**, except the two items below that were never on
-its list.
+Phase 10 is committed and pushed. What landed on top of Phase 9:
 
-Phase 9 is committed and pushed. What landed on top of Phase 8:
+- **The channel is editable, and `none` is no longer a one-way door.** That was
+  the real bug behind "reminderPreference is not editable in the UI": the form
+  only rendered for a client who was *not* on `none`, so putting somebody there
+  — by seed, by import, or by their own `STOP` — required a database edit to
+  undo. The cadence select still hides for those clients; the channel above it
+  does not. Fields are validated one at a time, because a form demanding a
+  cadence would drop the very submission that turns the messages back on.
+- **A cadence control on the client's own door**, and the line it stops at.
+  `reminder_cadence` is a new resource, so the `client` role now reaches exactly
+  two cells and the matrix is 588. The door may narrow how many reminders a
+  client gets and may never touch the channel — a leaked link that leaves
+  somebody on one message is strictly less harmful than one that cancels their
+  session, which this door already does, whereas one reaching `none` would end
+  the messages and the fee together and nothing would notice.
+- **A capstone pass on the demo.** Two 60-second walkthroughs, the confirmation
+  loop first. Three new screenshots: the front-desk work lists, the client's
+  door in Spanish, and the confirmation report.
 
-- **`Client.language`** — `en` / `es`, default `en`. Message bodies, the
-  deny-list, the inbound keyword lists and the client's own page are all keyed
-  by it.
-- **A body is vetted against every shipped language's list, not the client's
-  own.** The person reading a lock screen is whoever is standing there.
-  Comparison folds accents, which closed a gap nobody was hunting: the Spanish
-  `clinic` catches the bare English word, which the English list never had — it
-  listed `clinical` and stopped.
-- **An untranslated template is not sent, and so can never be charged for.**
-  Not an English fallback: that would count an unreadable message as having
-  asked. A completeness test forbids a partially translated language outright,
-  so the runtime branch is a safety net rather than a plan.
-- **A keyword meaning opposite things in two languages resolves to `unparsed`.**
-  No collision exists between English and Spanish; the rule is for the third
-  language. Opt-out keywords stay English because the carrier and the regulator
-  recognise `STOP` whatever the client speaks — `PARAR` is honoured as well.
-- **The client's door is translated**, weekday names and fee disclosure
-  included, and front desk sees the language on the client record with a picker
-  beside the cadence one.
-
-Gate at this commit: unit **1823/1823**, typecheck clean, e2e **60/60** against
+Gate at this commit: unit **1915/1915**, typecheck clean, e2e **68/68** against
 a production build, seed green on **all forty-four** metrics.
 
-**The number worth reading.** A translated client is charged at **4.48%**
-against the practice-wide **4.57%**. The claim is deliberately *not* "Spanish
-speakers are never charged" — that would be a different and worse policy,
-patronising in one direction and unfair in the other. It is that they are
-charged at the same rate, because they were asked in a language they read.
+**The screenshot pass found a defect no test could have.** Capturing the client's
+door in Spanish showed two identically-worded reason pickers stacked under one
+appointment — one attached to a cancellation with a fee on it, one to a request
+that changes nothing. Every spec passed. Worth remembering the next time a
+screenshot refresh looks like a documentation chore: it is the only review in
+this project that looks at a whole screen at once.
 
 **Three things worth knowing before building on this.**
 
-1. **The seed does not roll for language**, per the previous handoff's warning
-   about `chance()` in the client block. Every fifth client reads Spanish,
-   derived from the client number, so all pre-existing figures are unchanged —
-   charge rate included. Keep doing this: any new per-client attribute should be
-   derived rather than rolled unless the distribution genuinely needs dice.
-2. **`openPortal` has a spec pinning the exact set of keys it returns.** Adding
-   `language` failed it, which is the guard working. If you add a field there,
-   expect to justify it in that spec rather than to update a number.
-3. **The intake forms are still English, and that is the honest stopping
-   point.** A screener's wording is clinically validated per language and a
-   mistranslated item changes what the score means. It is not a copy task and
-   should not be done by anybody who cannot validate the result.
+1. **`npm run shots` now runs a horizon tick and a carrier tick first.** The
+   seed's cadence stops at its frozen `TODAY` while wall time moves on, so
+   without the catch-up every "awaiting reply" surface photographs empty. If a
+   capture comes back looking dead, that is the first thing to check.
+2. **The narrow-door guard fires on every field added to `openPortal`.** It has
+   caught three now. Each addition is justified in the spec rather than waved
+   through, and that is the intended cost.
+3. **The seed does not roll for per-client attributes.** Language and anything
+   else derived from the client number rather than `chance()`, because one extra
+   draw moves the whole stream and breaks metrics unrelated to the change.
 
-What is left, none of it from the PRD's P2 list:
+Where this could go next, in no particular order and none of it queued:
 
-- **A portal control for the cadence.** The obvious next step now the field
-  exists, and it needs a think rather than a form: a forwarded link should not
-  be able to change how somebody is contacted, so it is a question about what a
-  tokenized link may do before it is a question about a `<select>`.
-- **Editing `reminderPreference` in the UI.** Still the visible gap it became
-  two phases ago — the cadence and language pickers now sit directly under a
-  channel the same screen can only display. The machinery exists; it is a form.
-- **A third language, when the practice needs one.** The checklist is enforced
-  rather than written down: add the enum value, and the suite will refuse to
-  build until the templates, the deny-list, the weekday names and the portal
-  copy are all complete. The keyword collision test will refuse a token that
-  means "yes" in the new language and "no" in an existing one.
+- **An adversarial review of the fee path.** Four preconditions have accumulated
+  across five phases — allowed to ask, delivery proven, answerable in time, and
+  a body in a language the client reads. Each was added when the one before it
+  proved insufficient. The value now is in whether they *compose* correctly, not
+  in whether each works alone, and nobody has read them together as somebody
+  trying to find the indefensible charge.
+- **A third language.** The checklist is enforced rather than written down: add
+  the enum value and the suite refuses to build until the templates, deny-list,
+  weekday names and portal copy are complete, and the keyword collision test
+  refuses a token meaning "yes" in the new language and "no" in an existing one.
+- **The intake forms in Spanish.** The honest stopping point of the language
+  work, and not a copy task: a screener's wording is clinically validated per
+  language and a mistranslated item changes what the score means.
+- **Authentication.** Still the largest named gap, still deliberately unbuilt —
+  `requiresSecondFactor` is the policy, the dev switcher is the seam, and a
+  login that always succeeds would be worse than none.
 
 **The standing recommendation, unchanged and not withdrawn.** Risk 1: in
 counseling, non-response correlates with the reason people are attending, so
 this policy's fee falls hardest on the clients least able to answer, and the
-practice learns about it as attrition rather than as complaints. Nothing in this
-phase touches it — a client who could not read the message is now exempt, which
-removes a way of charging the wrong people, but Risk 1 is about capacity rather
-than comprehension. The number to look at before defending the money is still
-the seeded quarter's non-response rate on `/reports`, and
-`autoNoShowOnNoResponse = false` is one row if it reads badly.
+practice learns about it as attrition rather than as complaints. Five phases of
+preconditions have removed ways of charging the *wrong* people — the unasked,
+the unreached, the reached-too-late, the client who cannot read the message —
+and none of them touches capacity, which is what Risk 1 is about. The number to
+look at before defending the money is the seeded quarter's confirmation report,
+and `autoNoShowOnNoResponse = false` is one row if it reads badly.
 
 **Two earlier decisions, accepted by the owner on 2026-09-05 and not reopened.**
 `STOP` stays a fourth classification that sets `reminderPreference = 'none'` and
 sends nothing back; the auto-reply keeps "call or text 988 at any hour" rather
-than the deny-listed phrase "crisis line". The Spanish auto-reply says the same
-thing the same way, and `crisis` is spelled identically in both languages, so
-the constraint did not need re-deriving.
+than the deny-listed phrase "crisis line".
 
 Still open from earlier, answered but not actioned: the "refer a friend" growth
 motion is off (anti-kickback / state patient-brokering / ethics codes, and a
