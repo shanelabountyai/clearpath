@@ -1,73 +1,78 @@
 # Next
 
-**Item:** Appointment confirmation loop — **Phase 4, the money** —
-[prd-appointment-confirmation.md](prd-appointment-confirmation.md), P0-5, P0-6,
-P0-7 and P0-9. Waiver ships in the same phase as the automatic charge; neither
-is shippable without the other.
+**Item:** Appointment confirmation loop — **Phase 5, the P1s** —
+[prd-appointment-confirmation.md](prd-appointment-confirmation.md), P1-1, P1-2,
+P1-3. Order is the PRD's: work list first, cadence cap second, inbound keyword
+handling third.
 
-Phase 3 is committed and pushed (`34175c6`). What exists now:
+Phase 4 is committed and pushed (`18fe9a8`). The loop is complete end to end.
+What exists now:
 
-- `confirmAppointment` / `declineAppointment` in `src/portal/service.ts`, on the
-  existing `PortalLink`. They share one `ownAppointment` guard with
-  `requestReschedule` — another client's appointment is `NotFound`, never
-  `Forbidden`; cancelled is `already_cancelled`; past is `in_the_past`, which is
-  also what makes a `no_response` row unreachable from the door.
-- Decline calls `cancelAppointment` with the client as actor and
-  `confirmation: 'declined'` riding in the same write. `setStatus` gained
-  `opts.confirmation` for exactly that, so the answer and the cancellation are
-  one transaction with one audit row. **No new money logic on decline** —
-  `classifyCancellation` and `lateCancelFeeCents` are untouched.
-- The `client` role has one matrix cell: `appointment: { update: 'token' }`,
-  where `token` requires `Target.ownerClientId === actor.id`. `setStatus` sets
-  that target on every appointment write; staff rules decide on `always` and
-  ignore it.
-- `ensurePortalLink(clientId, clock, db?)` — the cadence's link, reused not
-  re-minted. `newPortalToken` re-rolls until `indiscreetTerms` is empty.
-- `appointment_reminder` in `src/messaging/outbox.ts` now carries the link. Its
-  exact rendered body is asserted in both `outbox.test.ts` and
-  `reminders.test.ts`.
-- `app/p/[token]/` — two buttons where `confirmation === 'pending'`, the
-  interstitial behind `?fee=<appointmentId>`, `sayYes` / `sayNo` actions.
-- `e2e/portal.spec.ts` + `e2e/portal-fixture.ts` (4 specs, green).
+- `runNonResponseSweep(clock, opts)` in `src/scheduling/nonresponse.ts`, plus
+  `npm run nonresponse:run`. Its own module and its own script, per Q6 — it
+  shares nothing with `reminders.ts` and can be stopped without stopping the
+  cadence.
+- The sweep records `confirmation = 'no_response'` unconditionally and
+  transitions `status` only from `scheduled`. Four independent things stop the
+  charge and none of them stops the write: the status guard,
+  `confirmationRequired` asked again at charge time, `autoNoShowOnNoResponse`,
+  and `pending` never having been reached.
+- The `no_show` write still goes through `setStatus`, so the existing lint holds
+  and a sweep-set no-show derives the same fee as a human-set one. `setStatus`
+  gained `opts.auditReason` (codes only — deliberately not `opts.reason`, which
+  is operational free text a person typed).
+- `noShowFeeCents` is read by `setStatus(..., 'no_show')`; `lateCancelFeeCents`
+  keeps the cancel path. Both default 9000, so the field shipped changing
+  nothing.
+- `waiveFee(actor, id, reason)` in `lifecycle.ts`, behind a new `waive` action
+  on `fee` in the matrix, admin only. `ACTIONS` is now six long, so the
+  permission matrix is 546 cells. `guarded` gained an optional `reason` that
+  falls back to the break-glass justification.
+- Second structural lint in `nonresponse.test.ts`: no `no_response` write
+  without `confirmationRequired` in the same module. Verified by planting one.
+- Staff-side: a confirmation badge beside the status chip on the appointment
+  page, `CONFIRMATION_META` in `primitives.tsx`, a waiver card gated on
+  `may({action:'waive', resource:'fee'})`, and the auto-charge honesty note on
+  `/practice`.
+- Seed: 3 clients on `none` with absences, 6 completed-but-silent (all charged
+  their own session fee, none waived), 4 chargeable no-shows, 1 waiver through
+  the real path, 1 booking inside the d5 window, 1 group with a partial decline.
 
-**Read before starting Phase 4 — a real finding from Phase 3.** The pg adapter
-stores a JS `Date` as its **UTC wall clock labelled in the session's timezone**.
-Write and read cancel out, so the app is self-consistent and every unit spec
-passes. But any column the *database* clock fills is not written through that
-lens: `Appointment.createdAt` defaults to `CURRENT_TIMESTAMP`, so on a machine
-west of Greenwich it reads back earlier than it truly is — by 5 hours on this
-laptop. `dueStages` treats `createdAt` as the notice a booking had, so the skew
-**widens** stage eligibility rather than narrowing it, which is the wrong
-direction for the rule a fee rests on. Invisible on a UTC box (CI, Vercel).
-Decide in Phase 4 whether `createdAt` should be written from the injected clock
-at booking time — it touches `bookAppointment`, `materialiseSeries`,
-`bookGroupSession` and the seed, so it is its own commit, not a drive-by.
-Recorded in the `WRITEUP.md` decisions log.
+**The phase-3 timezone finding is closed — measured, not acted on.**
+`Appointment.createdAt` reads back through Prisma with **zero** skew on this
+UTC−5 laptop, whether Postgres filled it or the application wrote it, and the
+notice `dueStages` computes for a booking six days out is 6.0000 days. The skew
+appears only through `$queryRaw`, and the codebase's only two raw statements are
+a `pg_tables` lookup and an advisory lock — neither moves a timestamp. So there
+is no `bookAppointment` / `materialiseSeries` / `bookGroupSession` / seed
+refactor to do. The corrected finding is in the `WRITEUP.md` decisions log.
 
-Phase 4 specs to build:
+Phase 5 specs to build:
 
-- **P0-5** the sweep at `startAt + graceMinutes`: sets `no_response` **always**;
-  transitions `status` to `no_show` **only** from `scheduled`; does nothing at
-  `not_required`; system actor (`SYSTEM_ACTOR` already exists in
-  `src/scheduling/reminders.ts`); `autoNoShowOnNoResponse` gates only the status
-  transition and the fee. Q6's answer was two functions sharing nothing, so this
-  is a new module, not a second entry point in `reminders.ts`.
-- **P0-6** `setStatus(..., 'no_show')` reads `noShowFeeCents`, not
-  `lateCancelFeeCents`. The field already exists at 9000, so the regression spec
-  pinning existing fixtures should pass before the change and after it.
-- **P0-7** waiver: new action on the existing `fee` resource in
-  `permissions.ts`, admin only, front desk denied and the denial logged.
-- **P0-9** plus the two structural lints the PRD asks for: no `status: 'no_show'`
-  write outside `lifecycle.ts`, and no fee path that has not called
-  `confirmationRequired`.
-- The seed's awkward rows (≥3 clients on `none` with absences, ≥5
-  completed-but-silent, ≥1 partial group decline, ≥1 waived fee) and the README
-  Scope Honesty line land here too.
+- **P1-1 front-desk work list** — "unconfirmed and starting within N hours",
+  oldest-start first, with the client's phone number visible because phoning
+  them is the point. Sits beside the existing reschedule-request list in
+  `src/portal/service.ts` / `app/(staff)/worklists/`. Front desk reads it under
+  the existing `appointment` resource — **no new matrix row**; if one turns out
+  to be needed, the 546-cell coverage assertion catches it.
+- **P1-2 cadence cap** — after `confirmationStreakCap` consecutive confirmations
+  (default 4), drop that client's series to `d1` only until they miss one. New
+  settings column + migration. Risk 2 says this probably should have been P0:
+  ~70 recurring clients × 3 × 52 is ~11,000 messages a year, and the failure
+  mode is the reminder stopping being read, which degrades the signal the fee
+  depends on.
+- **P1-3 inbound keyword handling** — committed, not conditional (Q1). A
+  simulated inbound endpoint classifying a body as `confirm | decline |
+  unparsed` and storing **only the classification**, never the body (D-04). An
+  `unparsed` sends the neutral "please call us" auto-reply *carrying the crisis
+  line*, raises an `Alert` to the treating clinician only with reason codes
+  (hard rule 9), and shows front desk "this client replied — call them" with
+  nothing to read.
+- **P1-4** confirmation-rate report and **P1-5** decline reason codes are the
+  cheap follow-ons if the budget holds.
 
-Gate at this commit: unit **1307/1307**, typecheck clean, `e2e/portal.spec.ts`
-**4/4** against the production build. The rest of the e2e suite was not re-run —
-no staff-side UI changed, but the portal page did, so a full sweep before Phase 4
-lands would be cheap insurance.
+Gate at this commit: unit **1519/1519**, typecheck clean, e2e **22/22** against
+the production build.
 
 Still open from earlier, answered but not actioned: the "refer a friend" growth
 motion is off (anti-kickback / state patient-brokering / ethics codes, and a
