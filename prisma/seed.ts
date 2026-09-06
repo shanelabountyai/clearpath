@@ -19,6 +19,7 @@ const { createProgressNote, signProgressNote, coSignProgressNote, createProcessN
   await import('../src/notes/service');
 const { guarded } = await import('../src/auth/guard');
 const { addDays, localDateOf, zonedToUtc } = await import('../src/time');
+type BreakGlass = import('../src/auth/break-glass').BreakGlass;
 
 /** mulberry32 — small, fast, and identical on every machine. */
 function rng(seed: number) {
@@ -421,14 +422,22 @@ async function main() {
   }
 
   // ── three break-glass events, for the auditor to find ─────────────────
-  const breakGlassCases: [string, string][] = [
-    ['client did not attend and could not be reached; welfare check', clients[2]!.id],
-    ['subpoena response, ref 2026-114', clients[11]!.id],
-    ['clinician on leave, client called the practice in distress', clients[23]!.id],
+  // Codes, not sentences. These used to read 'clinician on leave, client called
+  // the practice in distress' — a clinical statement about the person the same
+  // row names by id, seeded into an append-only table the auditor reads. One of
+  // them carries a case reference, because that is the shape of detail this
+  // field can safely hold.
+  const breakGlassCases: [BreakGlass, string][] = [
+    [{ reason: 'safety_check' }, clients[2]!.id],
+    [{ reason: 'legal_request', ref: '2026-114' }, clients[11]!.id],
+    [{ reason: 'clinician_unavailable' }, clients[23]!.id],
   ];
-  for (const [reason, clientId] of breakGlassCases) {
+  for (const [breakGlass, clientId] of breakGlassCases) {
     await guarded(
-      { actor: actor(manager, reason), action: 'read', resource: 'client', resourceId: clientId, clientId },
+      {
+        actor: { ...actor(manager), breakGlass },
+        action: 'read', resource: 'client', resourceId: clientId, clientId,
+      },
       (tx) => tx.client.findUniqueOrThrow({ where: { id: clientId } }),
     );
   }

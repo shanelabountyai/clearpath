@@ -562,8 +562,14 @@ model AuditEvent {
   /// Which permission rule decided it.
   rule       String
   breakGlass Boolean @default(false)
-  /// Break-glass justification. Operational text typed by an admin.
+  /// Break-glass justification, as a code from a closed set — never prose.
+  /// This table is append-only and the auditor reads it, so a sentence typed
+  /// here would be clinical content, permanently, in front of the one role
+  /// that may not read a note. See `src/auth/break-glass.ts`.
   reason     String?
+  /// An optional case or ticket id beside the code. Shape-constrained: no
+  /// spaces, 32 characters, so it can hold "2026-114" and not a sentence.
+  reasonRef  String?
 
   @@index([clientId, at])
   @@index([actorId, at])

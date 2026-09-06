@@ -1,4 +1,5 @@
 import { prisma } from '../db';
+import type { BreakGlassReason } from '../auth/break-glass';
 import type { Actor, Role } from '../auth/permissions';
 
 /**
@@ -55,7 +56,7 @@ export async function settings(overrides: Record<string, unknown> = {}) {
   });
 }
 
-export const actor = (u: { id: string; role: Role }, breakGlassReason?: string): Actor => ({
+export const actor = (u: { id: string; role: Role }, breakGlassReason?: BreakGlassReason): Actor => ({
   id: u.id,
   role: u.role,
   ...(breakGlassReason ? { breakGlass: { reason: breakGlassReason } } : {}),

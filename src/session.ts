@@ -1,5 +1,6 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { parseBreakGlass } from './auth/break-glass';
 import { requiresSecondFactor, type Actor } from './auth/permissions';
 import { prisma } from './db';
 
@@ -44,14 +45,18 @@ export async function currentSession(): Promise<Session | null> {
   });
   if (!user || !user.active) return null;
 
-  const reason = jar.get(BREAK_GLASS_COOKIE)?.value;
+  // Parsed, not read. A cookie is supplied by the request, and `httpOnly` only
+  // keeps a browser script out of it — it says nothing about a request composed
+  // by hand. An unrecognised value is not an error page, it is simply no
+  // break-glass session, and the ordinary refusal follows.
+  const breakGlass = parseBreakGlass(jar.get(BREAK_GLASS_COOKIE)?.value);
   return {
     user,
     secondFactor: { required: requiresSecondFactor(user.role), satisfied: false },
     actor: {
       id: user.id,
       role: user.role,
-      ...(reason ? { breakGlass: { reason } } : {}),
+      ...(breakGlass ? { breakGlass } : {}),
     },
   };
 }

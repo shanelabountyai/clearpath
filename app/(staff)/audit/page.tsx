@@ -1,3 +1,4 @@
+import { breakGlassLabel, isBreakGlassReason } from '../../../src/auth/break-glass';
 import { queryAuditLog } from '../../../src/reports/audit';
 import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
@@ -120,7 +121,12 @@ async function AuditPage({
                     {r.breakGlass && <Badge tone="danger" glyph="⚠">break-glass</Badge>}{' '}
                     {r.allowed ? <Badge tone="success" glyph="✓">allowed</Badge> : <Badge tone="warning" glyph="⊘">denied</Badge>}
                   </td>
-                  <td className="border-b px-3 py-1.5 text-muted" style={{ borderColor: 'var(--border)' }}>{r.reason ?? ''}</td>
+                  <td className="border-b px-3 py-1.5 text-muted" style={{ borderColor: 'var(--border)' }}>
+                    {/* A code in the column, a sentence on the screen. The row
+                        holds `safety_check`; the auditor reads what it means. */}
+                    {isBreakGlassReason(r.reason) ? breakGlassLabel(r.reason) : r.reason ?? ''}
+                    {r.reasonRef && <span className="font-mono text-subtle"> · {r.reasonRef}</span>}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -130,7 +136,8 @@ async function AuditPage({
 
       <p className="mt-3 text-caption text-subtle">
         Rows are append-only: the database refuses UPDATE and DELETE on this table. Ids only —
-        no names, no note content, no answers. The names above are resolved for display.
+        no names, no note content, no answers, and a break-glass reason is a code from a fixed
+        list rather than something anyone types. The names above are resolved for display.
       </p>
     </>
   );

@@ -39,7 +39,13 @@ export default async function StaffLayout({ children }: { children: React.ReactN
             </aside>
 
             <div className="min-w-0 flex-1">
-              {session.actor.breakGlass && <BreakGlassBar reason={session.actor.breakGlass.reason} endAction={endBreakGlass} />}
+              {session.actor.breakGlass && (
+                <BreakGlassBar
+                  reason={session.actor.breakGlass.reason}
+                  reference={session.actor.breakGlass.ref}
+                  endAction={endBreakGlass}
+                />
+              )}
               <main className="mx-auto max-w-[1200px] px-5 py-6">{children}</main>
             </div>
           </div>

@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../db';
 import { Forbidden } from '../errors';
 import { actor, makeClient, makeUser, resetDb } from '../test/harness';
+import { isBreakGlassRef, isBreakGlassReason } from './break-glass';
 import { breakGlassWouldHelp, guarded, may } from './guard';
 
 beforeEach(resetDb);
@@ -85,7 +86,7 @@ describe('break-glass', () => {
 
     await guarded(
       {
-        actor: actor(admin, 'client in crisis, clinician unreachable'),
+        actor: actor(admin, 'clinician_unavailable'),
         action: 'read', resource: 'client', resourceId: client.id, clientId: client.id,
       },
       (tx) => tx.client.findUniqueOrThrow({ where: { id: client.id } }),
@@ -96,7 +97,7 @@ describe('break-glass', () => {
       allowed: true,
       rule: 'breakGlass',
       breakGlass: true,
-      reason: 'client in crisis, clinician unreachable',
+      reason: 'clinician_unavailable',
     });
   });
 
@@ -108,7 +109,7 @@ describe('break-glass', () => {
     await expect(
       guarded(
         {
-          actor: actor(admin, 'audit request'),
+          actor: actor(admin, 'records_request'),
           action: 'read', resource: 'process_note',
           target: { authorId: therapist.id, clinicianId: therapist.id },
           clientId: client.id,
@@ -201,6 +202,95 @@ it('carries no PHI — ids only', async () => {
   for (const leak of ['Marguerite', 'Vandersteen', 'marguerite@example.test', 'Dana', 'Okonkwo']) {
     expect(dump).not.toContain(leak);
   }
+});
+
+describe('what a break-glass session puts in the audit row', () => {
+  /**
+   * The row is the only lasting record of an administrator in a clinical file,
+   * and it is append-only, so whatever lands here lands permanently in front of
+   * the auditor — the one role that may read this table and may never read a
+   * note. It carries a code and, at most, a case identifier.
+   */
+  it('writes the code and the reference, and nothing else', async () => {
+    const therapist = await makeUser('therapist');
+    const admin = await makeUser('admin');
+    const client = await makeClient(therapist.id);
+
+    await guarded(
+      {
+        actor: { ...actor(admin), breakGlass: { reason: 'legal_request', ref: '2026-114' } },
+        action: 'read', resource: 'client', resourceId: client.id, clientId: client.id,
+      },
+      async () => null,
+    );
+
+    const [row] = await prisma.auditEvent.findMany({ where: { breakGlass: true } });
+    expect(row).toMatchObject({ reason: 'legal_request', reasonRef: '2026-114', allowed: true });
+  });
+
+  it('leaves the reference null when there is none', async () => {
+    const therapist = await makeUser('therapist');
+    const admin = await makeUser('admin');
+    const client = await makeClient(therapist.id);
+
+    await guarded(
+      {
+        actor: actor(admin, 'safety_check'),
+        action: 'read', resource: 'client', resourceId: client.id, clientId: client.id,
+      },
+      async () => null,
+    );
+
+    const [row] = await prisma.auditEvent.findMany({ where: { breakGlass: true } });
+    expect(row).toMatchObject({ reason: 'safety_check', reasonRef: null });
+  });
+
+  it('carries the reason onto the denial too, and onto every row of the session', async () => {
+    const therapist = await makeUser('therapist');
+    const admin = await makeUser('admin');
+    const client = await makeClient(therapist.id);
+    const open = { ...actor(admin), breakGlass: { reason: 'safety_check' as const } };
+
+    await guarded(
+      { actor: open, action: 'read', resource: 'client', resourceId: client.id, clientId: client.id },
+      async () => null,
+    );
+    await expect(
+      guarded(
+        {
+          actor: open, action: 'read', resource: 'process_note',
+          target: { authorId: therapist.id }, clientId: client.id,
+        },
+        async () => null,
+      ),
+    ).rejects.toBeInstanceOf(Forbidden);
+
+    const rows = await prisma.auditEvent.findMany({ orderBy: { resource: 'asc' } });
+    expect(rows.map((r) => [r.resource, r.allowed, r.reason])).toEqual([
+      ['client', true, 'safety_check'],
+      ['process_note', false, 'safety_check'],
+    ]);
+  });
+
+  it('never holds a sentence: every reason on the table is a code or nothing', async () => {
+    const therapist = await makeUser('therapist');
+    const admin = await makeUser('admin');
+    const client = await makeClient(therapist.id);
+
+    await guarded(
+      { actor: actor(therapist), action: 'read', resource: 'client', target: { clinicianId: therapist.id }, clientId: client.id },
+      async () => null,
+    );
+    await guarded(
+      { actor: actor(admin, 'billing_query'), action: 'read', resource: 'client', clientId: client.id },
+      async () => null,
+    );
+
+    for (const row of await prisma.auditEvent.findMany()) {
+      expect(row.reason === null || isBreakGlassReason(row.reason), `${row.reason}`).toBe(true);
+      expect(row.reasonRef === null || isBreakGlassRef(row.reasonRef), `${row.reasonRef}`).toBe(true);
+    }
+  });
 });
 
 describe('whether break-glass would change the answer', () => {

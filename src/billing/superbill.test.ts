@@ -171,7 +171,7 @@ describe('who may produce one', () => {
   });
 
   it('lets the practice manager produce one through break-glass, flagged', async () => {
-    const bill = await buildSuperbill(actor(boss, 'client requested superbill'), client.id, MARCH);
+    const bill = await buildSuperbill(actor(boss, 'billing_query'), client.id, MARCH);
     expect(bill.totalCents).toBe(12500);
 
     const flagged = await prisma.auditEvent.findMany({ where: { actorId: boss.id, breakGlass: true, allowed: true } });

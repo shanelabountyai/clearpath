@@ -1,5 +1,8 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
+import {
+  BREAK_GLASS_CODES, BREAK_GLASS_REF, breakGlassLabel, type BreakGlassReason,
+} from '../auth/break-glass';
 import { CHARGEABLE } from '../scheduling/lifecycle';
 import { minutesToHHMM } from '../time';
 import type { DaySession } from '../scheduling/calendar';
@@ -387,12 +390,35 @@ export function BreakGlassDialog({
           <label htmlFor="reason" className="block text-micro font-medium tracking-wide text-subtle uppercase">
             Reason (required)
           </label>
-          <textarea
-            id="reason" name="reason" rows={3} required minLength={10}
-            placeholder="e.g. client called the practice in distress and their clinician is on leave"
+          {/* A list, not a box. Whatever is chosen here is copied onto every
+              audit row this session writes, and that table is append-only and
+              read by the auditor — so it holds a category of claim, never a
+              sentence about a person. See src/auth/break-glass.ts. */}
+          <select
+            id="reason" name="reason" required defaultValue=""
             className="mt-1 w-full rounded-[var(--radius)] border p-2.5 text-body"
             style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
+          >
+            <option value="" disabled>Choose a reason…</option>
+            {BREAK_GLASS_CODES.map((code) => (
+              <option key={code} value={code}>{breakGlassLabel(code)}</option>
+            ))}
+          </select>
+
+          <label htmlFor="ref" className="mt-3 block text-micro font-medium tracking-wide text-subtle uppercase">
+            Case or ticket reference (optional)
+          </label>
+          <input
+            id="ref" name="ref" maxLength={32} pattern={BREAK_GLASS_REF.source}
+            placeholder="e.g. 2026-114"
+            className="mt-1 w-full rounded-[var(--radius)] border p-2.5 font-mono text-body"
+            style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
           />
+          <p className="mt-1 text-nano text-subtle">
+            An identifier only — letters, digits, <code>.</code> <code>_</code> <code>-</code> <code>/</code>,
+            no spaces. There is nowhere here to describe the client, on purpose.
+          </p>
+
           <div className="mt-3 flex items-center justify-between gap-3">
             <p className="text-caption text-subtle">
               Break-glass reaches demographics and progress notes. It does not reach
@@ -416,9 +442,11 @@ export function BreakGlassDialog({
  */
 export function BreakGlassBar({
   reason,
+  reference,
   endAction,
 }: {
-  reason: string;
+  reason: BreakGlassReason;
+  reference?: string;
   endAction: () => void | Promise<void>;
 }) {
   return (
@@ -429,7 +457,8 @@ export function BreakGlassBar({
       <p className="text-body">
         <span aria-hidden>⚠ </span>
         <strong>Break-glass access is open.</strong> Everything you open is logged against
-        your name with this reason: <em>{reason}</em>
+        your name with this reason: <em>{breakGlassLabel(reason)}</em>
+        {reference && <> (<span className="font-mono">{reference}</span>)</>}
       </p>
       <form action={endAction}>
         <button

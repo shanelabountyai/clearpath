@@ -79,7 +79,7 @@ createdb clearpath_dev clearpath_test clearpath_e2e clearpath_shadow
 npm install
 npm run db:setup     # migrate all three, generate the client, seed dev + e2e
 npm run dev          # http://localhost:3700
-npm test             # 1,348 unit + integration tests
+npm test             # 1,373 unit + integration tests
 npm run test:e2e     # 21 Playwright tests against a production build
 ```
 
@@ -106,9 +106,10 @@ person — see **Known limitations**. Authorization is real either way.
    note just signed — and where Priya's process notes would be there is a locked
    panel stating the rule.
 3. Act as **Elena Sarkis** (practice manager) → open the same client → break
-   glass with a reason → the record opens, flagged. The process notes stay shut.
+   glass with a reason code → the record opens, flagged. The process notes stay
+   shut.
 
-   ![The practice manager's break-glass gate: a required reason field, and a note that break-glass reaches demographics and progress notes but not process notes — nothing does.](docs/screenshots/break-glass.png)
+   ![The practice manager's break-glass gate: the reason is chosen from a fixed list rather than typed, beside an optional case reference that takes an identifier and not a sentence, and a note that break-glass reaches demographics and progress notes but not process notes — nothing does.](docs/screenshots/break-glass.png)
 
 4. Act as **Owen Delacroix** (auditor) → **Audit log** → both events are there,
    the co-signature and the refusal.

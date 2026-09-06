@@ -64,11 +64,23 @@ test.describe('the access story', () => {
     await page.goto(`/clients/${demoClient}`);
     await expect(page.getByRole('heading', { name: 'Break-glass access required' })).toBeVisible();
 
-    await page.getByLabel('Reason (required)').fill('client called the practice in distress, clinician on leave');
+    // A reason is chosen, not written. There is no box on this page in which a
+    // sentence about the client could be composed, which is the point: whatever
+    // goes in here is copied onto every audit row the session writes, and that
+    // table is append-only and read by the auditor.
+    await expect(page.getByRole('textbox', { name: 'Reason (required)' })).toHaveCount(0);
+    await page.getByLabel('Reason (required)').selectOption('clinician_unavailable');
+    await page.getByLabel('Case or ticket reference (optional)').fill('2026-114');
     await page.getByRole('button', { name: 'Break glass' }).click();
 
     await expect(page.getByText('Break-glass access is open.')).toBeVisible();
     await expect(page.getByRole('heading', { name: /Client 006/ })).toBeVisible();
+
+    // And what landed in the log is the code, not a sentence.
+    expect(
+      sql(`select reason || ' ' || "reasonRef" from "AuditEvent"
+           where "breakGlass" and "clientId" = '${demoClient}' order by at desc limit 1`),
+    ).toBe('clinician_unavailable 2026-114');
 
     const processNote = sql(`select id from "ProcessNote" where "clientId" = '${demoClient}' limit 1`);
     await page.goto(`/process-notes/${processNote}`);

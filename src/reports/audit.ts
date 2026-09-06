@@ -57,8 +57,13 @@ export async function queryAuditLog(actor: Actor, filters: AuditFilters = {}) {
 
 const CSV_COLUMNS = [
   'at', 'actorId', 'actorRole', 'action', 'resource', 'resourceId',
-  'clientId', 'allowed', 'rule', 'breakGlass', 'reason',
+  'clientId', 'allowed', 'rule', 'breakGlass', 'reason', 'reasonRef',
 ] as const;
 
-/** CSV of an audit result. Ids only, exactly like the rows themselves. */
+/**
+ * CSV of an audit result. Ids only, exactly like the rows themselves — and
+ * `reason` is a code rather than a sentence, so the export carries no more than
+ * the screen does. It is the same table either way; a leak here is a file that
+ * leaves the building.
+ */
 export const toCsv = (rows: Record<string, unknown>[]): string => csv(CSV_COLUMNS, rows);

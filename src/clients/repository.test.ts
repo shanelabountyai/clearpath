@@ -40,11 +40,11 @@ describe('reading a client record', () => {
 
   it('the practice manager needs to break glass', async () => {
     await expect(getClient(actor(admin), client.id)).rejects.toBeInstanceOf(Forbidden);
-    const got = await getClient(actor(admin, 'client unreachable, welfare check'), client.id);
+    const got = await getClient(actor(admin, 'safety_check'), client.id);
     expect(got.id).toBe(client.id);
     const flagged = await prisma.auditEvent.findMany({ where: { breakGlass: true, allowed: true } });
     expect(flagged).toHaveLength(1);
-    expect(flagged[0]!.reason).toContain('welfare check');
+    expect(flagged[0]!.reason).toBe('safety_check');
   });
 
   it('an auditor cannot reach it at all', async () => {

@@ -164,7 +164,7 @@ describe('risk alerts', () => {
     expect(await myAlerts(actor(therapist))).toHaveLength(1);
     expect(await myAlerts(actor(other))).toHaveLength(0);
     await expect(myAlerts(actor(desk))).rejects.toBeInstanceOf(Forbidden);
-    await expect(myAlerts(actor(admin, 'checking on things'))).rejects.toBeInstanceOf(Forbidden);
+    await expect(myAlerts(actor(admin, 'client_request'))).rejects.toBeInstanceOf(Forbidden);
   });
 
   it('cannot be acknowledged by anyone but their recipient', async () => {
@@ -231,7 +231,7 @@ describe('who sees what', () => {
   it('break-glass does not reach a screener response', async () => {
     const request = await issueScreener();
     const { submissionId } = await submitForm(request.token, zeros);
-    await expect(getSubmission(actor(admin, 'urgent'), submissionId)).rejects.toBeInstanceOf(Forbidden);
+    await expect(getSubmission(actor(admin, 'client_request'), submissionId)).rejects.toBeInstanceOf(Forbidden);
   });
 });
 

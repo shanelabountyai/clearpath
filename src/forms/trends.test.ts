@@ -174,7 +174,7 @@ describe('who can see a client trend', () => {
 
   it('refuses the practice manager even in a break-glass session', async () => {
     await expect(
-      screenerTrends(actor(boss, 'audit request'), client.id),
+      screenerTrends(actor(boss, 'records_request'), client.id),
     ).rejects.toBeInstanceOf(Forbidden);
   });
 

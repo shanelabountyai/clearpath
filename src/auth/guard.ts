@@ -1,4 +1,5 @@
 import { prisma, type Tx } from '../db';
+import { BREAK_GLASS_CODES } from './break-glass';
 import { Forbidden } from '../errors';
 import { can, type Action, type Actor, type Decision, type Resource, type Target } from './permissions';
 
@@ -38,7 +39,10 @@ async function record(db: Tx | typeof prisma, req: GuardRequest, decision: Decis
       allowed: decision.allowed,
       rule: decision.rule,
       breakGlass: decision.breakGlass,
+      // A code and, at most, an identifier. Never a sentence: this table is
+      // append-only and the auditor is the role that may not read a note.
       reason: req.actor.breakGlass?.reason ?? null,
+      reasonRef: req.actor.breakGlass?.ref ?? null,
     },
   });
 }
@@ -61,7 +65,9 @@ export function may(req: GuardRequest): boolean {
  */
 export function breakGlassWouldHelp(req: GuardRequest): boolean {
   if (may(req)) return false;
-  return may({ ...req, actor: { ...req.actor, breakGlass: { reason: 'probe' } } });
+  // Any valid code answers the question, because the matrix asks whether a
+  // break-glass session exists, not what it claims. Nothing is written.
+  return may({ ...req, actor: { ...req.actor, breakGlass: { reason: BREAK_GLASS_CODES[0]! } } });
 }
 
 /**

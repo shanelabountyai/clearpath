@@ -229,7 +229,7 @@ describe('the auditor', () => {
   const someActivity = async () => {
     const c = await makeClient(therapist.id);
     await book(c.id, 900);
-    await guarded({ actor: actor(admin, 'welfare check'), action: 'read', resource: 'client', clientId: c.id }, async () => null);
+    await guarded({ actor: actor(admin, 'safety_check'), action: 'read', resource: 'client', clientId: c.id }, async () => null);
     await guarded({ actor: actor(desk), action: 'read', resource: 'process_note', clientId: c.id }, async () => null)
       .catch(() => null);
     return c;
@@ -246,7 +246,7 @@ describe('the auditor', () => {
     await someActivity();
     const { rows } = await queryAuditLog(actor(auditorUser), { flaggedOnly: true });
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ breakGlass: true, reason: 'welfare check' });
+    expect(rows[0]).toMatchObject({ breakGlass: true, reason: 'safety_check' });
   });
 
   it('filters to denials', async () => {
@@ -311,7 +311,7 @@ describe('the auditor', () => {
     for (const who of [desk, therapist, admin]) {
       await expect(queryAuditLog(actor(who))).rejects.toBeInstanceOf(Forbidden);
     }
-    await expect(queryAuditLog(actor(admin, 'i would like to see'))).rejects.toBeInstanceOf(Forbidden);
+    await expect(queryAuditLog(actor(admin, 'client_request'))).rejects.toBeInstanceOf(Forbidden);
   });
 
   it('pages', async () => {

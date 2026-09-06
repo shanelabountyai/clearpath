@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { BREAK_GLASS_CODES, type BreakGlassReason } from './break-glass';
 import {
   ACTIONS, RESOURCES, ROLES,
   can, ownCaseloadOnly, requiresSecondFactor,
@@ -118,7 +119,7 @@ const OTHER = 'u-other';
 
 /** Actor holds every relationship to the target it possibly could. */
 const insider = (role: Role): [Actor, Target] => [
-  { id: ME, role, breakGlass: { reason: 'client in crisis' } },
+  { id: ME, role, breakGlass: { reason: 'safety_check' } },
   { authorId: ME, authorSupervisorId: ME, clinicianId: ME, recipientId: ME, treatingSupervisorId: ME },
 ];
 /** Actor supervises the target's author but wrote nothing. */
@@ -182,7 +183,7 @@ describe('process notes are author-only, forever', () => {
 
   it('break-glass is denied and still flagged for the audit log', () => {
     const d = can(
-      { id: ME, role: 'admin', breakGlass: { reason: 'welfare check' } },
+      { id: ME, role: 'admin', breakGlass: { reason: 'safety_check' } },
       'read', 'process_note', note,
     );
     expect(d).toEqual({ allowed: false, rule: 'never', breakGlass: true });
@@ -230,7 +231,7 @@ describe('progress notes', () => {
 
   it('break-glass reaches it, flagged', () => {
     const d = can(
-      { id: ME, role: 'admin', breakGlass: { reason: 'subpoena response' } },
+      { id: ME, role: 'admin', breakGlass: { reason: 'legal_request' } },
       'read', 'progress_note', supervisee,
     );
     expect(d).toEqual({ allowed: true, rule: 'breakGlass', breakGlass: true });
@@ -238,8 +239,22 @@ describe('progress notes', () => {
 });
 
 describe('break-glass requires a real reason', () => {
-  it.each(['', '   '])('rejects reason %j', (reason) => {
-    expect(can({ id: ME, role: 'admin', breakGlass: { reason } }, 'read', 'client', {}).allowed).toBe(false);
+  // The rule re-checks the code rather than trusting whoever built the Actor.
+  // A blank reason used to be the whole worry, because the field was prose; the
+  // worry now is a value from outside the closed set, which is what a
+  // hand-composed cookie carries.
+  it.each(['', '   ', 'x', 'client in crisis', 'SAFETY_CHECK', 'constructor', '__proto__'])(
+    'rejects reason %j',
+    (reason) => {
+      const actor = { id: ME, role: 'admin' as Role, breakGlass: { reason: reason as BreakGlassReason } };
+      expect(can(actor, 'read', 'client', {}).allowed).toBe(false);
+    },
+  );
+
+  it('accepts every code the product offers, and only those', () => {
+    for (const reason of BREAK_GLASS_CODES) {
+      expect(can({ id: ME, role: 'admin', breakGlass: { reason } }, 'read', 'client', {}).allowed).toBe(true);
+    }
   });
 
   it('an admin without break-glass cannot read demographics', () => {
@@ -366,7 +381,7 @@ describe('caseload scoping', () => {
 it('the client role can do nothing through the staff matrix', () => {
   for (const resource of RESOURCES) {
     for (const action of ACTIONS) {
-      const [a, t] = [{ id: ME, role: 'client' as Role, breakGlass: { reason: 'x' } },
+      const [a, t] = [{ id: ME, role: 'client' as Role, breakGlass: { reason: 'safety_check' as BreakGlassReason } },
         { authorId: ME, authorSupervisorId: ME, clinicianId: ME, recipientId: ME }];
       expect(can(a, action, resource, t).allowed, `${resource}:${action}`).toBe(false);
     }

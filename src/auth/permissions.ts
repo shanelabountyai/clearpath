@@ -6,6 +6,8 @@
  * and by nobody else, ever. Not a supervisor, not an admin, not break-glass.
  */
 
+import { isBreakGlassReason, type BreakGlass } from './break-glass';
+
 export type Role =
   | 'front_desk'
   | 'therapist'
@@ -45,8 +47,13 @@ export const ACTIONS: readonly Action[] = ['read', 'create', 'update', 'sign', '
 export interface Actor {
   id: string;
   role: Role;
-  /** Set only for an explicit, reason-carrying break-glass session. */
-  breakGlass?: { reason: string };
+  /**
+   * Set only for an explicit, reason-carrying break-glass session. The reason
+   * is a code from a closed set rather than a sentence: it is copied onto every
+   * audit row the session writes, and that table is append-only and read by the
+   * one role that may never read a note. See `break-glass.ts`.
+   */
+  breakGlass?: BreakGlass;
 }
 
 /**
@@ -102,8 +109,15 @@ const RULES = {
   /** Addressed to exactly one person. Never a shared inbox, never front desk. */
   recipient: (a: Actor, t: Target) =>
     t.recipientId !== undefined && a.id === t.recipientId,
-  /** Admin emergency access. Reaches demographics and progress notes only. */
-  breakGlass: (a: Actor) => !!a.breakGlass?.reason.trim(),
+  /**
+   * Admin emergency access. Reaches demographics and progress notes only.
+   *
+   * The code is re-checked here rather than trusted from the caller. The
+   * boundary that builds an `Actor` already validates it, and this is the rule
+   * that opens the clinical tier: it should not open on a value it has not
+   * looked at.
+   */
+  breakGlass: (a: Actor) => !!a.breakGlass && isBreakGlassReason(a.breakGlass.reason),
 } satisfies Record<string, (a: Actor, t: Target) => boolean>;
 
 type Cell = Partial<Record<Action, RuleName>>;

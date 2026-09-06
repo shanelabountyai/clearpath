@@ -198,7 +198,7 @@ describe('a process note has one reader, forever', () => {
   it('is denied to the practice manager, break glass or not', async () => {
     const note = await mine();
     await expect(getProcessNote(actor(admin), note.id)).rejects.toBeInstanceOf(Forbidden);
-    await expect(getProcessNote(actor(admin, 'court order'), note.id)).rejects.toMatchObject({ absolute: true });
+    await expect(getProcessNote(actor(admin, 'legal_request'), note.id)).rejects.toMatchObject({ absolute: true });
 
     const flagged = await prisma.auditEvent.findMany({ where: { breakGlass: true } });
     expect(flagged).toHaveLength(1);
@@ -296,9 +296,9 @@ describe('progress note reads', () => {
   it('let the practice manager through only with break-glass, flagged', async () => {
     const note = await draft();
     await expect(getProgressNote(actor(admin), note.id)).rejects.toBeInstanceOf(Forbidden);
-    await expect(getProgressNote(actor(admin, 'subpoena, ref 2026-114'), note.id)).resolves.toBeTruthy();
+    await expect(getProgressNote(actor(admin, 'legal_request'), note.id)).resolves.toBeTruthy();
     const [row] = await prisma.auditEvent.findMany({ where: { breakGlass: true, allowed: true } });
-    expect(row!.reason).toContain('subpoena');
+    expect(row!.reason).toBe('legal_request');
   });
 });
 
