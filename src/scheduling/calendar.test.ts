@@ -277,6 +277,59 @@ describe('who is out, and for how much of the day', () => {
     expect((await daySchedule(actor(desk), TUESDAY)).absences).toHaveLength(1);
   });
 
+  it('reads each clinician against their own pattern, not somebody else\'s', async () => {
+    // Two clinicians, two different Tuesdays. `absencesOn` filters the weekly
+    // rows down to the person it is answering for, and every test before this
+    // one had a single pattern in the database — so taking the *other*
+    // clinician's hours instead changed nothing any assertion could see. It
+    // decides whether an hour is lost at all: a block at 08:00 is nothing to
+    // somebody who starts at nine and half a morning to somebody who starts at
+    // eight.
+    await prisma.availability.deleteMany({ where: { userId: other.id } });
+    await prisma.availability.create({
+      data: { userId: other.id, weekday: 2, startMinute: 480, endMinute: 600 },
+    });
+    await absence({ userId: other.id, startMinute: 480, endMinute: 540, reason: 'Depot run' });
+
+    const { absences } = await daySchedule(actor(desk), TUESDAY);
+    expect(absences).toHaveLength(1);
+    expect(absences[0]).toMatchObject({
+      userId: other.id,
+      lost: [{ startMinute: 480, endMinute: 540 }],
+      allDay: false,
+    });
+  });
+
+  it('does not put one clinician\'s reason against another\'s name', async () => {
+    // The reason list is filtered by clinician and by kind. Neither filter had
+    // a test that could fail: one clinician in the fixture, and no `available`
+    // override ever carried a reason. Loosen either and front desk reads
+    // "Ada Ling away today (School pickup)" about Bo Ferreira's afternoon.
+    await absence({ userId: clinician.id, startMinute: 600, endMinute: 660, reason: 'Dentist' });
+    await absence({ userId: other.id, startMinute: 600, endMinute: 660, reason: 'School pickup' });
+    await absence({
+      userId: clinician.id, kind: 'available',
+      startMinute: 1020, endMinute: 1080, reason: 'Extra evening clinic',
+    });
+
+    const { absences } = await daySchedule(actor(desk), TUESDAY);
+    expect(absences.map((a) => [a.userId, a.reason])).toEqual(
+      expect.arrayContaining([[clinician.id, 'Dentist'], [other.id, 'School pickup']]),
+    );
+  });
+
+  it('gives a column to the rooms in use and not to a retired one', async () => {
+    // `where: { active: true }` had no test that could fail, because no fixture
+    // ever deactivated a room. A closed consulting room still holding a column
+    // is a grid that invites the front desk to book into it.
+    const open = await makeRoom('Open');
+    const closed = await makeRoom('Closed');
+    await prisma.room.update({ where: { id: closed.id }, data: { active: false } });
+
+    const { rooms } = await daySchedule(actor(desk), TUESDAY);
+    expect(rooms.map((r) => r.id)).toEqual([open.id]);
+  });
+
   it('ignores an override belonging to somebody with no caseload', async () => {
     const admin = await makeUser('admin');
     await absence({ userId: admin.id, reason: 'Conference' });

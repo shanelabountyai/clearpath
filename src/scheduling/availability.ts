@@ -35,6 +35,14 @@ const subtract = (spans: Span[], cut: Span): Span[] =>
     return out;
   });
 
+/**
+ * Sort, then coalesce anything touching or overlapping.
+ *
+ * The sort is not tidiness. Callers hand these over in whatever order they came
+ * out of the database — the day view's availability query names no `orderBy` at
+ * all — and walking unsorted spans absorbs an early window into a later one
+ * rather than keeping both, which loses a clinician's morning silently.
+ */
 const merge = (spans: Span[]): Span[] => {
   const sorted = [...spans].sort((a, b) => a.startMinute - b.startMinute);
   const out: Span[] = [];
@@ -102,11 +110,6 @@ export function lostWindows(
   );
   return merge(workingWindows(weekly, overrides, date).reduce(subtract, pattern));
 }
-
-export const isAway = (overrides: Override[], date: LocalDate): boolean =>
-  overrides.some(
-    (o) => covers(o, date) && o.kind === 'unavailable' && o.startMinute == null && o.endMinute == null,
-  );
 
 /**
  * Start times where a session of `duration` fits inside a working window and

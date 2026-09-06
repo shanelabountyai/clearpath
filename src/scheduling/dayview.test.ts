@@ -74,6 +74,17 @@ describe('side-by-side layout', () => {
     });
   });
 
+  it('breaks a dead-heat on id, so two identical hours draw the same way twice', () => {
+    // Two telehealth sessions at 10:00–10:50 tie on start and on end, and the
+    // comparator falls through to the id. Nothing tested that last step, so a
+    // comparator returning 0 there — leaving the order to whatever the query
+    // handed over — passed: the two chips would swap places between two reads
+    // of the same day. That is the flake the appointments query's own
+    // tiebreaker exists to remove, one layer up.
+    expect(at([span('b', 600, 650), span('a', 600, 650)])).toEqual({ a: '0/2', b: '1/2' });
+    expect(at([span('a', 600, 650), span('b', 600, 650)])).toEqual({ a: '0/2', b: '1/2' });
+  });
+
   it('leaves the input alone', () => {
     const spans = [span('b', 700, 750), span('a', 600, 650)];
     layoutTracks(spans);
@@ -110,5 +121,17 @@ describe('the status of a group hour', () => {
   it('does not depend on the order the attendees arrived in', () => {
     expect(g('no_show', 'completed')).toBe(g('completed', 'no_show'));
     expect(g('cancelled', 'scheduled')).toBe(g('scheduled', 'cancelled'));
+  });
+
+  it('hands back an unknown status rather than inventing one', () => {
+    // The state machine cannot produce this and the function says so; what it
+    // must not do is quietly relabel it. A chip for a status nobody recognises
+    // is a visible question, and 'scheduled' would be an answer.
+    expect(g('archived' as Status)).toBe('archived');
+    expect(g('archived' as Status, 'unknown' as Status)).toBe('archived');
+  });
+
+  it('falls back to scheduled for a group with nobody in it', () => {
+    expect(g()).toBe('scheduled');
   });
 });

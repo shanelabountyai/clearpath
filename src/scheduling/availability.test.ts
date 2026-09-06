@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { freeSlots, isAway, lostWindows, overlaps, pickRoom, workingWindows, type Override, type WeeklyWindow } from './availability';
+import { freeSlots, lostWindows, overlaps, pickRoom, workingWindows, type Override, type WeeklyWindow } from './availability';
 
 // Tuesdays and Thursdays, 9:00–17:00.
 const weekly: WeeklyWindow[] = [
@@ -84,8 +84,6 @@ describe('working windows', () => {
     expect(workingWindows(weekly, vacation, '2026-09-08')).toEqual([]);
     expect(workingWindows(weekly, vacation, '2026-09-10')).toEqual([]);
     expect(workingWindows(weekly, vacation, '2026-09-15')).toHaveLength(1);
-    expect(isAway(vacation, '2026-09-08')).toBe(true);
-    expect(isAway(vacation, '2026-09-15')).toBe(false);
   });
 
   it('splits a day around a partial block', () => {
@@ -132,6 +130,34 @@ describe('working windows', () => {
     expect(workingWindows(weekly, elsewhere, '2026-09-01')).toEqual([{ startMinute: 540, endMinute: 1020 }]);
   });
 
+  it('does not depend on the order the weekly rows arrive in', () => {
+    // The query behind the day view fetches these with no `orderBy` at all, so
+    // the order is whatever Postgres feels like. `merge` sorts before it walks,
+    // and without the sort a morning window arriving after an afternoon one is
+    // absorbed into it and disappears: the clinician's 9–12 vanishes into their
+    // 13–17 and the day reads as starting at one o'clock.
+    const split: WeeklyWindow[] = [
+      { weekday: 2, startMinute: 540, endMinute: 720 },
+      { weekday: 2, startMinute: 780, endMinute: 1020 },
+    ];
+    const expected = [
+      { startMinute: 540, endMinute: 720 },
+      { startMinute: 780, endMinute: 1020 },
+    ];
+    expect(workingWindows(split, [], '2026-09-01')).toEqual(expected);
+    expect(workingWindows([...split].reverse(), [], '2026-09-01')).toEqual(expected);
+  });
+
+  it('drops a window that starts and ends at the same minute', () => {
+    // An override that adds no time adds no window. Left in, it reaches the
+    // absence banner as "out 10:00–10:00".
+    const empty: Override[] = [
+      { fromDate: '2026-09-02', toDate: '2026-09-02', kind: 'available', startMinute: 600, endMinute: 600 },
+    ];
+    expect(workingWindows(weekly, empty, '2026-09-02')).toEqual([]);
+    expect(lostWindows(weekly, empty, '2026-09-02')).toEqual([]);
+  });
+
   it('lets unavailability win over an added window', () => {
     const both: Override[] = [
       { fromDate: '2026-09-02', toDate: '2026-09-02', kind: 'available', startMinute: 600, endMinute: 720 },
@@ -161,6 +187,23 @@ describe('free slots', () => {
   it('treats adjacent sessions as compatible — [start, end) is half-open', () => {
     expect(overlaps({ startMinute: 540, endMinute: 590 }, { startMinute: 590, endMinute: 640 })).toBe(false);
     expect(overlaps({ startMinute: 540, endMinute: 591 }, { startMinute: 590, endMinute: 640 })).toBe(true);
+  });
+
+  it('never offers a start before the window opens, when the window starts off the grid', () => {
+    // Out until five past nine leaves a window at 545, and the grid is measured
+    // from midnight — so the first offer is 9:15, not the 9:00 that rounding the
+    // other way would produce. A slot before the window is a client booked into
+    // the minutes a clinician is still away, and `bookAppointment` takes the
+    // start minute it is given rather than re-deriving it.
+    const offGrid = freeSlots({ windows: [{ startMinute: 545, endMinute: 665 }], busy: [], duration: 50 });
+    expect(offGrid[0]).toBe(555);
+    expect(offGrid.every((m) => m >= 545)).toBe(true);
+  });
+
+  it('returns the offers in time order however the windows are handed over', () => {
+    const morning = { startMinute: 540, endMinute: 600 };
+    const afternoon = { startMinute: 780, endMinute: 840 };
+    expect(freeSlots({ windows: [afternoon, morning], busy: [], duration: 50 })).toEqual([540, 780]);
   });
 
   it('leaves a longer intake fewer openings than a standard session', () => {

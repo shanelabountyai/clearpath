@@ -62,6 +62,19 @@ describe('calendar arithmetic', () => {
     expect(daysBetween('2026-03-10', '2026-03-03')).toBe(-7);
   });
 
+  it('counts them across months of different lengths', () => {
+    // Both ends go through the same helper, so a constant month shift inside it
+    // cancels for any pair inside one month and for any pair a whole number of
+    // 31-day months apart — which is every pair the test above uses. February
+    // is what separates them. This is not decoration: `occurrenceDates` divides
+    // this gap by 14 to decide which fortnight a biweekly client has, so 28 read
+    // as 31 moves their session by a week.
+    expect(daysBetween('2026-02-15', '2026-03-15')).toBe(28);
+    expect(daysBetween('2026-01-30', '2026-03-01')).toBe(30);
+    expect(daysBetween('2026-01-31', '2026-03-31')).toBe(59);
+    expect(daysBetween('2026-12-31', '2027-01-01')).toBe(1);
+  });
+
   it('reports the local date of an instant, not the UTC one', () => {
     // 01:30 UTC on the 2nd is still the evening of the 1st in New York.
     expect(localDateOf(new Date('2026-09-02T01:30:00Z'))).toBe('2026-09-01');
