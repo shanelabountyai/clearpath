@@ -255,8 +255,8 @@ createdb clearpath_dev clearpath_test clearpath_e2e clearpath_shadow
 npm install
 npm run db:setup     # migrate all three, generate the client, seed dev + e2e
 npm run dev          # http://localhost:3700
-npm test             # 2,088 unit + integration tests
-npm run test:e2e     # 96 Playwright tests against a production build
+npm test             # 2,100 unit + integration tests
+npm run test:e2e     # 98 Playwright tests against a production build
 npm run verify:seed  # the seeded quarter, against its own success metrics
 ```
 
