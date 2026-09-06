@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { DAY, HOUR } from '../clock';
 import {
+  cadenceStages,
   confirmationRequired,
   dueStages,
   stageDueAt,
   STAGES,
+  type Confirmation,
   type ConfirmationSettings,
   type ReminderStage,
 } from './confirmation';
@@ -131,5 +133,52 @@ describe('dueStages — what a horizon run at `now` should have queued', () => {
   it('is a set, not a counter — running it twice asks for the same stages', () => {
     const now = new Date(START.getTime() - HOUR);
     expect(dueStages(booked30d, now, SETTINGS)).toEqual(dueStages(booked30d, now, SETTINGS));
+  });
+});
+
+describe('cadenceStages — the cap on a standing client, and how it lifts', () => {
+  const yes = (n: number): Confirmation[] => Array.from({ length: n }, () => 'confirmed');
+
+  it('leaves a client on the full cadence until the cap is reached', () => {
+    expect(cadenceStages([], 4)).toEqual(STAGES);
+    expect(cadenceStages(yes(3), 4)).toEqual(STAGES);
+  });
+
+  it('drops to the day before once the streak reaches the cap', () => {
+    expect(cadenceStages(yes(4), 4)).toEqual(['d1']);
+    expect(cadenceStages(yes(9), 4)).toEqual(['d1']);
+  });
+
+  /**
+   * One miss, and the full three come straight back. The cap is a reward for
+   * answering rather than a setting somebody has to remember to reverse — a
+   * client drifting out of the habit is exactly who the five-day message is for.
+   */
+  it('lifts on the first miss, whichever kind of miss it is', () => {
+    expect(cadenceStages(['no_response', ...yes(8)], 4)).toEqual(STAGES);
+    expect(cadenceStages(['declined', ...yes(8)], 4)).toEqual(STAGES);
+  });
+
+  it('counts consecutively from the most recent, not in total', () => {
+    // Nine confirmations, one miss last week. Nine is not four in a row.
+    expect(cadenceStages(['no_response', ...yes(9)], 4)).toEqual(STAGES);
+    // Four since the miss is four in a row.
+    expect(cadenceStages([...yes(4), 'no_response', ...yes(9)], 4)).toEqual(['d1']);
+  });
+
+  it('is off at a cap of zero, without a second flag to keep in sync', () => {
+    expect(cadenceStages(yes(50), 0)).toEqual(STAGES);
+    expect(cadenceStages(yes(50), -1)).toEqual(STAGES);
+  });
+
+  /**
+   * The composition that matters: the cap narrows the set, and `dueStages`
+   * still applies every rule it applied before. A capped client booked inside
+   * the day-before lead gets nothing — so the cap can take the promotion to
+   * `pending` away, and with it the fee, but it can never manufacture one.
+   */
+  it('composes with dueStages rather than overriding it', () => {
+    expect(dueStages(appt(), START, SETTINGS, cadenceStages(yes(4), 4))).toEqual(['d1']);
+    expect(dueStages(appt(6 * HOUR), START, SETTINGS, cadenceStages(yes(4), 4))).toEqual([]);
   });
 });

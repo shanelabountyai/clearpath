@@ -5,7 +5,9 @@ import { prisma } from '../db';
 import { queueToClient } from '../messaging/outbox';
 import { ensurePortalLink } from '../portal/service';
 import {
+  cadenceStages,
   confirmationRequired,
+  DECIDED,
   dueStages,
   stageDueAt,
   type ConfirmationSettings,
@@ -70,6 +72,33 @@ export async function runReminderHorizon(
     graceMinutes: s?.graceMinutes ?? 20,
     dayOfLeadHours: s?.dayOfLeadHours ?? 3,
   };
+  const cap = s?.confirmationStreakCap ?? 4;
+
+  /**
+   * One track-record lookup per client per run, not per appointment.
+   *
+   * A standing weekly client has a dozen instances inside a 90-day horizon and
+   * the answer is the same for all of them, so the cache is what keeps a
+   * volume mitigation from being its own volume problem.
+   */
+  const cadence = new Map<string, readonly ReminderStage[]>();
+  const stagesFor = async (clientId: string): Promise<readonly ReminderStage[]> => {
+    const cached = cadence.get(clientId);
+    if (cached) return cached;
+    // Past sessions only. A streak is a track record, and "until they miss one"
+    // is a fact that can only be known after the hour has been and gone —
+    // counting confirmations for sessions still in the future would let a
+    // client mute their own reminders by answering early.
+    const recent = await prisma.appointment.findMany({
+      where: { clientId, startAt: { lt: now }, confirmation: { in: [...DECIDED] } },
+      orderBy: { startAt: 'desc' },
+      take: Math.max(cap, 1),
+      select: { confirmation: true },
+    });
+    const stages = cadenceStages(recent.map((r) => r.confirmation), cap);
+    cadence.set(clientId, stages);
+    return stages;
+  };
 
   const candidates = await prisma.appointment.findMany({
     where: {
@@ -110,7 +139,8 @@ export async function runReminderHorizon(
     }
 
     const already = new Set(appt.reminders.map((r) => r.stage));
-    const due = dueStages(appt, now, settings).filter((stage) => !already.has(stage));
+    const due = dueStages(appt, now, settings, await stagesFor(appt.clientId))
+      .filter((stage) => !already.has(stage));
     if (!due.length) continue;
 
     // One transaction for the whole appointment: the messages, their reminder

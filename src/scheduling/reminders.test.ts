@@ -5,6 +5,7 @@ import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../tes
 import { bookAppointment } from './booking';
 import { indiscreetTerms } from '../messaging/outbox';
 import { runReminderHorizon } from './reminders';
+import type { Confirmation } from './confirmation';
 
 /** 2026-09-01 15:00 America/New_York, as everywhere else in this suite. */
 const TUESDAY = '2026-09-01';
@@ -228,5 +229,100 @@ describe('the reminder body', () => {
       .map((m) => m.body);
     expect(bodies).toHaveLength(3);
     for (const body of bodies) expect(body).toContain(`/p/${link.token}`);
+  });
+});
+
+/**
+ * P1-2, and Risk 2. A weekly client on the full cadence receives three messages
+ * a week forever — ~11,000 a year across seventy of them — and the failure mode
+ * is not the cost. It is the reminder becoming wallpaper, which degrades the
+ * one signal the no-show fee is derived from.
+ */
+describe('the cadence cap on a client who always answers', () => {
+  const clock = fixedClock(new Date(START.getTime() - 12 * HOUR));
+
+  /**
+   * A session that has already been and gone, with the answer the client gave.
+   * Written directly: the point is the track record the horizon reads, not the
+   * booking path that produced it. Telehealth so it needs no room.
+   */
+  const pastSession = (clientId: string, date: string, confirmation: Confirmation) =>
+    prisma.appointment.create({
+      data: {
+        clientId, clinicianId: therapist.id, modality: 'telehealth',
+        startAt: new Date(`${date}T19:00:00Z`), endAt: new Date(`${date}T19:50:00Z`),
+        status: 'completed', confirmation,
+      },
+    });
+
+  /** Four Tuesdays, oldest first. */
+  const FOUR_WEEKS = ['2026-08-04', '2026-08-11', '2026-08-18', '2026-08-25'];
+
+  const withHistory = async (answers: Confirmation[]) => {
+    const appt = await appointmentBooked(30 * DAY);
+    for (const [i, answer] of answers.entries()) {
+      await pastSession(appt.clientId, FOUR_WEEKS[i]!, answer);
+    }
+    return appt;
+  };
+
+  const confirmedTimes = (n: number): Confirmation[] => Array.from({ length: n }, () => 'confirmed');
+
+  it('asks four-from-four once, the day before, and not five days out', async () => {
+    const appt = await withHistory(confirmedTimes(4));
+
+    expect((await runReminderHorizon(clock)).queued.map((q) => q.stage)).toEqual(['d1']);
+    expect(await stagesFor(appt.id)).toEqual(['d1']);
+  });
+
+  it('leaves three-from-four on the full cadence', async () => {
+    const appt = await withHistory(confirmedTimes(3));
+    expect(await runReminderHorizon(clock).then((r) => r.queued.map((q) => q.stage))).toEqual(['d5', 'd1']);
+    expect(await stagesFor(appt.id)).toEqual(['d5', 'd1']);
+  });
+
+  /**
+   * The invariant the cap must not break. Fewer messages is still a message, so
+   * the row is still promoted to `pending` and there is still an outbox row
+   * behind it — a capped client can be charged for silence on exactly the same
+   * evidence as anybody else, because the evidence is what the cap did not touch.
+   */
+  it('still promotes to pending, so silence still has a sent message behind it', async () => {
+    const appt = await withHistory(confirmedTimes(4));
+    await runReminderHorizon(clock);
+
+    const after = await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } });
+    expect(after.confirmation).toBe('pending');
+    expect(await prisma.outboxMessage.count({ where: { clientId: appt.clientId } })).toBe(1);
+  });
+
+  it('restores the full cadence after a missed message', async () => {
+    const appt = await withHistory([...confirmedTimes(3), 'no_response']);
+    await runReminderHorizon(clock);
+    expect(await stagesFor(appt.id)).toEqual(['d5', 'd1']);
+  });
+
+  it('restores it after a decline too — a streak is answering, not agreeing', async () => {
+    const appt = await withHistory([...confirmedTimes(3), 'declined']);
+    await runReminderHorizon(clock);
+    expect(await stagesFor(appt.id)).toEqual(['d5', 'd1']);
+  });
+
+  /**
+   * A sequence that would fool a total: nine confirmations, and a miss last
+   * week. Nine is not four in a row, and the client who has just started
+   * drifting is precisely who the five-day message exists for.
+   */
+  it('counts consecutively from the most recent, never in total', async () => {
+    const appt = await withHistory(['confirmed', 'confirmed', 'no_response', 'confirmed']);
+    await runReminderHorizon(clock);
+    expect(await stagesFor(appt.id)).toEqual(['d5', 'd1']);
+  });
+
+  it('is off at a cap of zero, with no second flag to keep in sync', async () => {
+    await settings({ confirmationStreakCap: 0 });
+    const appt = await withHistory(confirmedTimes(4));
+    await runReminderHorizon(clock);
+    expect(await stagesFor(appt.id)).toEqual(['d5', 'd1']);
   });
 });

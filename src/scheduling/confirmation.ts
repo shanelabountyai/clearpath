@@ -22,6 +22,25 @@ export type Confirmation =
 export type ReminderStage = 'd5' | 'd1' | 'd0';
 export const STAGES: readonly ReminderStage[] = ['d5', 'd1', 'd0'];
 
+/**
+ * What a client who always answers is left with. The day-before stage, because
+ * it is the one with somewhere to go: a client who confirms at `d1` has a day
+ * to arrange the hour, and front desk has a day to fill it if they decline.
+ * `d0` alone would be a notification, not a question.
+ */
+export const CAPPED_STAGES: readonly ReminderStage[] = ['d1'];
+
+/**
+ * The answers that count for or against a streak.
+ *
+ * `not_required` and `pending` are deliberately absent. "We never asked" is not
+ * a miss and it is not a confirmation; "we asked and it is still early" is not
+ * an answer yet. Only a decided appointment moves the count, in either
+ * direction — which is what stops a client on `reminderPreference: 'none'`, who
+ * can never confirm anything, from being permanently treated as unreliable.
+ */
+export const DECIDED: readonly Confirmation[] = ['confirmed', 'declined', 'no_response'];
+
 export interface ConfirmationSettings {
   /** Notice below which there was no time to ask, and no time to answer. */
   graceMinutes: number;
@@ -78,6 +97,37 @@ export function stageDueAt(
 }
 
 /**
+ * How much cadence a client has earned the right to be left alone from.
+ *
+ * The volume objection is the real one, and it is not about cost: ~70 recurring
+ * clients × 3 messages × 52 weeks is ~11,000 messages a year, and the failure
+ * mode of that is the reminder stopping being read — which degrades the very
+ * signal the no-show fee is derived from. So the client who has answered four
+ * times running is asked once, the day before, and nothing else.
+ *
+ * `recent` is most-recent-first and decided-only; the caller does that
+ * filtering in SQL so this stays a function about a rule rather than about a
+ * query. A cap of zero or less is the off switch, and it is off by value rather
+ * than by a second flag nobody would keep in sync.
+ *
+ * Note what breaks a streak: one `declined` or one `no_response`, and the full
+ * three stages come straight back. The cap is a reward for answering, not a
+ * setting somebody has to remember to reverse.
+ */
+export function cadenceStages(
+  recent: readonly Confirmation[],
+  cap: number,
+): readonly ReminderStage[] {
+  if (cap <= 0) return STAGES;
+  let streak = 0;
+  for (const answer of recent) {
+    if (answer !== 'confirmed') break;
+    streak += 1;
+  }
+  return streak >= cap ? CAPPED_STAGES : STAGES;
+}
+
+/**
  * The stages a horizon run at `now` should have queued.
  *
  * A stage whose moment fell before the appointment was booked is skipped
@@ -88,13 +138,18 @@ export function stageDueAt(
  * invariant the fee rests on: the cadence promotes `not_required` to `pending`
  * only where it actually queues something, so `no_response` is unreachable
  * without an outbox row proving the practice asked.
+ *
+ * `allowed` narrows the set the cap has left the client on. It narrows nothing
+ * else: a capped client's `d1` still has to fall after the booking and before
+ * now, so the cap can only ever take messages away, never move one earlier.
  */
 export function dueStages(
   appointment: EligibleAppointment,
   now: Date,
   settings: ConfirmationSettings,
+  allowed: readonly ReminderStage[] = STAGES,
 ): ReminderStage[] {
-  return STAGES.filter((stage) => {
+  return allowed.filter((stage) => {
     const dueAt = stageDueAt(appointment.startAt, stage, settings);
     return dueAt >= appointment.createdAt && dueAt <= now;
   });

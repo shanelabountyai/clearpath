@@ -123,6 +123,11 @@ async function PracticePage() {
                     ? <Badge tone="warning" glyph="!">On</Badge>
                     : <Badge>Off — recorded, never charged</Badge>}
                 </Field>
+                <Field label="Reminder cap">
+                  {data.settings.confirmationStreakCap > 0
+                    ? `day before only, after ${data.settings.confirmationStreakCap} confirmations in a row`
+                    : 'off — every client gets all three reminders'}
+                </Field>
                 <Field label="Booking horizon">{data.settings.recurrenceHorizonDays} days</Field>
                 <Field label="Continuity gap">{data.settings.continuityGapDays} days</Field>
                 <Field label="Name used in messages">{data.settings.messagingName}</Field>

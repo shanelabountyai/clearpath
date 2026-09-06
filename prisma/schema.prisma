@@ -132,6 +132,11 @@ model PracticeSettings {
   /// Gates only the automatic `no_show` transition and its fee. With it off,
   /// non-response is still recorded — the evidence is never optional.
   autoNoShowOnNoResponse Boolean @default(true)
+  /// P1-2. After this many consecutive confirmations a client drops to the
+  /// day-before stage alone, until they miss one. Zero turns the cap off.
+  /// A weekly client otherwise receives three messages a week, indefinitely,
+  /// and the failure mode is not cost — it is the reminder stopping being read.
+  confirmationStreakCap  Int     @default(4)
 }
 
 model Room {
