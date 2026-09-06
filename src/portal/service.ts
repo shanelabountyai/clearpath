@@ -133,7 +133,11 @@ export async function openPortal(token: string, opts: { clock?: Clock } = {}) {
   const { client, settings, appointments } = await prisma.$transaction(async (tx) => {
     const client = await tx.client.findUniqueOrThrow({
       where: { id: link.clientId },
-      select: { id: true, firstName: true },
+      // Their language, because the door has to be readable by whoever the
+      // reminder was written for. A Spanish reminder linking to an English
+      // page is a loop the client cannot complete — and the fee rests on them
+      // completing it.
+      select: { id: true, firstName: true, language: true },
     });
     const settings = await tx.practiceSettings.findUnique({
       where: { id: 1 }, select: { messagingName: true },
@@ -175,6 +179,7 @@ export async function openPortal(token: string, opts: { clock?: Clock } = {}) {
 
   return {
     firstName: client.firstName,
+    language: client.language,
     practice: settings?.messagingName ?? 'Stillwater',
     appointments,
   };

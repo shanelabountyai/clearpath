@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { requireSession } from '../../../src/session';
 import { setFee, updateClient } from '../../../src/clients/repository';
+import { LANGUAGES, type Language } from '../../../src/messaging/language';
 import { CADENCES, type ReminderCadence } from '../../../src/scheduling/confirmation';
 import { issueForm } from '../../../src/forms/service';
 import { createProcessNote } from '../../../src/notes/service';
@@ -59,6 +60,17 @@ export async function saveReminderCadence(formData: FormData) {
   const raw = String(formData.get('reminderCadence') ?? '');
   if (!(CADENCES as readonly string[]).includes(raw)) return;
 
-  await updateClient(actor, clientId, { reminderCadence: raw as ReminderCadence });
+  // The language rides in the same form because it is the same decision: how
+  // this client is written to. Both are validated against their enum rather
+  // than trusted — a hand-posted form is the one input this page cannot see.
+  const rawLanguage = String(formData.get('language') ?? '');
+  const language = (LANGUAGES as readonly string[]).includes(rawLanguage)
+    ? (rawLanguage as Language)
+    : undefined;
+
+  await updateClient(actor, clientId, {
+    reminderCadence: raw as ReminderCadence,
+    ...(language ? { language } : {}),
+  });
   revalidatePath(`/clients/${clientId}`);
 }

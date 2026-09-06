@@ -1,6 +1,7 @@
 import { prisma } from '../src/db';
 import { freedSlots } from '../src/scheduling/worklists';
 import { zonedToUtc } from '../src/time';
+import { indiscreetTerms } from '../src/messaging/outbox';
 
 /**
  * The success metrics, as queries against the seeded quarter.
@@ -158,7 +159,6 @@ export async function seedMetrics(): Promise<Metric[]> {
   // The deny-list at send time is the gate; this is the whole quarter's worth
   // of rendered bodies checked again after the fact, including the link-bearing
   // variant this feature added. Three sends is three times the surface.
-  const { indiscreetTerms } = await import('../src/messaging/outbox');
   const bodies = await prisma.outboxMessage.findMany({ select: { body: true, subject: true } });
   const leaky = bodies.filter((m) => indiscreetTerms(`${m.subject ?? ''} ${m.body}`).length);
   check('every client-facing body in the quarter is discreet', leaky.length === 0,
@@ -237,6 +237,55 @@ export async function seedMetrics(): Promise<Metric[]> {
   check('every decline carries a reason code and no free text',
     declines.length >= 1 && offCode.length === 0,
     `${declines.length} declines, ${offCode.length} off the list`);
+
+  // ── the language gap, closed and checked ─────────────────────────────
+  //
+  // P2's last item. The machinery is asserted in the unit suite; what a whole
+  // quarter can say is that it was actually exercised — a mechanism no seeded
+  // client ever goes through is a mechanism nobody has run.
+  const { LANGUAGES, DENY_LISTS } = await import('../src/messaging/language');
+  const { canRender } = await import('../src/messaging/outbox');
+
+  const spanish = await prisma.client.count({ where: { language: 'es' } });
+  check('the quarter contains clients who read something other than English',
+    spanish >= 5, `${spanish} of ${await prisma.client.count()} clients`);
+
+  // The rule that keeps a language barrier from becoming a fee: a client the
+  // practice cannot write to is a client it never asked.
+  const messagedInWrongLanguage = (await prisma.outboxMessage.findMany({
+    where: { clientId: { not: null } },
+    select: { templateKey: true, client: { select: { language: true } } },
+  })).filter((m) => m.client && !canRender(m.templateKey, m.client.language));
+  check('no client was sent a message with no body in their language',
+    messagedInWrongLanguage.length === 0, `${messagedInWrongLanguage.length} such messages`);
+
+  const spanishCharged = await prisma.appointment.count({
+    where: { confirmation: 'no_response', status: 'no_show', client: { language: 'es' } },
+  });
+  const spanishAsked = await prisma.appointment.count({
+    where: { ...past, confirmation: { not: 'not_required' }, client: { language: 'es' } },
+  });
+  // Not "no Spanish speaker is ever charged" — that would be a different and
+  // worse policy. The claim is that they are charged at the same rate, because
+  // they were asked in a language they read.
+  check('a translated client is charged at the same rate as anybody else',
+    spanishAsked === 0 || spanishCharged / spanishAsked <= 0.05,
+    `${spanishCharged} of ${spanishAsked} (${spanishAsked ? (spanishCharged / spanishAsked * 100).toFixed(2) : '0.00'}%)`);
+
+  // Hard rule 3 across the whole quarter, now in two languages: every body is
+  // checked against the union of every list, so an English message is vetted
+  // against the Spanish one and the other way round.
+  const spanishBodies = await prisma.outboxMessage.findMany({
+    where: { client: { language: 'es' } }, select: { body: true, subject: true },
+  });
+  check('every Spanish body in the quarter is discreet in both languages',
+    spanishBodies.length >= 1
+      && spanishBodies.every((m) => indiscreetTerms(`${m.subject ?? ''} ${m.body}`).length === 0),
+    `${spanishBodies.length} bodies checked against ${LANGUAGES.map((l) => DENY_LISTS[l].length).reduce((a, b) => a + b, 0)} terms`);
+
+  const spanishReplies = await prisma.inboundReply.count({ where: { client: { language: 'es' } } });
+  check('at least one client wrote back in another language',
+    spanishReplies >= 1, `${spanishReplies} replies`);
 
   // P1-2, exercised by data rather than asserted in the abstract. A quarter in
   // which nobody ever earns the quieter cadence would leave the cap untested by

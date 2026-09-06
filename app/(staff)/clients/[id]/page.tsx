@@ -17,6 +17,7 @@ import { BreakGlassPrompt } from '../../break-glass';
 import { systemClock } from '@/src/clock';
 import { Button, CADENCE_LABELS } from '@/src/ui/primitives';
 import { CADENCES } from '@/src/scheduling/confirmation';
+import { LANGUAGES, LANGUAGE_NAMES } from '@/src/messaging/language';
 
 export const dynamic = 'force-dynamic';
 
@@ -137,6 +138,14 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
                 {money(fee)}
                 {client.feeCents !== null && <span className="ml-1"><Badge tone="info">sliding scale</Badge></span>}
               </Field>
+              {/* The work list says "call them"; this is the screen the caller
+                  is on. A practice that writes to somebody in Spanish and then
+                  telephones them in English has translated the cheap half. */}
+              <Field label="Language">
+                {client.language === 'en'
+                  ? <span className="text-muted">English</span>
+                  : <Badge tone="info" glyph="¶">{LANGUAGE_NAMES[client.language]}</Badge>}
+              </Field>
               <Field label="Reminders">
                 {client.reminderPreference === 'none'
                   ? <Badge tone="warning">None — do not message</Badge>
@@ -177,6 +186,27 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
                 <button className="rounded-[var(--radius)] border px-2.5 py-1.5 text-caption font-medium" style={{ borderColor: 'var(--border-strong)' }}>
                   Save
                 </button>
+                <div>
+                  <label htmlFor="language" className="block text-micro font-medium tracking-wide text-subtle uppercase">
+                    Language
+                  </label>
+                  <select
+                    id="language" name="language"
+                    defaultValue={client.language}
+                    className="mt-1 rounded-[var(--radius)] border px-2 py-1 text-body"
+                    style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
+                  >
+                    {LANGUAGES.map((l) => (
+                      <option key={l} value={l}>{LANGUAGE_NAMES[l]}</option>
+                    ))}
+                  </select>
+                </div>
+                <p className="w-full text-caption text-subtle">
+                  Every message and the client&rsquo;s own page are written in the language
+                  set here. A message with no version in it is not sent at all, and a
+                  client the practice cannot write to is one it can never charge for
+                  silence.
+                </p>
                 <p className="w-full text-caption text-subtle">
                   Fewer messages, not fewer obligations: a client who is asked once and
                   says nothing can still be charged for the silence, exactly as one asked

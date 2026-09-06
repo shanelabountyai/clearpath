@@ -8,6 +8,8 @@ import { bookGroupSession } from '../scheduling/groups';
 import { cancelAppointment, setStatus } from '../scheduling/lifecycle';
 import { runReminderHorizon } from '../scheduling/reminders';
 import { indiscreetTerms } from '../messaging/outbox';
+import { LANGUAGES } from '../messaging/language';
+import { PORTAL_COPY } from './copy';
 import {
   confirmAppointment, declineAppointment, ensurePortalLink, issuePortalLink,
   openPortal, openRescheduleRequests, requestReschedule, resolveRescheduleRequest,
@@ -263,8 +265,14 @@ describe('the door is narrow on purpose', () => {
   it('cannot be used to submit anything clinical', async () => {
     const token = (await issuePortalLink(actor(desk), { clientId: client.id, clock })).token;
     const view = await openPortal(token, { clock });
-    // The whole surface: a first name, a practice name, and appointment times.
-    expect(Object.keys(view).sort()).toEqual(['appointments', 'firstName', 'practice']);
+    // The whole surface: a first name, a practice name, appointment times, and
+    // which language to render them in. `language` is the only field added here
+    // since this spec was written, and it is on the safe side of the line for a
+    // reason worth stating: it is a fact about how to write to this person, not
+    // about why they attend, and it is a fact they already hold — a leaked link
+    // discloses that the holder reads Spanish, which the message that carried
+    // the link disclosed first.
+    expect(Object.keys(view).sort()).toEqual(['appointments', 'firstName', 'language', 'practice']);
   });
 });
 
@@ -509,4 +517,65 @@ it('mints a fresh door once the old one has expired', async () => {
   const fresh = await ensurePortalLink(client.id, later);
   expect(fresh.expiresAt.getTime()).toBeGreaterThan(later.now().getTime());
   expect(await prisma.portalLink.count({ where: { clientId: client.id } })).toBe(2);
+});
+
+/**
+ * The other half of the translated reminder.
+ *
+ * A Spanish message saying "avísenos si va a venir" that links to an English
+ * page with two English buttons is a loop the client cannot complete — and this
+ * feature's fee rests on them completing it, which would make an untranslated
+ * door a way of charging somebody for a language barrier.
+ */
+describe('the door speaks the language the message did', () => {
+  it('tells the page which language to render in', async () => {
+    await prisma.client.update({ where: { id: client.id }, data: { language: 'es' } });
+    const link = await issuePortalLink(actor(desk), { clientId: client.id, clock });
+
+    const view = await openPortal(link.token, { clock });
+    expect(view.language).toBe('es');
+    expect(PORTAL_COPY[view.language].confirmButton).toBe('Sí, allí estaré');
+  });
+
+  it('defaults to English for a client nobody set a language on', async () => {
+    const link = await issuePortalLink(actor(desk), { clientId: client.id, clock });
+    expect((await openPortal(link.token, { clock })).language).toBe('en');
+  });
+
+  /**
+   * The door is behind a token, but a token arrives in a message on a phone and
+   * the page is one tap from a lock screen. Every string on it passes the same
+   * gate the messages do — in both languages, against the union of both lists.
+   */
+  it('says nothing on any screen that a message could not say', () => {
+    for (const language of LANGUAGES) {
+      const copy = PORTAL_COPY[language];
+      const strings = [
+        copy.greeting('Test'), copy.intro, copy.askedNotice, copy.confirmedNotice,
+        copy.declinedNotice, copy.nothingBooked, copy.invalidLink, copy.expiredLink,
+        copy.linkHelp, copy.with('Dr Example'), copy.byVideo, copy.alreadyConfirmed,
+        copy.confirmButton, copy.declineButton, copy.feeWarning(24, '$90.00'),
+        copy.feeConfirmButton, copy.feeKeepLink, copy.reasonLabel, copy.askToChange,
+        copy.changePending, copy.footer, ...Object.values(copy.reasons),
+      ];
+      for (const text of strings) {
+        expect(indiscreetTerms(text), `${language}: ${text}`).toEqual([]);
+      }
+    }
+  });
+
+  it('has every string in every language, so no screen renders undefined', () => {
+    // `Record<Language, PortalCopy>` makes this a type error rather than a
+    // runtime one, and this is the runtime half: a key present but empty would
+    // typecheck and still show somebody a blank button.
+    for (const language of LANGUAGES) {
+      const copy = PORTAL_COPY[language];
+      for (const [key, value] of Object.entries(copy)) {
+        if (typeof value === 'string') expect(value.length, `${language}.${key}`).toBeGreaterThan(0);
+      }
+      for (const [code, label] of Object.entries(copy.reasons)) {
+        expect(label.length, `${language}.reasons.${code}`).toBeGreaterThan(0);
+      }
+    }
+  });
 });

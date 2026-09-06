@@ -166,6 +166,13 @@ async function main() {
             // clients are the interesting slice: one message, three hours out,
             // and still fee-eligible like everybody else.
             reminderCadence: chance(0.12) ? 'day_of' : chance(0.1) ? 'day_before' : 'full',
+            // P2. Every fifth client reads Spanish — and deliberately *not*
+            // from the dice. A `chance()` call here consumes from the shared
+            // stream and moves every roll after it, which last phase broke a
+            // metric and an e2e spec that had nothing to do with the change.
+            // Deriving it from the client number costs nothing and leaves the
+            // rest of the quarter byte-identical.
+            language: clientNo % 5 === 0 ? 'es' : 'en',
           },
         });
         clients.push({ id: client.id, code, clinicianId: clinician.id });
@@ -505,19 +512,31 @@ async function main() {
     where: { phone: { not: null }, reminderPreference: { not: 'none' } },
     select: { id: true, phone: true },
     orderBy: { code: 'desc' },
-    take: 4,
+    take: 3,
   });
+  // One of them reads Spanish, chosen rather than hoped for: the branch worth
+  // having in the seed is the Spanish auto-reply, and leaving it to which
+  // clients happen to sort last would mean the demo has it on some runs.
+  const spanishSpeaker = await prisma.client.findFirst({
+    where: { phone: { not: null }, reminderPreference: { not: 'none' }, language: 'es' },
+    select: { id: true, phone: true },
+    orderBy: { code: 'asc' },
+  });
+  if (spanishSpeaker) withPhone.push(spanishSpeaker);
 
   let understood = 0, unreadable = 0, optedOut = 0;
-  const REPLIES: [string, 'yes' | 'stop' | 'unreadable'][] = [
+  const REPLIES: [string, 'yes' | 'stop' | 'unreadable' | 'unreadable_es'][] = [
     [withPhone[0]?.phone ?? '', 'yes'],
     [withPhone[1]?.phone ?? '', 'stop'],
     [withPhone[2]?.phone ?? '', 'unreadable'],
-    [withPhone[3]?.phone ?? '', 'unreadable'],
+    [withPhone[3]?.phone ?? '', 'unreadable_es'],
   ];
   const WORDS: Record<string, string> = {
     yes: 'YES',
     stop: 'STOP',
+    // A Spanish speaker writing a sentence, which is the case the whole
+    // classified-and-discarded design exists for.
+    unreadable_es: '¿Podría llamarme mañana? No estoy seguro.',
     // Deliberately something no keyword list should ever guess at. The point of
     // the fixture is the branch where the practice telephones rather than
     // decides — and the words below exist in this file for one instant and are

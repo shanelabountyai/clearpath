@@ -1,7 +1,9 @@
 import { openPortal } from '../../../src/portal/service';
 import { prisma } from '../../../src/db';
 import { Conflict, NotFound } from '../../../src/errors';
-import { minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
+import { minutesToHHMM, utcToZoned } from '../../../src/time';
+import { PORTAL_COPY, type PortalCopy } from '../../../src/portal/copy';
+import { LANGUAGES, WEEKDAY_NAMES } from '../../../src/messaging/language';
 import { money } from '../../../src/ui/primitives';
 import { askToReschedule, sayNo, sayYes } from './actions';
 
@@ -10,12 +12,8 @@ export const dynamic = 'force-dynamic';
 // The tab title says nothing. This page is opened on a shared phone.
 export const metadata = { title: 'Your appointments' };
 
-const REASONS: { value: string; label: string }[] = [
-  { value: 'cannot_make_it', label: 'I cannot make this time' },
-  { value: 'need_a_different_time', label: 'I need a different time' },
-  { value: 'prefer_earlier', label: 'I would prefer something earlier' },
-  { value: 'prefer_later', label: 'I would prefer something later' },
-];
+/** The same four codes the decline uses. Their wording lives in `copy.ts`. */
+const REASON_CODES = ['cannot_make_it', 'need_a_different_time', 'prefer_earlier', 'prefer_later'] as const;
 
 export default async function ClientPortalPage({
   params,
@@ -38,38 +36,43 @@ export default async function ClientPortalPage({
   try {
     view = await openPortal(token);
   } catch (e) {
+    // A token that resolves to nobody resolves to no language either, so the
+    // refusal is bilingual rather than guessing. It is the one screen where
+    // saying it twice is right: whoever is holding a dead link is exactly the
+    // person this page knows least about.
     return (
-      <Shell practice={practice}>
-        <h1 className="text-xl font-semibold">
-          {e instanceof NotFound ? 'This link is not valid' : 'This link has expired'}
-        </h1>
-        <p className="mt-2 text-subhead text-muted">
-          Reply to the message you received and someone will send you a new one.
-        </p>
-        {e instanceof Conflict ? null : null}
+      <Shell practice={practice} copy={PORTAL_COPY.en}>
+        {LANGUAGES.map((language) => {
+          const c = PORTAL_COPY[language];
+          return (
+            <div key={language} className="mb-6 last:mb-0">
+              <h1 className="text-xl font-semibold">
+                {e instanceof NotFound ? c.invalidLink : c.expiredLink}
+              </h1>
+              <p className="mt-2 text-subhead text-muted">{c.linkHelp}</p>
+            </div>
+          );
+        })}
       </Shell>
     );
   }
 
-  return (
-    <Shell practice={practice}>
-      <h1 className="text-xl font-semibold">Hello {view.firstName}</h1>
-      <p className="mt-2 text-subhead text-muted">
-        Your upcoming appointments. To change one, choose a reason and someone will
-        call you — nothing moves until you have spoken to them.
-      </p>
+  const copy = PORTAL_COPY[view.language];
+  const weekdays = WEEKDAY_NAMES[view.language];
 
-      {q.asked && <Notice>Thank you — someone will be in touch about that appointment.</Notice>}
-      {q.confirmed && <Notice>Thank you — we have you down for that one.</Notice>}
-      {q.declined && <Notice>That is cancelled. Reply to the message you received to rebook.</Notice>}
+  return (
+    <Shell practice={practice} copy={copy}>
+      <h1 className="text-xl font-semibold">{copy.greeting(view.firstName)}</h1>
+      <p className="mt-2 text-subhead text-muted">{copy.intro}</p>
+
+      {q.asked && <Notice>{copy.askedNotice}</Notice>}
+      {q.confirmed && <Notice>{copy.confirmedNotice}</Notice>}
+      {q.declined && <Notice>{copy.declinedNotice}</Notice>}
 
       <hr className="my-6" style={{ borderColor: 'var(--border)' }} />
 
       {view.appointments.length === 0 ? (
-        <p className="text-subhead text-muted">
-          You have nothing booked at the moment. Reply to the message you received to
-          arrange something.
-        </p>
+        <p className="text-subhead text-muted">{copy.nothingBooked}</p>
       ) : (
         <ul className="space-y-5">
           {view.appointments.map((a) => {
@@ -78,11 +81,11 @@ export default async function ClientPortalPage({
             return (
               <li key={a.id} className="border-t pt-4 first:border-t-0 first:pt-0" style={{ borderColor: 'var(--border)' }}>
                 <p className="text-subhead font-medium">
-                  {WEEKDAYS[when.weekday]} {when.date}, {minutesToHHMM(when.minutes)}
+                  {weekdays[when.weekday]} {when.date}, {minutesToHHMM(when.minutes)}
                 </p>
                 <p className="mt-1 text-body text-muted">
-                  With {a.clinician.name}
-                  {a.modality === 'telehealth' ? ' · by video' : a.room ? ` · ${a.room.name}` : ''}
+                  {copy.with(a.clinician.name)}
+                  {a.modality === 'telehealth' ? ` · ${copy.byVideo}` : a.room ? ` · ${a.room.name}` : ''}
                 </p>
 
                 {/*
@@ -91,7 +94,7 @@ export default async function ClientPortalPage({
                   a client on `none` never sees a question they were never sent.
                 */}
                 {a.confirmation === 'confirmed' && (
-                  <p className="mt-3 text-body text-subtle">You have confirmed this one.</p>
+                  <p className="mt-3 text-body text-subtle">{copy.alreadyConfirmed}</p>
                 )}
 
                 {a.confirmation === 'pending' && q.fee === a.id && (
@@ -99,10 +102,7 @@ export default async function ClientPortalPage({
                     className="mt-3 rounded-[var(--radius)] border px-3 py-3"
                     style={{ borderColor: 'var(--danger)' }}
                   >
-                    <p className="text-body">
-                      Cancelling within {windowHours} hours of the appointment is
-                      charged at {lateFee}. Do you still want to cancel it?
-                    </p>
+                    <p className="text-body">{copy.feeWarning(windowHours, lateFee)}</p>
                     <div className="mt-3 flex flex-wrap items-center gap-2">
                       <form action={sayNo}>
                         <input type="hidden" name="token" value={token} />
@@ -116,10 +116,10 @@ export default async function ClientPortalPage({
                           className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
                           style={{ background: 'var(--danger)', color: 'var(--on-solid)', borderColor: 'var(--danger)' }}
                         >
-                          Yes, cancel it
+                          {copy.feeConfirmButton}
                         </button>
                       </form>
-                      <a href={`/p/${token}`} className="text-body underline">Keep the appointment</a>
+                      <a href={`/p/${token}`} className="text-body underline">{copy.feeKeepLink}</a>
                     </div>
                   </div>
                 )}
@@ -133,7 +133,7 @@ export default async function ClientPortalPage({
                         className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
                         style={{ background: 'var(--accent)', color: 'var(--accent-contrast)', borderColor: 'var(--accent)' }}
                       >
-                        Yes, I will be there
+                        {copy.confirmButton}
                       </button>
                     </form>
                     {/* P1-5. The same four codes as the reschedule request —
@@ -143,47 +143,45 @@ export default async function ClientPortalPage({
                     <form action={sayNo} className="flex flex-wrap items-center gap-2">
                       <input type="hidden" name="token" value={token} />
                       <input type="hidden" name="appointmentId" value={a.id} />
-                      <label className="sr-only" htmlFor={`decline-reason-${a.id}`}>Reason</label>
+                      <label className="sr-only" htmlFor={`decline-reason-${a.id}`}>{copy.reasonLabel}</label>
                       <select
                         id={`decline-reason-${a.id}`}
                         name="reason"
                         className="rounded-[var(--radius)] border px-2 py-1.5 text-body"
                         style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
                       >
-                        {REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                        {REASON_CODES.map((r) => <option key={r} value={r}>{copy.reasons[r]}</option>)}
                       </select>
                       <button
                         className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
                         style={{ borderColor: 'var(--border-strong)' }}
                       >
-                        I cannot make it
+                        {copy.declineButton}
                       </button>
                     </form>
                   </div>
                 )}
 
                 {pending ? (
-                  <p className="mt-3 text-body text-subtle">
-                    You have asked to change this one. Someone will call you.
-                  </p>
+                  <p className="mt-3 text-body text-subtle">{copy.changePending}</p>
                 ) : (
                   <form action={askToReschedule} className="mt-3 flex flex-wrap items-center gap-2">
                     <input type="hidden" name="token" value={token} />
                     <input type="hidden" name="appointmentId" value={a.id} />
-                    <label className="sr-only" htmlFor={`reason-${a.id}`}>Reason</label>
+                    <label className="sr-only" htmlFor={`reason-${a.id}`}>{copy.reasonLabel}</label>
                     <select
                       id={`reason-${a.id}`}
                       name="reason"
                       className="rounded-[var(--radius)] border px-2 py-1.5 text-body"
                       style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
                     >
-                      {REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                      {REASON_CODES.map((r) => <option key={r} value={r}>{copy.reasons[r]}</option>)}
                     </select>
                     <button
                       className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
                       style={{ borderColor: 'var(--border-strong)' }}
                     >
-                      Ask to change this
+                      {copy.askToChange}
                     </button>
                   </form>
                 )}
@@ -207,13 +205,13 @@ function Notice({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Shell({ practice, children }: { practice: string; children: React.ReactNode }) {
+function Shell({ practice, copy, children }: { practice: string; copy: PortalCopy; children: React.ReactNode }) {
   return (
     <main className="mx-auto max-w-2xl px-5 py-10">
       <p className="mb-6 text-body tracking-wide text-subtle uppercase">{practice}</p>
       {children}
       <footer className="mt-12 border-t pt-4 text-caption text-subtle" style={{ borderColor: 'var(--border)' }}>
-        This link is personal to you. Please do not forward it.
+        {copy.footer}
       </footer>
     </main>
   );

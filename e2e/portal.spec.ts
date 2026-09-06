@@ -88,3 +88,62 @@ test.describe('the confirmation door', () => {
     await expect(page.getByText(/counsel|therap/i)).toHaveCount(0);
   });
 });
+
+/**
+ * P2. The reminder is translated and the page it points at is the other half of
+ * the same sentence — a Spanish message linking to two English buttons is a
+ * loop the client cannot complete, and the fee rests on them completing it.
+ *
+ * Driven through the real page rather than asserted on the copy object, because
+ * a dictionary that is complete and a page that never reads it look identical
+ * from the unit suite.
+ */
+test.describe('the door in the client\'s own language', () => {
+  // The specs above answer the fixture's appointments, and two buttons only
+  // exist while a question is open. Rebuilding it is cheaper and clearer than
+  // reaching into their state.
+  test.beforeAll(() => fixture('setup'));
+
+  test('renders every control in Spanish, and none of it in English', async ({ page }) => {
+    sql(`update "Client" set language = 'es' where id = '${CLIENT}'`);
+    await page.goto(`/p/${TOKEN}`);
+
+    await expect(page.getByRole('heading', { name: /^Hola / })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sí, allí estaré' }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'No puedo asistir' }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Pedir un cambio' }).first()).toBeVisible();
+
+    // The English versions of the same controls are gone, not merely
+    // outnumbered: a half-translated page is the failure worth catching.
+    await expect(page.getByRole('button', { name: 'Yes, I will be there' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'I cannot make it' })).toHaveCount(0);
+    await expect(page.getByText('This link is personal to you')).toHaveCount(0);
+    await expect(page.getByText('Este enlace es personal')).toBeVisible();
+
+    // The weekday too — the one word on the page the client has to act on.
+    await expect(page.locator('main')).not.toContainText(/Monday|Tuesday|Wednesday|Thursday|Friday/);
+  });
+
+  test('discloses the fee in Spanish before it applies', async ({ page }) => {
+    sql(`update "Client" set language = 'es' where id = '${CLIENT}'`);
+    await page.goto(`/p/${TOKEN}`);
+
+    // The nearest appointment is two hours out, so declining it is chargeable.
+    await page.locator('main li').first().getByRole('button', { name: 'No puedo asistir' }).click();
+
+    await expect(page.getByText(/conlleva un cargo de \$/)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sí, cancelarla' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Mantener la cita' })).toBeVisible();
+    // Nothing has been cancelled yet: the first tap is a question in both
+    // languages, and the interstitial is where the amount is named.
+    expect(sql(`select status from "Appointment" where id = '${NEAR}'`)).toBe('scheduled');
+
+    sql(`update "Client" set language = 'en' where id = '${CLIENT}'`);
+  });
+
+  test('refuses a dead link in both languages, because it knows whose it was', async ({ page }) => {
+    await page.goto('/p/not-a-real-token-at-all');
+    await expect(page.getByText('This link is not valid')).toBeVisible();
+    await expect(page.getByText('Este enlace no es válido')).toBeVisible();
+  });
+});
