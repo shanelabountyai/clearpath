@@ -3,6 +3,7 @@ import { SYSTEM_ACTOR } from '../auth/permissions';
 import { systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
 import { answerable, deliveryProven } from '../messaging/carrier';
+import { readable } from '../messaging/language';
 import { confirmationRequired, type Confirmation, type ConfirmationSettings } from './confirmation';
 import { setStatus, type Status } from './lifecycle';
 
@@ -27,6 +28,11 @@ import { setStatus, type Status } from './lifecycle';
  *      same evidence as a client ignoring you — silence — so without a delivery
  *      receipt the practice would be billing clients for its own failed sends,
  *      and would never find out, because the failure looks like the offence.
+ *   1c. And only rows written in a language the client reads. Nothing is ever
+ *      sent in one they do not — but `Client.language` is a field somebody can
+ *      correct, and a correction does not travel back into the messages already
+ *      delivered. `OutboxMessage.language` is what was actually written, so the
+ *      question can be asked of the evidence rather than of the record.
  *   2. Silence is recorded whatever else happened, and acted on only from
  *      `scheduled`. A client who walked in without answering ends the day
  *      `completed` / `no_response` and pays the session fee like anybody else.
@@ -95,6 +101,19 @@ export interface SweepResult {
    * drift in the charge rate.
    */
   unanswerable: string[];
+  /**
+   * Of those, the ones the practice asked in a language the client does not
+   * read. A subset of `exempted`, and its own number because it is neither of
+   * the other two: the message arrived, and it arrived in time, and it was not
+   * a question this client could answer.
+   *
+   * It only becomes reachable once a record is corrected — nothing is ever
+   * *sent* in a language the client is not down as reading — so a non-zero
+   * count here is a count of corrections, and the practice should read it as
+   * "how often was somebody entered in the wrong language" rather than as a
+   * messaging fault.
+   */
+  unreadable: string[];
 }
 
 /**
@@ -126,7 +145,7 @@ export async function runNonResponseSweep(clock: Clock = systemClock): Promise<S
     },
     select: {
       id: true, clientId: true, status: true, confirmation: true, startAt: true, bookedAt: true,
-      client: { select: { reminderPreference: true, email: true, phone: true } },
+      client: { select: { reminderPreference: true, email: true, phone: true, language: true } },
       // The proof the practice asked, and — since P2 — the proof it arrived.
       // A `pending` row with no reminder at all is unreachable, because only
       // the cadence promotes and only when it queued; what is very reachable is
@@ -137,13 +156,13 @@ export async function runNonResponseSweep(clock: Clock = systemClock): Promise<S
         // is not only whether a message arrived but whether it arrived in time
         // to be answered. And `dueAt`, because since the reschedule fix the
         // question before both is whether the message was about *this* hour.
-        select: { dueAt: true, outboxMessage: { select: { deliveryState: true, deliveredAt: true } } },
+        select: { dueAt: true, outboxMessage: { select: { deliveryState: true, deliveredAt: true, language: true } } },
       },
     },
     orderBy: { startAt: 'asc' },
   });
 
-  const result: SweepResult = { noResponse: [], noShow: [], exempted: [], undelivered: [], unanswerable: [] };
+  const result: SweepResult = { noResponse: [], noShow: [], exempted: [], undelivered: [], unanswerable: [], unreadable: [] };
 
   for (const appt of candidates) {
     // The precondition before the other four, and the one this feature went
@@ -177,6 +196,38 @@ export async function runNonResponseSweep(clock: Clock = systemClock): Promise<S
       continue;
     }
 
+    // The language precondition, and the one this feature went six phases
+    // without because it looked like it was already there.
+    //
+    // Nothing is ever *sent* in a language the client is not down as reading:
+    // `queueToClient` refuses to render a template with no body in it, and the
+    // cadence asks the same question before it queues. Both read
+    // `Client.language`, live, at the moment of the send — which is correct, and
+    // which is exactly why neither of them says anything about a record
+    // corrected afterwards. A client entered as English and put right in July
+    // has June's English reminders still on the row: delivered, in time, and
+    // counting as having been asked, in a language they cannot read.
+    //
+    // So the evidence is filtered down to the messages that were actually
+    // written in the language the client reads, and every check below runs on
+    // that set rather than on everything the practice sent. Not just this
+    // exemption: a client with two delivered English reminders and one Spanish
+    // one that failed has been reached in a language they read exactly zero
+    // times, and must land on `confirmation_undelivered` rather than on a fee.
+    //
+    // Before the delivery check rather than after it, because when both are
+    // true this is the more fundamental of the two — a message that could not
+    // have been answered had it arrived is not an addressing problem.
+    const legible = asked.filter((r) => readable([r.outboxMessage?.language], appt.client.language));
+
+    if (!readable(asked.map((r) => r.outboxMessage?.language), appt.client.language)) {
+      await guarded(request(appt, 'confirmation_unreadable'), (tx) =>
+        tx.appointment.update({ where: { id: appt.id }, data: { confirmation: 'not_required' } }));
+      result.exempted.push(appt.id);
+      result.unreadable.push(appt.id);
+      continue;
+    }
+
     // The delivery precondition. One delivered stage is enough — a carrier
     // hiccup on the day-of nudge should not erase a `d5` message the client
     // demonstrably received — but `sent` counts for nothing, because `sent` is
@@ -191,7 +242,7 @@ export async function runNonResponseSweep(clock: Clock = systemClock): Promise<S
     // The audit reason is its own code so the two exemptions never blur: the
     // practice may not ask, versus the practice asked and it did not arrive.
     // The second is an operational failure with a work-list behind it.
-    if (!deliveryProven(asked.map((r) => r.outboxMessage?.deliveryState).filter((s) => !!s))) {
+    if (!deliveryProven(legible.map((r) => r.outboxMessage?.deliveryState).filter((s) => !!s))) {
       await guarded(request(appt, 'confirmation_undelivered'), (tx) =>
         tx.appointment.update({ where: { id: appt.id }, data: { confirmation: 'not_required' } }));
       result.exempted.push(appt.id);
@@ -215,7 +266,7 @@ export async function runNonResponseSweep(clock: Clock = systemClock): Promise<S
     // Its own audit code, so the three exemptions never blur: the practice may
     // not ask, the practice asked and it did not arrive, the practice asked and
     // it arrived too late. Only the second one is a phone call.
-    if (!answerable(asked.map((r) => r.outboxMessage?.deliveredAt), appt.startAt, answerWindowMinutes)) {
+    if (!answerable(legible.map((r) => r.outboxMessage?.deliveredAt), appt.startAt, answerWindowMinutes)) {
       await guarded(request(appt, 'confirmation_unanswerable'), (tx) =>
         tx.appointment.update({ where: { id: appt.id }, data: { confirmation: 'not_required' } }));
       result.exempted.push(appt.id);

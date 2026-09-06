@@ -1961,6 +1961,180 @@ coming back is a fresh decision rather than a resumed one.
 
 ---
 
+## 19. The record moved and the message did not
+
+Every phase since P2 has added a precondition to the same fee, and every one of
+them was found the same way: by asking what a piece of evidence actually proves.
+A queued message proves the practice intended to ask. A delivery receipt proves
+somebody was reached. A receipt early enough proves they were reached in time to
+answer. A reminder due after the hour was set proves it was about *this* hour.
+
+This phase asks it of the last one left. The messages are in a language. Which
+one?
+
+The system could not say. `OutboxMessage` carried a body, a channel, a delivery
+state and four timestamps, and nothing recording what it was written in. Every
+reader that needed to know looked at `Client.language` instead — which is not the
+same question, and is only the same answer while nobody corrects a record.
+
+### Why the protection that existed was not this one
+
+The language rule shipped in P2 and it is a good rule. `queueToClient` refuses to
+render a template with no body in the client's language, and the cadence asks the
+same thing before it queues, so nothing is ever *sent* in a language the client
+is not down as reading. Both read `Client.language`, live, at the moment of the
+send. That is correct — it is the only thing they could read, and it is what the
+practice believed when it wrote.
+
+It is also, exactly and only, a statement about the send. A client entered as an
+English reader in June, messaged in English through June and July, and corrected
+to Spanish in August has three delivered English reminders on the row. They
+arrived. They arrived in time. Nobody could read them. And every precondition
+above returns true, because each one asks the record what the client can read and
+the record now says Spanish.
+
+The bug is not that a message went out in the wrong language. No message did. The
+bug is that **evidence was re-derived from a field that had moved underneath it**
+— the same shape as the reschedule defect in section 16, where messages about a
+withdrawn hour were being measured against the new one. That one was written down
+at the time as the next honest step:
+
+> **A client whose language is corrected from `en` to `es` after delivery still
+> has English reminders counting as having asked.** `OutboxMessage` carries no
+> language column, so this is not checkable today.
+
+### One column, and what it deliberately does not do
+
+```prisma
+/// The language this body was actually written in, decided at render time and
+/// never re-derived.
+language Language?
+```
+
+Written once, by `queueToClient`, from the same `client.language` the renderer
+used — so it is not a second source of truth, it is a *record of a decision that
+was already made*. The client's record stays the live field front desk can
+correct; the message stays what was said.
+
+**Nullable, and the migration backfills nothing.** The obvious backfill is to
+stamp every historical row with the client's current language, and it would
+manufacture precisely the agreement this column exists to test for: a corrected
+client's old English reminders would be relabelled Spanish, and the one case the
+column is for would be the one case it erased. `null` means nobody recorded it,
+and every reader treats unknown as unproven rather than as agreement — the same
+posture `deliveryProven` takes towards a message no carrier ever spoke about.
+
+**And no second column for the hour.** The handoff asked for the rendered hour
+too, and it should not exist: `expiresAt` already holds it, documented as "the
+start of the hour it is about", and the hour is in the body as text besides. A
+third copy of a fact the row holds twice is what this codebase argues against
+everywhere else, and the argument does not stop applying because a handoff note
+suggested it. The language is different in kind — you cannot recover which
+language a body is in by looking at the row, and its only pointer was a field
+that mutates.
+
+### The predicate, and the filter that matters more
+
+```ts
+export function readable(
+  rendered: readonly (Language | null | undefined)[],
+  language: Language,
+): boolean {
+  return rendered.some((l) => l === language);
+}
+```
+
+One message in their language is enough, for the reason one delivery is enough:
+a client reached in June had five days, whatever the record said in August.
+
+The exemption it produces is the visible half. The half that took the thinking is
+that **every other precondition now runs on the legible messages alone**:
+
+```ts
+const legible = asked.filter((r) => readable([r.outboxMessage?.language], appt.client.language));
+```
+
+A client corrected mid-cadence has two delivered English reminders and one
+Spanish one that never arrived. Checking only "was there *a* readable message"
+would pass — there was one — and then `deliveryProven` would look at all three,
+find two deliveries, and charge them on messages they cannot read. The client was
+reached in a language they read exactly zero times, and the row has to land on
+`confirmation_undelivered`. Narrowing the evidence set rather than adding a gate
+beside it is what makes that fall out instead of needing its own rule.
+
+It runs before the delivery check, because when both are true this is the more
+fundamental of the two: a message that could not have been answered had it
+arrived is not an addressing problem.
+
+### The metric that could not fail
+
+The seeded quarter already had a metric for this, and it was worthless:
+
+```ts
+.filter((m) => m.client && !canRender(m.templateKey, m.client.language));
+```
+
+`canRender` asks whether a body *exists* in that language. Both shipped languages
+have every body, so the answer was yes for every row in the quarter regardless of
+what any of them said — a restatement of the unit suite's completeness test,
+wearing a quarter's worth of data and reading like a check on the send. It is now
+`canRender(m.templateKey, m.language)`: a claim about what was written.
+
+Three metrics replace what it was pretending to be. That the quarter contains
+clients asked in a language their record later disowned — **2 clients**, out of
+1,074 delivered messages checked, because a mechanism no seeded client goes
+through is a mechanism nobody has run. That the sessions behind them are exempted
+under their own reason code, **2 stood down**. And the invariant: no fee rests on
+a message the client could not read, **0 of 30**.
+
+The fixture that produces them is the reschedule fixture's twin — front desk
+corrects a record two hours before a session, after every stage of the cadence has
+been delivered, through `updateClient` so there is an audit row rather than a
+seeding mystery. It also has one piece of care that is worth stating, because it
+is a limitation rather than a detail: it only picks clients with **exactly one**
+silent session in the quarter. See below.
+
+### What the quarter says
+
+The charge rate falls from 4.28% to **4.00%** — 27 fees from 675 eligible
+sessions, down from 29 of 677. Two fees, which is the right size: the case is
+rare, and it was indefensible every time it happened. Both sessions were
+delivered, in time, about the right hour, to a client who could not read a word
+of any of them.
+
+Six preconditions now stand between silence and a charge, and the two about
+language are not one check said twice. One is asked before the send, of the
+record. The other is asked at the fee, of the messages. They agree until somebody
+corrects a record, and the whole phase is about the interval where they do not.
+
+### What this deliberately does not do
+
+- **It does not revisit a fee already charged.** The sweep is idempotent and
+  reads only `pending`, so a correction that arrives after the sweep leaves the
+  old fee standing on evidence that is no longer good. This is the realistic
+  case — corrections often happen *because* somebody was charged — and it is the
+  one this phase does not close. Standing a fee back down means reversing money
+  on a row a person may already have discussed with the client, and that is a
+  decision about how a practice handles a mistake rather than a rule the sweep
+  can apply on its own. It is why the seed fixture picks clients with one silent
+  session: a quarter seeded the other way would contain a charge its own metric
+  correctly calls unsupported, and hiding that behind a looser metric would be
+  worse than naming it here.
+- **It does not treat a session the client attended as affected.** Those rows
+  carry the ordinary session fee, which rests on their having come, not on
+  anything they read. The e2e assertion was written loosely at first and caught
+  five of them — a real distinction the codebase already draws elsewhere, found
+  by the sweep rather than by review.
+- **It does not notify anybody that a correction invalidated evidence.** The
+  report gains a count — "asked in another language", beside undelivered and
+  reached-too-late — and the count is where a manager finds out. A worklist entry
+  would imply an action the practice has not decided on.
+- **It does not detect the mis-entry itself.** Nothing here knows a client reads
+  Spanish until a person types it. The column makes the correction *legible after
+  the fact*; it does nothing to make it happen sooner.
+
+---
+
 ## Decisions log
 
 | Decision | Why |
@@ -2104,18 +2278,23 @@ coming back is a fresh decision rather than a resumed one.
 | An associate without a supervisor is refused at creation, not at signing | `signProgressNote` already refuses with `no_supervisor` — after the session, after the note is drafted, at the moment somebody tries to complete the record. Checking at creation moves the identical failure to the one moment it costs nothing |
 | Domain validation moved inside the guarded callback | Reading the account first meant a caller the matrix would refuse got the domain's answer — a fact about a colleague's account from a screen they may not reach — and left no denial row. A `Conflict` thrown inside rolls the allowed row back with it, which is the guard's own rule |
 | Accounts are deactivated, never deleted | Their id is on every note they wrote and every audit row they made. Deactivating ends live sessions in the same transaction and revokes anything in flight, so coming back is a fresh decision rather than a resumed one |
+| `OutboxMessage` records the language it was written in | Every reader that needed to know looked at `Client.language`, which is the live field front desk corrects. A correction then silently changed what an already-delivered message counted as — evidence re-derived from a field that had moved underneath it |
+| The language column is nullable and the migration backfills nothing | Stamping historical rows with the client's current language would manufacture exactly the agreement the column exists to test for, erasing the one case it is for. Unknown is not agreement, and a fee has to be proved |
+| No second column for the rendered hour, though the handoff asked for one | `expiresAt` already holds it, documented as the start of the hour the message is about, and the hour is in the body as text. A third copy of a fact the row holds twice is what this codebase argues against everywhere else. The language is different in kind: it cannot be recovered from the row at all |
+| Every precondition runs on the legible messages, not just the new one | A client corrected mid-cadence has delivered English reminders and a failed Spanish one. Asking only "was there a readable message" passes, and `deliveryProven` then charges them on the two they cannot read. Narrowing the evidence set makes the right answer fall out instead of needing a rule of its own |
+| The language check runs before the delivery check | When both are true it is the more fundamental: a message that could not have been answered had it arrived is not an addressing problem, and the four exemptions have to stay four distinct reasons |
+| A fee already charged is not revisited when a record is corrected | The sweep reads only `pending`. Reversing money on a row a person may already have discussed with the client is a decision about how a practice handles a mistake, not a rule a nightly job applies. Named as the open case rather than closed badly |
 | The cadence is a script and a function, with no scheduler dependency | Due times derive from `startAt` and the injected clock, so the job is idempotent and the schedule is an implementation detail of whatever calls it — cron, a timer, a hosted trigger, or a person typing `npm run reminders:run`. A missed hour costs lateness and nothing else, and the whole five-day cadence runs in a test in a millisecond because the clock is an argument |
 
 ## What this project deliberately is not
 
 It is a learning project on synthetic data. It applies HIPAA-inspired principles
 because they are good engineering discipline, and it is not HIPAA-compliant
-software. Staff authentication is now real — password, session, and a second
-factor that can refuse — but there is no password recovery and no account
-administration, which are named gaps rather than modelled ones. There is no
-insurance billing beyond the superbill the client claims with themselves, no
-video, no diagnosis coding, and no clinician logs in from anywhere it can
-verify.
+software. Staff authentication is now real — password, session, a second factor
+that can refuse, password recovery, and account administration — and none of it
+makes the claim above any less true. There is no insurance billing beyond the
+superbill the client claims with themselves, no video, no diagnosis coding, and
+no clinician logs in from anywhere it can verify.
 
 Screener trends and the client portal were the two things this write-up
 originally listed as deliberate omissions, on the grounds that both are design

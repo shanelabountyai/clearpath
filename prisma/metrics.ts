@@ -252,11 +252,22 @@ export async function seedMetrics(): Promise<Metric[]> {
 
   // The rule that keeps a language barrier from becoming a fee: a client the
   // practice cannot write to is a client it never asked.
+  //
+  // This used to read `canRender(templateKey, client.language)` — the *client's*
+  // language, live, at the moment the metric ran — and it could not fail. Both
+  // shipped languages have every body, so the answer was yes for every row
+  // regardless of what any of them actually said. It was a restatement of the
+  // completeness test in the unit suite wearing a quarter's worth of data.
+  //
+  // With the rendered language on the row it is a claim about what was written
+  // rather than about what could have been. `null` fails it too: a client-facing
+  // message whose language nobody recorded is a message this check cannot make
+  // any statement about, and passing it would be the old bug in a new place.
   const messagedInWrongLanguage = (await prisma.outboxMessage.findMany({
     where: { clientId: { not: null } },
-    select: { templateKey: true, client: { select: { language: true } } },
-  })).filter((m) => m.client && !canRender(m.templateKey, m.client.language));
-  check('no client was sent a message with no body in their language',
+    select: { templateKey: true, language: true },
+  })).filter((m) => !m.language || !canRender(m.templateKey, m.language));
+  check('every message a client was sent was written in a language it has a body in',
     messagedInWrongLanguage.length === 0, `${messagedInWrongLanguage.length} such messages`);
 
   const spanishCharged = await prisma.appointment.count({
@@ -286,6 +297,53 @@ export async function seedMetrics(): Promise<Metric[]> {
   const spanishReplies = await prisma.inboundReply.count({ where: { client: { language: 'es' } } });
   check('at least one client wrote back in another language',
     spanishReplies >= 1, `${spanishReplies} replies`);
+
+  // ── the language the practice corrected ──────────────────────────────
+  //
+  // The same shape as the withdrawn hour above, and found the same way: every
+  // precondition of the fee asks something about the message, and none of them
+  // asked whether it was still in a language this client reads. Nothing is ever
+  // *sent* in the wrong one — the cadence and the outbox both refuse — but both
+  // read `Client.language` live, at the moment of the send, so neither says
+  // anything about a record put right afterwards. The English reminders stay
+  // English; only the record moves.
+  //
+  // First, that the quarter contains the case at all. A mechanism no seeded
+  // client goes through is a mechanism nobody has run.
+  const messages = await prisma.outboxMessage.findMany({
+    where: { clientId: { not: null }, deliveryState: 'delivered' },
+    select: { language: true, client: { select: { id: true, language: true } } },
+  });
+  const disowned = new Set(
+    messages.filter((m) => m.client && m.language !== m.client.language).map((m) => m.client!.id),
+  );
+  check('the quarter contains clients asked in a language their record later disowned',
+    disowned.size >= 1, `${disowned.size} clients, ${messages.length} delivered messages checked`);
+
+  // And the exemption fired, in a code of its own. Sharing `confirmation_
+  // not_required` with the other three would make the report's four counts one
+  // number with four labels on it.
+  const unreadable = await prisma.auditEvent.count({ where: { reason: 'confirmation_unreadable' } });
+  check('and the sessions behind them are exempted under their own reason code',
+    unreadable >= 1, `${unreadable} sessions stood down`);
+
+  // The invariant, and the one worth the section. Every fee this policy charged
+  // has, behind it, a message that was *delivered* and was written in the
+  // language the client reads — not one or the other, and not a message that
+  // was in the right language when it went out and is not any more.
+  const feesCharged = await prisma.appointment.findMany({
+    where: { confirmation: 'no_response', status: 'no_show', chargeFeeCents: { not: null } },
+    select: {
+      id: true,
+      client: { select: { language: true } },
+      reminders: { select: { outboxMessage: { select: { deliveryState: true, language: true } } } },
+    },
+  });
+  const chargedUnreadably = feesCharged.filter((a) => !a.reminders.some((r) =>
+    r.outboxMessage?.deliveryState === 'delivered' && r.outboxMessage.language === a.client.language));
+  check('no fee rests on a message the client could not read',
+    chargedUnreadably.length === 0,
+    `${chargedUnreadably.length} of ${feesCharged.length} fees`);
 
   // P1-2, exercised by data rather than asserted in the abstract. A quarter in
   // which nobody ever earns the quieter cadence would leave the cap untested by

@@ -247,6 +247,12 @@ export async function queueToClient(input: QueueToClient, tx?: Tx) {
       templateKey: input.templateKey,
       subject,
       body,
+      // What this body is actually written in, recorded rather than left to be
+      // re-derived from the client's record later. The record is a live field
+      // that front desk can correct; the message is a thing that was already
+      // said, and after a correction the two disagree — which is precisely the
+      // moment somebody needs to know which language the client was asked in.
+      language: client.language,
       scheduledFor: input.scheduledFor,
       // The moment it stops being worth sending. A reminder is a message about
       // an hour, and "are you coming Tuesday" delivered on Wednesday teaches

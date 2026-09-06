@@ -161,6 +161,63 @@ test.describe('what the cadence costs and does not cost', () => {
     await expect(page.getByText('Reached too late', { exact: true })).toBeVisible();
     await expect(page.getByText(/reached with time to answer/)).toBeVisible();
   });
+
+  /**
+   * The third precondition, over the whole quarter and against the messages
+   * rather than against the record.
+   *
+   * The record is the thing that changed: these clients were entered as English
+   * readers, messaged in English, and corrected to Spanish afterwards. Reading
+   * `Client.language` alone says they can be written to in Spanish and always
+   * could; reading `OutboxMessage.language` says what was actually sent. Only
+   * the second one can tell that nobody asked them anything they could read.
+   */
+  test('nobody is charged for a message written in a language they do not read', async () => {
+    const unreadable = Number(sql(
+      `select count(*) from "Appointment" a join "Client" c on c.id = a."clientId"`
+      // `no_show` as well as `no_response`, which the two assertions above do
+      // not need and this one does. They ask about a message that never arrived
+      // or arrived too late, and both of those are settled before the hour: a
+      // client the practice could not reach in time and who then walked in has
+      // a delivered-in-time message on the row anyway. A language mismatch is
+      // the one that appears *after* the fact, so it also lands on sessions the
+      // client attended — and the charge on those is the session fee they came
+      // and paid, which rests on attendance and not on anything anybody read.
+      // The fee this policy produces is the no-show one.
+      + ` where a.confirmation = 'no_response' and a.status = 'no_show'`
+      + ` and a."chargeFeeCents" is not null`
+      + ` and not exists (select 1 from "AppointmentReminder" r`
+      + `   join "OutboxMessage" m on m.id = r."outboxMessageId"`
+      + `   where r."appointmentId" = a.id and m."deliveryState" = 'delivered'`
+      + `   and m.language = c.language)`,
+    ));
+    expect(unreadable).toBe(0);
+  });
+
+  /**
+   * And the quarter contains the case, rather than passing the assertion above
+   * by never producing one. A correction is the only way in: nothing is ever
+   * sent in a language the client is not down as reading.
+   */
+  test('a corrected record leaves messages behind in the language it disowned', async ({ page }) => {
+    const disowned = Number(sql(
+      `select count(*) from "OutboxMessage" m join "Client" c on c.id = m."clientId"`
+      + ` where m."deliveryState" = 'delivered' and m.language <> c.language`,
+    ));
+    expect(disowned).toBeGreaterThan(0);
+
+    // The messages stay on the record. Deleting them would make the row
+    // consistent and destroy the only proof of what the practice actually said.
+    const stoodDown = Number(sql(
+      `select count(*) from "AuditEvent" where reason = 'confirmation_unreadable'`,
+    ));
+    expect(stoodDown).toBeGreaterThan(0);
+
+    await actAs(page, USERS.manager);
+    await page.goto('/reports');
+    await expect(page.getByText('Asked in another language', { exact: true })).toBeVisible();
+    await expect(page.getByText(/reached in a language\s+they read/)).toBeVisible();
+  });
 });
 
 /**

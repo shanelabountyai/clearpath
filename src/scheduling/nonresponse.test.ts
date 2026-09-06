@@ -212,7 +212,7 @@ describe('against the database', () => {
     await runNonResponseSweep(afterGrace(appt));
 
     const second = await runNonResponseSweep(afterGrace(appt));
-    expect(second).toEqual({ noResponse: [], noShow: [], exempted: [], undelivered: [], unanswerable: [] });
+    expect(second).toEqual({ noResponse: [], noShow: [], exempted: [], undelivered: [], unanswerable: [], unreadable: [] });
     expect(await prisma.appointment.count({ where: { status: 'no_show' } })).toBe(1);
   });
 
@@ -223,7 +223,7 @@ describe('against the database', () => {
     });
 
     const run = await runNonResponseSweep(afterGrace(confirmed));
-    expect(run).toEqual({ noResponse: [], noShow: [], exempted: [], undelivered: [], unanswerable: [] });
+    expect(run).toEqual({ noResponse: [], noShow: [], exempted: [], undelivered: [], unanswerable: [], unreadable: [] });
     expect((await row(confirmed.id)).status).toBe('scheduled');
   });
 
@@ -524,6 +524,155 @@ describe('against the database', () => {
     const run = await runNonResponseSweep(afterGrace(appt));
     expect(run.unanswerable).toEqual([]);
     expect(run.noShow).toEqual([appt.id]);
+  });
+
+  /**
+   * The language precondition, and the case that made it necessary.
+   *
+   * Nothing here is a message the practice should not have sent. Every one of
+   * the three was rendered from the language on the client's record at the
+   * moment it went out, which is the rule working. Then somebody put the record
+   * right — the client reads Spanish, and always did — and the three delivered
+   * English reminders stopped being evidence that anybody was asked anything.
+   *
+   * Before this phase the sweep could not tell: it read the *current* record to
+   * decide who may be messaged and the *messages* to decide whether they were,
+   * and never compared the two. The message rows now carry what they were
+   * written in, so the comparison exists.
+   */
+  it('never charges a client asked only in a language they do not read', async () => {
+    const appt = await asked();
+    expect(await prisma.outboxMessage.count({ where: { language: 'en' } })).toBe(3);
+
+    // Front desk puts the record right, after every message has gone.
+    await prisma.client.update({ where: { id: appt.clientId }, data: { language: 'es' } });
+
+    const run = await runNonResponseSweep(afterGrace(appt));
+    expect(run.unreadable).toEqual([appt.id]);
+    expect(run.exempted).toEqual([appt.id]);
+    // Delivered, and delivered in time. Neither of the other two exemptions is
+    // true here, which is the whole reason this one is not a special case of
+    // either.
+    expect(run.undelivered).toEqual([]);
+    expect(run.unanswerable).toEqual([]);
+    expect(run.noResponse).toEqual([]);
+    expect(run.noShow).toEqual([]);
+
+    const after = await row(appt.id);
+    expect(after.confirmation).toBe('not_required');
+    expect(after.status).toBe('scheduled');
+    expect(after.chargeFeeCents).toBeNull();
+  });
+
+  /** Four exemptions, four codes. A shared one would make the report a guess. */
+  it('records the correction as its own reason, not as a delivery fault', async () => {
+    const appt = await asked();
+    await prisma.client.update({ where: { id: appt.clientId }, data: { language: 'es' } });
+    await runNonResponseSweep(afterGrace(appt));
+
+    const reasons = (await prisma.auditEvent.findMany({
+      where: { resourceId: appt.id, actorId: 'system' }, orderBy: { at: 'asc' },
+    })).map((r) => r.reason);
+    expect(reasons.at(-1)).toBe('confirmation_unreadable');
+    expect(reasons).not.toContain('confirmation_undelivered');
+    expect(reasons).not.toContain('confirmation_unanswerable');
+  });
+
+  /**
+   * And the messages stay. Deleting them would be the tidy way to make the row
+   * consistent again, and it would destroy the only record of what the practice
+   * actually said to this client — on a feature whose entire defensibility is
+   * that record. The same argument the reschedule fix made about a withdrawn
+   * hour, about a withdrawn language.
+   */
+  it('leaves the messages it stood down over on the record', async () => {
+    const appt = await asked();
+    await prisma.client.update({ where: { id: appt.clientId }, data: { language: 'es' } });
+    await runNonResponseSweep(afterGrace(appt));
+
+    expect(await prisma.outboxMessage.count({ where: { language: 'en' } })).toBe(3);
+    expect(await prisma.appointmentReminder.count({ where: { appointmentId: appt.id } })).toBe(3);
+  });
+
+  /**
+   * The other direction, and the one that keeps this from being a way out of
+   * every fee. A client whose record said Spanish when the cadence ran was
+   * asked in Spanish, and saying nothing costs them what it costs anybody else.
+   */
+  it('charges a client who was asked in the language they read', async () => {
+    const client = await makeClient(therapist.id);
+    await prisma.client.update({
+      where: { id: client.id }, data: { email: 'tc@example.test', language: 'es' },
+    });
+    const appt = await bookAppointment(actor(desk), {
+      clientId: client.id, clinicianId: therapist.id, date: TUESDAY,
+      startMinute: THREE_PM, type: 'standard', modality: 'in_person',
+      clock: fixedClock(new Date(START.getTime() - 30 * DAY)),
+    });
+    for (const lead of [5 * DAY, DAY, 3 * HOUR]) {
+      const at = new Date(appt.startAt.getTime() - lead);
+      await runReminderHorizon(fixedClock(at));
+      await deliverOutbox(at);
+    }
+    expect(await prisma.outboxMessage.count({ where: { language: 'es' } })).toBe(3);
+
+    const run = await runNonResponseSweep(afterGrace(appt));
+    expect(run.unreadable).toEqual([]);
+    expect(run.noShow).toEqual([appt.id]);
+    expect((await row(appt.id)).chargeFeeCents).toBe(9000);
+  });
+
+  /**
+   * The half of this that is not the exemption, and the half a narrower fix
+   * would have missed.
+   *
+   * The correction lands mid-cadence: two English reminders have already been
+   * delivered, and only the day-of message is written in Spanish — and it never
+   * arrives. Counting the English deliveries would charge this client on
+   * messages they cannot read, so every precondition below runs on the legible
+   * messages alone. One readable message exists, so this is not the language
+   * exemption; it never arrived, so it is the delivery one.
+   */
+  it('does not let a delivered message in the old language cover a failed one in the new', async () => {
+    const client = await makeClient(therapist.id);
+    await prisma.client.update({ where: { id: client.id }, data: { email: 'tc@example.test' } });
+    const appt = await bookAppointment(actor(desk), {
+      clientId: client.id, clinicianId: therapist.id, date: TUESDAY,
+      startMinute: THREE_PM, type: 'standard', modality: 'in_person',
+      clock: fixedClock(new Date(START.getTime() - 30 * DAY)),
+    });
+    for (const lead of [5 * DAY, DAY]) {
+      const at = new Date(appt.startAt.getTime() - lead);
+      await runReminderHorizon(fixedClock(at));
+      await deliverOutbox(at);
+    }
+
+    await prisma.client.update({ where: { id: client.id }, data: { language: 'es' } });
+    await runReminderHorizon(fixedClock(new Date(appt.startAt.getTime() - 3 * HOUR)));
+
+    expect(await prisma.outboxMessage.count({ where: { language: 'en', deliveryState: 'delivered' } })).toBe(2);
+    expect(await prisma.outboxMessage.count({ where: { language: 'es', deliveryState: 'queued' } })).toBe(1);
+
+    const run = await runNonResponseSweep(afterGrace(appt));
+    expect(run.undelivered).toEqual([appt.id]);
+    expect(run.unreadable).toEqual([]);
+    expect((await row(appt.id)).chargeFeeCents).toBeNull();
+  });
+
+  /**
+   * A row from before the column existed. The migration adds it nullable and
+   * backfills nothing, because the obvious backfill — stamp every historical
+   * message with the client's current language — would manufacture exactly the
+   * agreement this check exists to test for. Unknown is not agreement, and a
+   * fee that cannot be proved is not charged.
+   */
+  it('treats a message with no recorded language as no evidence at all', async () => {
+    const appt = await asked();
+    await prisma.outboxMessage.updateMany({ data: { language: null } });
+
+    const run = await runNonResponseSweep(afterGrace(appt));
+    expect(run.unreadable).toEqual([appt.id]);
+    expect((await row(appt.id)).chargeFeeCents).toBeNull();
   });
 
   it('carries no client name, phone or email into the trail', async () => {

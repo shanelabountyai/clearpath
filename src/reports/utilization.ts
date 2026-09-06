@@ -223,8 +223,23 @@ export async function confirmationReport(
         },
       });
 
+      // And the third way the ask can fail: it arrived, in time, in a language
+      // the client does not read. The other two are things that happened to a
+      // message; this one is a thing that was wrong on a record — the practice
+      // wrote in the language it had down, and the language it had down was
+      // corrected later. So it belongs beside them as a precondition and reads
+      // as something else entirely: not an address to chase and not a cadence
+      // to widen, but a client whose file said the wrong thing for a while.
+      const askedInAnotherLanguage = await tx.auditEvent.count({
+        where: {
+          reason: 'confirmation_unreadable',
+          at: { gte: zonedToUtc(range.from, 0), lt: zonedToUtc(addDays(range.to, 1), 0) },
+        },
+      });
+
       return {
         reachedTooLate,
+        askedInAnotherLanguage,
         range,
         totals,
         asked,

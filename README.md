@@ -201,7 +201,12 @@ and a test greps the rest of `src/` to prove no endpoint re-implements a role ch
   keyword lists and the client's own page are per language. Sending nothing is
   deliberate: an English fallback would count an unreadable message as the
   practice having asked, and the fee would then land on somebody for not
-  answering a question they could not read. The intake forms are still English —
+  answering a question they could not read. Each message records the language it
+  was actually written in, because that rule reads the client's record at the
+  moment of the send and a record can be corrected afterwards — a client entered
+  as English and put right in July has June's English reminders still on the
+  file, and the fee has to read the messages rather than the record to notice.
+  The intake forms are still English —
   a screener's wording is validated per language and a mistranslated item changes
   what the score means, so that is the remaining gap rather than an oversight.
 - **A client can text back, and nothing they write is kept.** An inbound reply is
@@ -300,10 +305,11 @@ answer, and charges for silence — and the whole design is about what silence i
 
 4. Sign in as **Elena Sarkis** (practice manager) → **Practice report** →
    **Confirmation**. What the policy did and what it cost, including the
-   sessions it stood down on: undelivered reminders charge nobody, and neither
-   do reminders that arrived too late to answer.
+   sessions it stood down on: undelivered reminders charge nobody, neither do
+   reminders that arrived too late to answer, and neither do reminders written
+   in a language the client's record was later corrected away from.
 
-   ![The confirmation report: 71.1% confirmed, 10.4% declined, 17.6% no reply, and 29 sessions charged for silence totalling $2,610. Beneath it, reminders as the carrier reported them — 948 delivered, 16 undelivered, 17 reached too late — and a per-clinician table.](docs/screenshots/confirmation-report.png)
+   ![The confirmation report: 71.3% confirmed, 10.4% declined, 17.3% no reply, and 27 sessions charged for silence totalling $2,430. Beneath it, reminders as the carrier reported them — 940 delivered, 16 undelivered, 17 reached too late, 2 asked in another language — and a per-clinician table.](docs/screenshots/confirmation-report.png)
 
 5. Sign in as **Owen Delacroix** (auditor) → filter to a charged session. Three
    sends, zero answers, one determination, one fee. Ids and reason codes only.
@@ -346,7 +352,7 @@ process-note refusal.
 
 The quarter is **simulated rather than assigned**. Every day of it gets a
 reminder-horizon run, the clients who answer answer through their own tokenized
-link, and the non-response sweep runs at midnight — so the 1,094 reminders, the
+link, and the non-response sweep runs at midnight — so the 1,091 reminders, the
 outbox rows and the audit trail are consequences of the shipped code rather than
 fixtures shaped to look like consequences. Client behaviour is dealt from a fixed
 cycle (70% confirm, 10% decline, 15% silent but present, 5% silent and absent)
@@ -356,24 +362,32 @@ addresses, a few provider outages that clear on retry — so the quarter contain
 real undelivered reminders rather than a uniformly perfect wire. And front desk
 moves five sessions on the day, after the client has already been asked about
 them, because a moved hour is what separates "we asked" from "we asked about
-this".
+this". Two client records are corrected to another language on the day of a
+session, after the practice has already asked in the first one, because a
+corrected record is what separates "we asked" from "we asked in a language they
+read".
 
-The seed then checks itself. Forty-eight success metrics run as queries at the end of
+The seed then checks itself. Fifty-one success metrics run as queries at the end of
 `npm run db:seed`, and it refuses to finish if any fails — no fee for a client on
 `reminderPreference: 'none'`, **no fee without a delivered message behind it**,
 no more than 5% of eligible sessions charged, and every one of the 91 sessions
 that ended with a client attending after never answering charged the session fee
 rather than the no-show fee. That last group is the row the confirmation feature is judged on.
 
-Five preconditions now stand between a silent client and a charge: the message
+Six preconditions now stand between a silent client and a charge: the message
 has to have been about the hour the client is actually expected at, the practice
 had to be allowed to ask, a carrier had to confirm the message arrived, it had to
-arrive with time to answer, and there has to be a body in a language the client
-reads. Each was added because the one before it turned out not to be enough, and
-together they cost the policy very little: **29 fees from 677 eligible sessions,
-4.28%.** Fourteen sessions were asked about and never reached, seventeen were
-reached too late to answer, and two were moved with no time left to ask again;
-none of them was charged.
+arrive with time to answer, there has to have been a body in a language the client
+reads — and the message that arrived has to have been *written* in it. The last
+two are not the same check: the first is asked before the send, against the
+client's record, and the second is asked at the fee, against the message, because
+a record corrected afterwards does not travel back into what was already said.
+Each precondition was added because the one before it turned out not to be
+enough, and together they cost the policy very little: **27 fees from 675
+eligible sessions, 4.00%.** Fourteen sessions were asked about and never reached,
+seventeen were reached too late to answer, two were moved with no time left to
+ask again, and two were asked in a language the record later disowned; none of
+them was charged.
 
 ## Design
 

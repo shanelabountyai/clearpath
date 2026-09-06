@@ -888,6 +888,19 @@ model OutboxMessage {
   templateKey String
   subject     String?
   body        String
+  /// The language this body was actually written in, decided at render time and
+  /// never re-derived.
+  ///
+  /// `Client.language` is what the practice believes today; this is what it
+  /// said. The two are the same until somebody corrects a record, and a
+  /// correction must not silently change what an already-delivered message
+  /// counts as — the fee's evidence is the message, and the message did not
+  /// change language when the record did.
+  ///
+  /// Null on clinician-directed rows, which are not rendered from a client
+  /// template, and on any row written before this column existed: unknown, and
+  /// unknown is not proof anybody could read it.
+  language    Language?
 
   scheduledFor DateTime
   /// When a carrier accepted it. Null until something did — which, before the

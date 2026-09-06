@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../db';
 import { makeClient, makeUser, resetDb, settings } from '../test/harness';
 import { CLIENT_TEMPLATES, IndiscreetMessage, assertDiscreet, canRender, indiscreetTerms, queueToClient, queueToClinician, templateLanguages } from './outbox';
-import { ALL_DENIED, DENY_LISTS, LANGUAGES, type Language } from './language';
+import { ALL_DENIED, DENY_LISTS, LANGUAGES, readable, type Language } from './language';
 
 beforeEach(async () => {
   await resetDb();
@@ -171,6 +171,42 @@ describe('queueing to a client', () => {
     expect(await prisma.outboxMessage.count()).toBe(0);
   });
 
+  /**
+   * The language the body is in, written down rather than left to be worked out
+   * later from the client's record. The record is a field somebody can correct;
+   * this is a fact about something that was already said.
+   */
+  it('records the language it actually wrote in', async () => {
+    const t = await makeUser('therapist');
+    const c = await makeClient(t.id);
+    await prisma.client.update({ where: { id: c.id }, data: { language: 'es' } });
+    const msg = await queueToClient({
+      clientId: c.id, templateKey: 'appointment_reminder',
+      scheduledFor: new Date('2026-08-31T19:00:00Z'), startAt: new Date('2026-09-01T19:00:00Z'),
+      link: 'http://localhost:3700/p/abc123',
+    });
+    expect(msg?.language).toBe('es');
+    expect(msg?.body).toContain('Recordatorio');
+
+    // And the record moving does not move the message with it.
+    await prisma.client.update({ where: { id: c.id }, data: { language: 'en' } });
+    expect((await prisma.outboxMessage.findUniqueOrThrow({ where: { id: msg!.id } })).language).toBe('es');
+  });
+
+  /**
+   * A clinician's own inbox is not rendered from a client template, so there is
+   * no language to record — and `null` here has to stay honest, because the fee
+   * reads `null` as "nobody wrote this down" rather than as a default.
+   */
+  it('leaves the language null on a message no template rendered', async () => {
+    const t = await makeUser('therapist');
+    const msg = await queueToClinician({
+      userId: t.id, templateKey: 'screener_alert',
+      subject: 'A screener needs your review', body: 'Client TC-001 — reasons: critical:item_9',
+    });
+    expect(msg.language).toBeNull();
+  });
+
   it('refuses to queue a body that would disclose, even if a template changes', async () => {
     const t = await makeUser('therapist');
     const c = await makeClient(t.id);
@@ -190,4 +226,39 @@ it('a clinician-directed message goes to a person, never to a client row', async
   });
   expect(msg.userId).toBe(t.id);
   expect(msg.clientId).toBeNull();
+});
+
+/**
+ * The predicate the non-response fee reads, on its own and without a database.
+ *
+ * The question it answers is not "may we write to this client" — `canRender`
+ * above is that one, and it is asked before anything is sent. This one is asked
+ * afterwards, of messages that already exist: was any of this written in a
+ * language the client reads? The two differ only once a record is corrected,
+ * which is the entire reason for the column behind it.
+ */
+describe('whether the client was asked in a language they read', () => {
+  it('needs one message in their language, not all of them', () => {
+    expect(readable(['en', 'en', 'es'], 'es')).toBe(true);
+    expect(readable(['es'], 'es')).toBe(true);
+  });
+
+  it('is false where every message was written in another one', () => {
+    expect(readable(['en', 'en', 'en'], 'es')).toBe(false);
+  });
+
+  it('is false where nothing was sent at all', () => {
+    expect(readable([], 'en')).toBe(false);
+  });
+
+  /**
+   * Unknown is not agreement. A row from before the column existed has no
+   * recorded language, and the fee has to be proved rather than assumed — the
+   * same posture `deliveryProven` takes towards a message nobody heard back
+   * about.
+   */
+  it('reads an unrecorded language as no evidence', () => {
+    expect(readable([null, undefined], 'en')).toBe(false);
+    expect(readable([null, 'en'], 'en')).toBe(true);
+  });
 });

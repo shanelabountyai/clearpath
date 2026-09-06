@@ -167,6 +167,14 @@ test.describe('what the trail says', () => {
  */
 test.describe('a code is spent once', () => {
   test('the same code will not open a second session', async ({ page }) => {
+    // This spec's body legitimately contains a wait of up to a full TOTP period.
+    // `freshCode` below blocks until the step the sign-in above just spent has
+    // rolled over, which is up to thirty seconds — the whole default budget —
+    // and then two more sign-in flows have to fit inside what is left. It fails
+    // roughly one run in four at the default, on nothing but where the clock
+    // happened to be. Waiting is the rule this spec is testing, so the budget is
+    // what gives.
+    test.setTimeout(90_000);
     await actAs(page, USERS.therapist); // enrols on the first run of the suite
     // Signing in above spent the step it used — the replay guard, already
     // working. Start from a code that is not already spent, or this spec would

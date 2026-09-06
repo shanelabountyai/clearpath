@@ -157,16 +157,25 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
                   the other two preconditions rather than replacing either —
                   three ways a fee can fail to apply, three counts. */}
               <Stat label="Reached too late" value={String(confirmation.reachedTooLate)} />
+              {/* And the fourth. Reached, in time, in the wrong language — which
+                  only happens after somebody corrects a record, so this counts
+                  corrections rather than messaging faults. Its own tile because
+                  the three above are answered by looking at the carrier and
+                  this one is answered by looking at the client's file. */}
+              <Stat label="Asked in another language" value={String(confirmation.askedInAnotherLanguage)} />
               <Stat label="Awaiting receipt" value={String(confirmation.messages.awaiting)} />
               <Stat label="Not yet sent" value={String(confirmation.messages.queued)} />
             </div>
             <p className="mt-2 max-w-prose text-caption text-muted">
               A session is only charged for silence where a carrier confirmed the client
-              was actually reached, and reached with time to answer. Undelivered reminders
+              was actually reached, reached with time to answer, and reached in a language
+              they read. Undelivered reminders
               charge nobody — the practice failed to ask — and the clients behind them are
               on the <Link href="/worklists" className="text-accent hover:underline">work lists</Link>.
               Sessions reached too late charge nobody either; a lot of them means a cadence
-              that is asking too close to the hour.
+              that is asking too close to the hour. Sessions asked in another language
+              charge nobody because the message was already sent when the record was put
+              right; the reminders stay on the file as what was actually said.
             </p>
           </div>
 

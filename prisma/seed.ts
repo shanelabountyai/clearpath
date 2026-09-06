@@ -25,6 +25,7 @@ const { runNonResponseSweep } = await import('../src/scheduling/nonresponse');
 const { confirmationRequired } = await import('../src/scheduling/confirmation');
 const { confirmAppointment, declineAppointment } = await import('../src/portal/service');
 const { cancelAppointment, waiveFee } = await import('../src/scheduling/lifecycle');
+const { updateClient } = await import('../src/clients/repository');
 const { bookGroupSession } = await import('../src/scheduling/groups');
 const { assertSeedMetrics } = await import('./metrics');
 const { setPassword } = await import('../src/auth/sessions');
@@ -313,7 +314,7 @@ async function main() {
 
   const eligibleClients = new Map(
     (await prisma.client.findMany({
-      select: { id: true, reminderPreference: true, email: true, phone: true },
+      select: { id: true, reminderPreference: true, email: true, phone: true, language: true },
     })).map((c) => [c.id, c]),
   );
 
@@ -376,6 +377,51 @@ async function main() {
     toMove.set(appt.id, toMove.size % 2 === 0 ? -2 : 2);
   }
 
+  /**
+   * Clients whose language was wrong on the record while the practice was
+   * asking them about an hour.
+   *
+   * The reschedule fixture above puts a *withdrawn hour* behind a fee; this one
+   * puts a *withdrawn language* behind one, and the argument is the same shape.
+   * Every message these clients received was correctly rendered — from the
+   * language their file said at the time — and then somebody put the file
+   * right. Three delivered English reminders stop being evidence that a Spanish
+   * -reading client was asked anything, and without `OutboxMessage.language`
+   * nothing in the system could tell.
+   *
+   * Drawn from the silent set for the reason the moves are: a client who
+   * answers cannot demonstrate this, because their answer is what the sweep
+   * reads. Drawn from the quarter's second half so a full cadence has already
+   * run and been delivered.
+   *
+   * And drawn only from clients with **exactly one** silent session in the
+   * quarter, which is the fixture's one piece of care. A correction invalidates
+   * every fee that rested on the old language, including fees already charged
+   * and swept weeks earlier — and the sweep is idempotent, so it does not go
+   * back and undo them. Picking a client with an earlier fee would seed a
+   * quarter containing a charge its own metric says is unsupported. That
+   * retroactive case is real and is written down in the handoff rather than
+   * quietly seeded away.
+   */
+  const CORRECTIONS = 2;
+  const silentSessions = new Map<string, number>();
+  for (const a of everything) {
+    if (behaviour.get(a.id) !== 'silent_absent') continue;
+    silentSessions.set(a.clientId, (silentSessions.get(a.clientId) ?? 0) + 1);
+  }
+  /** appointment id → the client whose record is corrected on its day. */
+  const toCorrect = new Map<string, string>();
+  for (const appt of everything) {
+    if (toCorrect.size >= CORRECTIONS) break;
+    if (behaviour.get(appt.id) !== 'silent_absent') continue;
+    if (toMove.has(appt.id)) continue;
+    if (silentSessions.get(appt.clientId) !== 1) continue;
+    if (eligibleClients.get(appt.clientId)?.language !== 'en') continue;
+    if (localDateOf(appt.startAt) <= addDays(QUARTER_START, 45)) continue;
+    if (localDateOf(appt.startAt) >= TODAY) continue;
+    toCorrect.set(appt.id, appt.clientId);
+  }
+
   const startsOn = new Map<string, typeof everything>();
   for (const a of everything) {
     const d = localDateOf(a.startAt);
@@ -392,6 +438,7 @@ async function main() {
   const answered = { confirmed: 0, declined: 0 };
   let unanswerable = 0;
   let moved = 0;
+  let corrected = 0;
   const attendance = { completed: 0, noShow: 0, cancelled: 0, lateCancelled: 0 };
   const clock = fixedClock(BOOKED_AT);
 
@@ -455,6 +502,45 @@ async function main() {
       // only way the "never charge for a failed send" rule gets exercised by
       // data instead of asserted in the abstract.
       await runCarrier({ clock });
+
+      // Front desk corrects a client's language, after the practice has already
+      // asked them in the other one.
+      //
+      // After the carrier tick rather than before it, and gated on a *delivered*
+      // reminder for the same reason the reschedule fixture is: a correction
+      // that lands before anybody was reached is an ordinary edit, not this
+      // defect, and a fixture producing those would pass the metric without
+      // exercising the rule.
+      //
+      // Two hours out, so every stage of the cadence has already fallen — the
+      // day-of message is queued three hours before the session. A correction
+      // made earlier than that leaves a later stage to be rendered in the new
+      // language, which is a readable message and an ordinary fee, and is a
+      // different fixture from this one.
+      //
+      // Through `updateClient` rather than a direct write, because the audit row
+      // is the thing that makes this legible afterwards: without it a quarter
+      // containing a corrected record is indistinguishable from a quarter
+      // containing a seeding mistake.
+      for (const [id, clientId] of toCorrect) {
+        const appt = await prisma.appointment.findUniqueOrThrow({
+          where: { id },
+          select: {
+            startAt: true, confirmation: true,
+            reminders: { select: { outboxMessage: { select: { deliveryState: true } } } },
+          },
+        });
+        // The window first, then the state — in that order. Reversed, every
+        // entry is dropped on the first tick of the quarter, because a session
+        // is `not_required` until the cadence reaches it and promotes it.
+        if (appt.startAt.getTime() - clock.now().getTime() > 2 * 3600_000) continue;
+        if (appt.confirmation !== 'pending') { toCorrect.delete(id); continue; }
+        if (!appt.reminders.some((r) => r.outboxMessage?.deliveryState === 'delivered')) continue;
+
+        await updateClient(desk, clientId, { language: 'es' });
+        corrected++;
+        toCorrect.delete(id);
+      }
 
       // People answer the message they just got. Which is the whole reason
       // this is inside the hourly loop rather than pinned to an offset: a
@@ -567,6 +653,7 @@ async function main() {
   const autoNoShows = await prisma.appointment.count({ where: { confirmation: 'no_response', status: 'no_show' } });
   log(`${eligibleCount} sessions the practice could ask about; ${answered.confirmed} confirmed, ${answered.declined} declined${unanswerable ? ` (${unanswerable} unreachable at the moment they would have answered)` : ''}`);
   log(`${moved} sessions moved on the day, after the client had already been asked about them`);
+  log(`${corrected} client records corrected to another language, after the practice had already asked in the first one`);
   log(`${await prisma.appointmentReminder.count()} reminders queued across ${await prisma.outboxMessage.count()} outbox rows`);
   const deliveredCount = await prisma.outboxMessage.count({ where: { deliveryState: 'delivered' } });
   const failedCount = await prisma.outboxMessage.count({ where: { deliveryState: 'failed' } });

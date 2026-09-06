@@ -105,3 +105,31 @@ export const WEEKDAY_NAMES: Record<Language, readonly string[]> = {
   en: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
   es: ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'],
 };
+
+/**
+ * Was the client asked in a language they read?
+ *
+ * A precondition of the non-response fee, and the one that could not be asked
+ * until `OutboxMessage` carried the language it was written in. The two beside
+ * it are facts about the wire — did it arrive, did it arrive in time — and this
+ * one is a fact about the words, which is why it lives here rather than in
+ * `carrier.ts` with them.
+ *
+ * It exists because the protection that came before it is prospective only.
+ * `queueToClient` refuses to render a template that has no body in the client's
+ * language, so nobody is *sent* something unreadable. What nothing checked is
+ * what happens when the record changes afterwards: a client entered as English
+ * and corrected to Spanish in July still has June's English reminders sitting on
+ * the row, delivered, in time, and counting as having been asked. The messages
+ * did not change language when the record did.
+ *
+ * `null` is a rendered language nobody recorded, and it is not agreement. The
+ * fee has to be *proved*, so an unknown counts the way an unknown delivery
+ * state counts: as no evidence.
+ */
+export function readable(
+  rendered: readonly (Language | null | undefined)[],
+  language: Language,
+): boolean {
+  return rendered.some((l) => l === language);
+}
