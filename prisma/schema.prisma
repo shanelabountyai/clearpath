@@ -335,6 +335,17 @@ model Appointment {
   startAt DateTime @db.Timestamptz(3)
   endAt   DateTime @db.Timestamptz(3)
 
+  /// When *this hour* was set — at booking, and again at every reschedule.
+  ///
+  /// Distinct from `createdAt`, which is when the row was made and never moves.
+  /// The confirmation rules need the other question: how much notice the client
+  /// has had of the time they are actually expected at. `dueStages` will not
+  /// queue a stage whose moment fell before this, and `confirmationRequired`
+  /// measures notice from it — so a moved appointment is asked about from
+  /// scratch, and the messages about the hour it used to be at stop counting as
+  /// having asked.
+  bookedAt DateTime @db.Timestamptz(3)
+
   type     AppointmentType   @default(standard)
   modality Modality          @default(in_person)
   status   AppointmentStatus @default(scheduled)
@@ -406,7 +417,18 @@ model AppointmentReminder {
 
   createdAt DateTime @default(now())
 
-  @@unique([appointmentId, stage])
+  /// The idempotency key, and it names the hour on purpose.
+  ///
+  /// `dueAt` is derived from the appointment's `startAt` and a fixed lead, so
+  /// two runs over an unmoved appointment compute the same key and the second
+  /// loses the race — which is all this key was ever for. What it now also
+  /// says is that a *moved* appointment is a different question: its stages
+  /// fall at new moments, so the cadence may ask again without the old rows
+  /// standing in the way, and the old rows stay where they are. The trail of
+  /// what the practice sent about the hour it withdrew is evidence, not
+  /// clutter, and deleting it to make room for the next ask would be deleting
+  /// the only proof of the first one.
+  @@unique([appointmentId, stage, dueAt])
   @@index([dueAt, sentAt])
 }
 

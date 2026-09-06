@@ -48,7 +48,7 @@ interface GroupBooking {
  * attempt and a room conflict moves all of them to the next room together.
  */
 export async function bookGroupSession(actor: Actor, input: GroupBooking) {
-  const bookedAt = (input.clock ?? systemClock).now();
+  const at = (input.clock ?? systemClock).now();
   const clientIds = [...new Set(input.clientIds)];
   if (clientIds.length === 0) throw new Conflict('A group session needs at least one attendee', 'no_attendees');
 
@@ -91,9 +91,11 @@ export async function bookGroupSession(actor: Actor, input: GroupBooking) {
             type,
             modality,
             joinLink: input.joinLink ?? null,
-            // From the clock, for the reason spelled out in `booking.ts`: an
-            // attendee's reminder stages are derived from it.
-            createdAt: bookedAt,
+            // Both from the clock, for the reason spelled out in `booking.ts`:
+            // an attendee's reminder stages are derived from `bookedAt`, and
+            // `createdAt` must not come from the database's.
+            createdAt: at,
+            bookedAt: at,
           })),
         });
         return group.id;

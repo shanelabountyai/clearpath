@@ -4,7 +4,7 @@ import { DAY, HOUR, fixedClock } from '../clock';
 import { prisma } from '../db';
 import { actor, deliverOutbox, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { assertsLiteral } from '../test/lint';
-import { bookAppointment } from './booking';
+import { bookAppointment, rescheduleAppointment } from './booking';
 import { bookGroupSession } from './groups';
 import { setStatus, type Status } from './lifecycle';
 import { dispatchOutbox, recordReceipt } from '../messaging/delivery';
@@ -15,7 +15,15 @@ import type { Confirmation } from './confirmation';
 /** 2026-09-01 15:00 America/New_York, as everywhere else in this suite. */
 const TUESDAY = '2026-09-01';
 const THREE_PM = 15 * 60;
+const FOUR_PM = 16 * 60;
 const START = new Date('2026-09-01T19:00:00Z');
+/**
+ * Half an hour after the fixture's last reminder landed, and two and a half
+ * hours before the hour it was about. The client has been asked, in full, about
+ * a session the practice is about to move.
+ */
+const MOVED_AT = new Date(START.getTime() - 2.5 * HOUR);
+
 
 /**
  * P0-5, decided before anything persists. The whole feature's defensibility is
@@ -571,6 +579,86 @@ describe('against the database', () => {
     expect(await prisma.appointment.count({ where: { confirmation: 'no_response' } })).toBe(2);
     // The three who answered keep their hour, and so does the group.
     expect(await prisma.appointment.count({ where: { status: 'scheduled' } })).toBe(3);
+  });
+
+  /**
+   * The adversarial reading of the four preconditions, taken together.
+   *
+   * Each one asks about the message: were we allowed to send it, did it arrive,
+   * did it arrive in time, was it in a language they read. Not one of them asks
+   * whether it is still about *this* appointment — and a reschedule is exactly
+   * the move that separates the two. The row keeps `pending` and keeps the
+   * reminder rows whose bodies named a time that no longer exists, so all four
+   * preconditions pass on evidence about the old hour and the fee lands on the
+   * new one.
+   *
+   * It is the indefensible charge this review was looking for: the client is
+   * charged for not answering a question the practice itself withdrew.
+   */
+  it('does not charge for silence about an hour the practice moved', async () => {
+    const appt = await asked();
+    expect(appt.confirmation).toBe('pending');
+
+    // Front desk moves it an hour later, the same afternoon. The messages the
+    // client received all say 3pm; the session is now at 4pm.
+    const moved = await rescheduleAppointment(actor(desk), appt.id, {
+      date: TUESDAY, startMinute: FOUR_PM, clock: fixedClock(MOVED_AT),
+    });
+    expect(moved.startAt.getTime()).toBe(appt.startAt.getTime() + HOUR);
+
+    const run = await runNonResponseSweep(afterGrace(moved));
+    expect(run.noShow).toEqual([]);
+    expect(run.noResponse).toEqual([]);
+
+    const after = await row(appt.id);
+    expect(after.status).toBe('scheduled');
+    expect(after.chargeFeeCents).toBeNull();
+  });
+
+  /**
+   * The same defect without the money, and the one that is harder to argue
+   * away: a `confirmed` that survives a move is the practice's record that the
+   * client agreed to an hour nobody ever put to them. It is a false statement
+   * about consent sitting in the schedule, and front desk reads it as one
+   * fewer person to ring.
+   */
+  it('does not carry a confirmation across a move the client never saw', async () => {
+    const appt = await asked();
+    await prisma.appointment.update({
+      where: { id: appt.id }, data: { confirmation: 'confirmed' },
+    });
+
+    const moved = await rescheduleAppointment(actor(desk), appt.id, {
+      date: TUESDAY, startMinute: FOUR_PM, clock: fixedClock(MOVED_AT),
+    });
+    expect(moved.confirmation).not.toBe('confirmed');
+  });
+
+  /**
+   * And the other half: a moved appointment must be askable again. Clearing the
+   * answer without clearing the trail would leave the row `not_required` with
+   * `@@unique([appointmentId, stage])` blocking every stage the old hour used,
+   * so the client would be moved to a new time and never told about it.
+   */
+  it('asks again about the new hour', async () => {
+    const appt = await asked();
+    const moved = await rescheduleAppointment(actor(desk), appt.id, {
+      date: TUESDAY, startMinute: FOUR_PM, clock: fixedClock(MOVED_AT),
+    });
+
+    const at = new Date(moved.startAt.getTime() - 3 * HOUR);
+    await runReminderHorizon(fixedClock(at));
+    await deliverOutbox(at);
+
+    const after = await row(appt.id);
+    expect(after.confirmation).toBe('pending');
+    // And the message it queued is about the hour the client is now expected at.
+    const stages = await prisma.appointmentReminder.findMany({
+      where: { appointmentId: appt.id },
+      select: { dueAt: true },
+    });
+    expect(stages.length).toBeGreaterThan(0);
+    for (const s of stages) expect(s.dueAt.getTime()).toBeLessThan(moved.startAt.getTime());
   });
 });
 

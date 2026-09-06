@@ -133,8 +133,8 @@ createdb clearpath_dev clearpath_test clearpath_e2e clearpath_shadow
 npm install
 npm run db:setup     # migrate all three, generate the client, seed dev + e2e
 npm run dev          # http://localhost:3700
-npm test             # 1,823 unit + integration tests
-npm run test:e2e     # 60 Playwright tests against a production build
+npm test             # 1,919 unit + integration tests
+npm run test:e2e     # 68 Playwright tests against a production build
 npm run verify:seed  # the seeded quarter, against its own success metrics
 ```
 
@@ -183,7 +183,7 @@ answer, and charges for silence — and the whole design is about what silence i
    sessions it stood down on: undelivered reminders charge nobody, and neither
    do reminders that arrived too late to answer.
 
-   ![The confirmation report: 70.9% confirmed, 10.4% declined, 17.8% no reply, and 31 sessions charged for silence totalling $2,790. Beneath it, reminders as the carrier reported them — 951 delivered, 16 undelivered, 17 reached too late — and a per-clinician table.](docs/screenshots/confirmation-report.png)
+   ![The confirmation report: 71.1% confirmed, 10.4% declined, 17.6% no reply, and 29 sessions charged for silence totalling $2,610. Beneath it, reminders as the carrier reported them — 948 delivered, 16 undelivered, 17 reached too late — and a per-clinician table.](docs/screenshots/confirmation-report.png)
 
 5. Act as **Owen Delacroix** (auditor) → filter to a charged session. Three
    sends, zero answers, one determination, one fee. Ids and reason codes only.
@@ -233,22 +233,27 @@ cycle (70% confirm, 10% decline, 15% silent but present, 5% silent and absent)
 so the totals are hand-tallyable rather than sampled. The carrier runs on the
 same hourly tick, failing a deterministic slice of messages — a few bad
 addresses, a few provider outages that clear on retry — so the quarter contains
-real undelivered reminders rather than a uniformly perfect wire.
+real undelivered reminders rather than a uniformly perfect wire. And front desk
+moves five sessions on the day, after the client has already been asked about
+them, because a moved hour is what separates "we asked" from "we asked about
+this".
 
-The seed then checks itself. Forty-four success metrics run as queries at the end of
+The seed then checks itself. Forty-eight success metrics run as queries at the end of
 `npm run db:seed`, and it refuses to finish if any fails — no fee for a client on
 `reminderPreference: 'none'`, **no fee without a delivered message behind it**,
 no more than 5% of eligible sessions charged, and every one of the 91 sessions
 that ended with a client attending after never answering charged the session fee
 rather than the no-show fee. That last group is the row the confirmation feature is judged on.
 
-Four preconditions now stand between a silent client and a charge: the practice
+Five preconditions now stand between a silent client and a charge: the message
+has to have been about the hour the client is actually expected at, the practice
 had to be allowed to ask, a carrier had to confirm the message arrived, it had to
 arrive with time to answer, and there has to be a body in a language the client
 reads. Each was added because the one before it turned out not to be enough, and
-together they cost the policy very little: **31 fees from 679 eligible sessions,
-4.57%.** Sixteen reminders were never delivered and seventeen arrived too late to
-answer; none of those sessions was charged.
+together they cost the policy very little: **29 fees from 677 eligible sessions,
+4.28%.** Fourteen sessions were asked about and never reached, seventeen were
+reached too late to answer, and two were moved with no time left to ask again;
+none of them was charged.
 
 ## Design
 
@@ -271,6 +276,7 @@ means replacing that file's values and nothing else.
 | The discretion deny-list | [`src/messaging/outbox.ts`](src/messaging/outbox.ts) |
 | Whether the practice may ask, when, and which messages | [`src/scheduling/confirmation.ts`](src/scheduling/confirmation.ts) |
 | What silence means, and what it does not | [`src/scheduling/nonresponse.ts`](src/scheduling/nonresponse.ts) |
+| When the hour was set, and why that is not when the row was made | [`src/scheduling/booking.ts`](src/scheduling/booking.ts) |
 | A reply classified and thrown away | [`src/messaging/inbound.ts`](src/messaging/inbound.ts) |
 | Two languages, and what neither may say | [`src/messaging/language.ts`](src/messaging/language.ts) |
 | The carrier port, "delivered", and "in time to answer" | [`src/messaging/carrier.ts`](src/messaging/carrier.ts) |

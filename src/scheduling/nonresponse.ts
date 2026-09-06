@@ -125,7 +125,7 @@ export async function runNonResponseSweep(clock: Clock = systemClock): Promise<S
       status: { notIn: [...WITHDRAWN] },
     },
     select: {
-      id: true, clientId: true, status: true, confirmation: true, startAt: true, createdAt: true,
+      id: true, clientId: true, status: true, confirmation: true, startAt: true, bookedAt: true,
       client: { select: { reminderPreference: true, email: true, phone: true } },
       // The proof the practice asked, and — since P2 — the proof it arrived.
       // A `pending` row with no reminder at all is unreachable, because only
@@ -135,8 +135,9 @@ export async function runNonResponseSweep(clock: Clock = systemClock): Promise<S
         where: { outboxMessageId: { not: null } },
         // `deliveredAt` as well as the state, because since P2-3 the question
         // is not only whether a message arrived but whether it arrived in time
-        // to be answered.
-        select: { outboxMessage: { select: { deliveryState: true, deliveredAt: true } } },
+        // to be answered. And `dueAt`, because since the reschedule fix the
+        // question before both is whether the message was about *this* hour.
+        select: { dueAt: true, outboxMessage: { select: { deliveryState: true, deliveredAt: true } } },
       },
     },
     orderBy: { startAt: 'asc' },
@@ -145,13 +146,31 @@ export async function runNonResponseSweep(clock: Clock = systemClock): Promise<S
   const result: SweepResult = { noResponse: [], noShow: [], exempted: [], undelivered: [], unanswerable: [] };
 
   for (const appt of candidates) {
+    // The precondition before the other four, and the one this feature went
+    // five phases without.
+    //
+    // Every rule below asks something about the message — were we allowed to
+    // send it, did it arrive, did it arrive in time, could they read it — and
+    // not one of them asks whether it is still about this appointment. A
+    // reschedule is exactly the move that separates the two: the messages named
+    // the old hour, and `answerable` would measure their delivery against the
+    // new one, so moving a session *later* would make the fee easier to earn.
+    //
+    // `bookedAt` is when this hour was set, and `dueStages` will not queue a
+    // stage whose moment fell before it — so this is the same predicate read
+    // back: the evidence the fee may rest on is exactly the set of stages the
+    // cadence was allowed to send about the hour the client is expected at.
+    // Reminders about the withdrawn hour stay on the row as the record that the
+    // practice did ask, once, about something else.
+    const asked = appt.reminders.filter((r) => r.dueAt >= appt.bookedAt);
+
     // P0-2, re-checked here rather than trusted from the send. A client who
     // moved to `none` — or lost the address their channel needs — after the
     // cadence started is not a client the practice may charge for silence, and
     // whichever job reaches the row first has to say so. And a row with no
     // outbox message behind it has nothing proving the practice ever asked,
     // which is the same answer for a stronger reason.
-    if (!confirmationRequired(appt.client, appt, settings) || appt.reminders.length === 0) {
+    if (!confirmationRequired(appt.client, appt, settings) || asked.length === 0) {
       await guarded(request(appt, 'confirmation_not_required'), (tx) =>
         tx.appointment.update({ where: { id: appt.id }, data: { confirmation: 'not_required' } }));
       result.exempted.push(appt.id);
@@ -172,7 +191,7 @@ export async function runNonResponseSweep(clock: Clock = systemClock): Promise<S
     // The audit reason is its own code so the two exemptions never blur: the
     // practice may not ask, versus the practice asked and it did not arrive.
     // The second is an operational failure with a work-list behind it.
-    if (!deliveryProven(appt.reminders.map((r) => r.outboxMessage?.deliveryState).filter((s) => !!s))) {
+    if (!deliveryProven(asked.map((r) => r.outboxMessage?.deliveryState).filter((s) => !!s))) {
       await guarded(request(appt, 'confirmation_undelivered'), (tx) =>
         tx.appointment.update({ where: { id: appt.id }, data: { confirmation: 'not_required' } }));
       result.exempted.push(appt.id);
@@ -196,7 +215,7 @@ export async function runNonResponseSweep(clock: Clock = systemClock): Promise<S
     // Its own audit code, so the three exemptions never blur: the practice may
     // not ask, the practice asked and it did not arrive, the practice asked and
     // it arrived too late. Only the second one is a phone call.
-    if (!answerable(appt.reminders.map((r) => r.outboxMessage?.deliveredAt), appt.startAt, answerWindowMinutes)) {
+    if (!answerable(asked.map((r) => r.outboxMessage?.deliveredAt), appt.startAt, answerWindowMinutes)) {
       await guarded(request(appt, 'confirmation_unanswerable'), (tx) =>
         tx.appointment.update({ where: { id: appt.id }, data: { confirmation: 'not_required' } }));
       result.exempted.push(appt.id);

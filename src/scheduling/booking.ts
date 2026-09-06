@@ -193,9 +193,9 @@ interface BookInput {
   /** Try this room first; fall through to any other free one. */
   preferredRoomId?: string | null;
   /**
-   * When the booking is being made. Stamped onto `createdAt` rather than left
-   * to the column default, because the confirmation cadence reads it as the
-   * notice the client had — see the comment on the insert below.
+   * When the booking is being made. Stamped onto `createdAt` and `bookedAt`
+   * rather than left to the column default, because the confirmation cadence
+   * reads the second as the notice the client had — see the insert below.
    */
   clock?: Clock;
 }
@@ -249,6 +249,11 @@ export async function bookAppointment(actor: Actor, input: BookInput) {
             // for everything the application writes, and skewed for the one
             // column it does not. Hard rule 7 has no exception for defaults.
             createdAt: clock.now(),
+            // The same instant, and a different fact. `createdAt` is when this
+            // row was made and never moves again; `bookedAt` is when the hour
+            // it names was set, and a reschedule sets it again. They are equal
+            // here because a booking is the first time both are true.
+            bookedAt: clock.now(),
           },
         });
       },
@@ -357,8 +362,13 @@ export async function materialiseSeries(
 export async function rescheduleAppointment(
   actor: Actor,
   appointmentId: string,
-  to: { date: LocalDate; startMinute: number; modality?: Modality; type?: AppointmentType },
+  to: {
+    date: LocalDate; startMinute: number; modality?: Modality; type?: AppointmentType;
+    /** When the move is being made. Stamped onto `bookedAt`; see the update. */
+    clock?: Clock;
+  },
 ) {
+  const clock = to.clock ?? systemClock;
   const current = await prisma.appointment.findUnique({ where: { id: appointmentId } });
   if (!current) throw new NotFound('Appointment');
 
@@ -374,7 +384,10 @@ export async function rescheduleAppointment(
 
   const result = await claimRoom(candidates, (roomId) =>
     guarded(
-      { actor, action: 'update', resource: 'appointment', resourceId: appointmentId, clientId: current.clientId },
+      {
+        actor, action: 'update', resource: 'appointment',
+        resourceId: appointmentId, clientId: current.clientId, reason: 'rescheduled',
+      },
       async (tx) => {
         await slotLock(tx, to.date, to.startMinute);
         return tx.appointment.update({
@@ -387,6 +400,27 @@ export async function rescheduleAppointment(
             // other and double-book the clinician, since co-attendees are
             // exempt from the overlap constraint by design.
             groupSessionId: null,
+            // A move withdraws the question, so the answer goes with it.
+            //
+            // Everything the confirmation loop knows about this row is about
+            // an hour that no longer exists: the messages named the old time,
+            // and a `pending` left standing would let the sweep charge somebody
+            // for not answering a question the practice itself took back — the
+            // fee's four preconditions all pass, because not one of them asks
+            // whether the message is still about this appointment. A
+            // `confirmed` left standing is the same defect without the money
+            // and harder to argue away: it is the practice's record that the
+            // client agreed to a time nobody ever put to them.
+            //
+            // `not_required` rather than a new value, because it is already the
+            // word for "nobody has been asked about this yet", and the cadence
+            // is already the only thing that moves a row off it.
+            confirmation: 'not_required',
+            // And the notice clock restarts, because the client's notice of
+            // *this* hour began now. `dueStages` will not queue a stage whose
+            // moment has already passed, so a move to tomorrow gets the day-of
+            // message and not a five-day one sent five days late.
+            bookedAt: clock.now(),
           },
         });
       },

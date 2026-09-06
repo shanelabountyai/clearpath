@@ -275,7 +275,8 @@ describe('freed slots', () => {
     const appt = await prisma.appointment.create({
       data: {
         clientId: b.id, clinicianId: therapist.id, roomId: a.appt.roomId,
-        startAt: a.appt.startAt, endAt: a.appt.endAt, status: 'cancelled',
+        startAt: a.appt.startAt, endAt: a.appt.endAt, bookedAt: a.appt.bookedAt,
+        status: 'cancelled',
       },
     });
     expect(appt.id).not.toBe(a.appt.id);

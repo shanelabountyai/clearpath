@@ -120,8 +120,16 @@ interface EligibleClient {
 
 interface EligibleAppointment {
   startAt: Date;
-  /** When the appointment was booked. */
-  createdAt: Date;
+  /**
+   * When *this hour* was set: at booking, and again at every reschedule.
+   *
+   * Deliberately not `createdAt`. The question both rules below ask is how much
+   * notice the client has had of the time they are actually expected at, and a
+   * moved appointment has had none — its row is old and its hour is new. Using
+   * the row's age would count the notice the client got about an hour the
+   * practice has since withdrawn, which is the whole of the reschedule defect.
+   */
+  bookedAt: Date;
 }
 
 /**
@@ -145,7 +153,7 @@ export function confirmationRequired(
   const address = client.reminderPreference === 'sms' ? client.phone : client.email;
   if (!address) return false;
 
-  const noticeMs = appointment.startAt.getTime() - appointment.createdAt.getTime();
+  const noticeMs = appointment.startAt.getTime() - appointment.bookedAt.getTime();
   return noticeMs >= settings.graceMinutes * 60_000;
 }
 
@@ -163,9 +171,10 @@ export function stageDueAt(
 /**
  * The stages a horizon run at `now` should have queued.
  *
- * A stage whose moment fell before the appointment was booked is skipped
- * permanently, not queued late — booking two days out means the five-day
- * message was never a message anybody could have sent.
+ * A stage whose moment fell before the hour was set is skipped permanently,
+ * not queued late — booking two days out means the five-day message was never a
+ * message anybody could have sent, and moving an appointment to tomorrow means
+ * the same thing for the same reason.
  *
  * A booking closer in than the day-of lead yields no stages at all. That is the
  * invariant the fee rests on: the cadence promotes `not_required` to `pending`
@@ -189,6 +198,6 @@ export function dueStages(
 
   return stages.filter((stage) => {
     const dueAt = stageDueAt(appointment.startAt, stage, settings);
-    return dueAt >= appointment.createdAt && dueAt <= now;
+    return dueAt >= appointment.bookedAt && dueAt <= now;
   });
 }

@@ -27,7 +27,7 @@ const client = (over: Partial<Parameters<typeof confirmationRequired>[0]> = {}) 
   ...over,
 });
 
-const appt = (msBeforeStart = 30 * DAY) => ({ startAt: START, createdAt: bookedAt(msBeforeStart) });
+const appt = (msBeforeStart = 30 * DAY) => ({ startAt: START, bookedAt: bookedAt(msBeforeStart) });
 
 describe('confirmationRequired — the practice must have actually asked', () => {
   it('asks a reachable client booked with notice', () => {
@@ -289,7 +289,7 @@ describe('dueStages — the cadence a client chose', () => {
    * stays unreachable with no outbox row behind it.
    */
   it('queues nothing for a day-of client booked inside their own lead', () => {
-    const bookedLate = { startAt: START, createdAt: new Date(START.getTime() - HOUR) };
+    const bookedLate = { startAt: START, bookedAt: new Date(START.getTime() - HOUR) };
     expect(dueStages(bookedLate, new Date(START.getTime() - 30 * 60_000), withCadence('day_of'))).toEqual([]);
   });
 

@@ -21,8 +21,8 @@ async function clinicianWorkingTuesdays() {
 }
 
 /**
- * Book the standing Tuesday 3pm, then backdate `createdAt` so the booking has
- * the notice the test wants. `createdAt` is what decides which stages were ever
+ * Book the standing Tuesday 3pm, then backdate `bookedAt` so the booking has
+ * the notice the test wants. `bookedAt` is what decides which stages were ever
  * sendable, and Prisma's default writes wall time.
  */
 async function appointmentBooked(msBeforeStart: number, clientOpts: { email?: string | null; phone?: string | null; reminderPreference?: 'email' | 'sms' | 'none' } = {}) {
@@ -37,7 +37,10 @@ async function appointmentBooked(msBeforeStart: number, clientOpts: { email?: st
   });
   return prisma.appointment.update({
     where: { id: appt.id },
-    data: { createdAt: new Date(START.getTime() - msBeforeStart) },
+    data: {
+      createdAt: new Date(START.getTime() - msBeforeStart),
+      bookedAt: new Date(START.getTime() - msBeforeStart),
+    },
   });
 }
 
@@ -216,6 +219,7 @@ describe('the cadence cap for standing clients', () => {
           modality: 'telehealth',
           status: 'completed', confirmation,
           createdAt: new Date(START.getTime() - 120 * DAY),
+          bookedAt: new Date(START.getTime() - 120 * DAY),
         },
       });
     }
@@ -261,7 +265,9 @@ describe('the cadence cap for standing clients', () => {
         clientId: appt.clientId, clinicianId: therapist.id,
         startAt: new Date(START.getTime() - 2 * DAY), endAt: new Date(START.getTime() - 2 * DAY + 50 * 60_000),
         modality: 'telehealth',
-        status: 'completed', confirmation: 'not_required', createdAt: new Date(START.getTime() - 120 * DAY),
+        status: 'completed', confirmation: 'not_required',
+        createdAt: new Date(START.getTime() - 120 * DAY),
+        bookedAt: new Date(START.getTime() - 120 * DAY),
       },
     });
 
@@ -388,6 +394,7 @@ describe('the cadence a client chose', () => {
           startAt: at, endAt: new Date(at.getTime() + 50 * 60_000),
           modality: 'telehealth', status: 'completed', confirmation: 'confirmed',
           createdAt: new Date(START.getTime() - 120 * DAY),
+          bookedAt: new Date(START.getTime() - 120 * DAY),
         },
       });
     }

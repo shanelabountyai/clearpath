@@ -334,8 +334,15 @@ describe('when the booking was made comes from the clock, not the database', () 
  * one written next month: an `appointment.create` that omits `createdAt` gets
  * the database's clock back, and nothing in the suite would notice until a fee
  * landed on the wrong side of a stage boundary.
+ *
+ * `bookedAt` is held to the same rule and for a sharper reason. It has no column
+ * default at all, so an insert that omits it fails loudly — but an insert that
+ * sets it to something other than the injected clock's instant fails silently,
+ * in exactly the direction that widens stage eligibility. Naming it beside
+ * `createdAt` at every insert is what keeps the two from drifting apart at
+ * booking, which is the one moment they are required to agree.
  */
-it('every appointment insert names createdAt', () => {
+it('every appointment insert names createdAt and bookedAt', () => {
   const offenders: string[] = [];
   for (const dir of ['src', 'app']) {
     for (const f of readdirSync(dir, { recursive: true, encoding: 'utf8' })) {
@@ -345,14 +352,64 @@ it('every appointment insert names createdAt', () => {
       if (!statSync(path).isFile()) continue;
       const src = readFileSync(path, 'utf8');
       for (const m of src.matchAll(/\bappointment\.create(?:Many)?\b/g)) {
-        if (!callArgs(src, (m.index ?? 0) + m[0].length).includes('createdAt')) {
-          offenders.push(`${path}: ${m[0]}`);
+        const args = callArgs(src, (m.index ?? 0) + m[0].length);
+        for (const field of ['createdAt', 'bookedAt']) {
+          if (!args.includes(field)) offenders.push(`${path}: ${m[0]} omits ${field}`);
         }
       }
     }
   }
   expect(offenders).toEqual([]);
 });
+
+/**
+ * And the other half of the same rule, which is about the *update* nobody has
+ * written yet.
+ *
+ * A reschedule moves the hour, and the confirmation loop's entire notion of
+ * "we asked" is anchored to when the hour was set. A second path that writes
+ * `startAt` without `bookedAt` — a drag-and-drop calendar, a bulk shift for a
+ * clinician's changed availability, a script that nudges a day's sessions by
+ * fifteen minutes — would leave every one of those appointments carrying
+ * delivered reminders about a time that no longer exists, and the sweep would
+ * charge for silence about a withdrawn question. Every behavioural spec in this
+ * file would still pass, because none of them calls it.
+ */
+it('every appointment update that moves the hour restamps bookedAt', () => {
+  const offenders: string[] = [];
+  for (const dir of ['src', 'app']) {
+    for (const f of readdirSync(dir, { recursive: true, encoding: 'utf8' })) {
+      const path = `${dir}/${f}`;
+      if (!/\.tsx?$/.test(f) || f.endsWith('.test.ts')) continue;
+      if (path.startsWith('src/generated/')) continue;
+      if (!statSync(path).isFile()) continue;
+      const src = readFileSync(path, 'utf8');
+      for (const m of src.matchAll(/\bappointment\.update(?:Many)?\b/g)) {
+        const args = callArgs(src, (m.index ?? 0) + m[0].length);
+        // `startAt` inside a `where` is a filter, not a move. `assertsLiteral`
+        // does this properly for enum writes; here the field is a variable, so
+        // the cheaper test is whether the data block names it at all.
+        if (!writesField(args, 'startAt')) continue;
+        if (!args.includes('bookedAt')) offenders.push(`${path}: ${m[0]}`);
+      }
+    }
+  }
+  expect(offenders).toEqual([]);
+});
+
+/** Whether `field` is written by the `data:` block of a Prisma call's args. */
+function writesField(args: string, field: string): boolean {
+  const at = args.indexOf('data:');
+  if (at === -1) return false;
+  let depth = 0;
+  for (let i = args.indexOf('{', at); i < args.length && i !== -1; i++) {
+    if (args[i] === '{') depth++;
+    else if (args[i] === '}' && --depth === 0) {
+      return new RegExp(`\\b${field}\\b`).test(args.slice(at, i + 1));
+    }
+  }
+  return false;
+}
 
 /** The argument text of the call starting at `from`, parens balanced. */
 function callArgs(src: string, from: number): string {

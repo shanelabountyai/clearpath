@@ -1400,6 +1400,163 @@ charged at the same rate, because they were asked in a language they read.
 
 ---
 
+## 16. The hour the practice moved
+
+The five phases before this one each added a precondition to the fee, and each
+was added because the one before it turned out not to be enough: the practice
+has to be **allowed to ask**, a carrier has to say the message **arrived**, it
+has to arrive with **time to answer**, and there has to be a **body in a
+language the client reads**. Four rules, each one sound, none of them written
+with the others in view.
+
+So this phase did not add a feature. It read them together, as somebody trying
+to find the charge the practice could not defend in front of the client it
+landed on.
+
+### The finding
+
+Every one of those four asks a question about the *message*. Not one of them
+asks whether the message is still about **this appointment**.
+
+A reschedule is exactly the move that separates the two. `rescheduleAppointment`
+wrote `startAt`, `endAt`, `roomId`, `type`, `modality`, the series detach and the
+group key — and nothing else. So an appointment that had been asked about in
+full, with three reminders delivered, kept `confirmation: 'pending'` and kept
+every reminder row whose message named the old time. Then:
+
+- `confirmationRequired` passed, because notice was measured from `createdAt`
+  and the row was a month old.
+- `deliveryProven` passed, on messages about the withdrawn hour.
+- `answerable` passed, and passed *more easily the further the session moved*:
+  it measures the old `deliveredAt` against the **new** `startAt`, so pushing a
+  session two hours later widened the answering window by two hours.
+- The language rule passed, because the body was in the right language. About
+  the wrong hour.
+
+Then the sweep charged the client ninety dollars for not answering a question
+the practice itself had withdrawn.
+
+There is a second half with no money on it and a harder argument attached.
+`confirmation: 'confirmed'` survived a move too — so the schedule carried the
+practice's record that a client had agreed to a time nobody ever put to them,
+and front desk read it as one fewer person to ring. That is a false statement
+about consent sitting in the operational record, which is worse than the fee for
+being invisible.
+
+### A failing spec before a claim
+
+Three of them, written before a line of the fix, because a finding this file
+would otherwise be asserting about itself:
+
+```ts
+it('does not charge for silence about an hour the practice moved', ...)
+it('does not carry a confirmation across a move the client never saw', ...)
+it('asks again about the new hour', ...)
+```
+
+The first failed with the appointment id in `noShow`. The second failed on
+`expected 'confirmed' not to be 'confirmed'`. The third is the one that made the
+fix bigger than a field reset, and it is worth the space.
+
+### `bookedAt`, which is not `createdAt`
+
+The confirmation rules were reading `createdAt` for something it does not mean.
+`createdAt` is when the **row** was made; what both rules actually want is when
+**this hour** was set — how much notice the client has had of the time they are
+now expected at. For an appointment that has never moved these are the same
+instant, which is why nothing noticed for five phases.
+
+`Appointment.bookedAt` is that second fact. Stamped from the injected clock at
+booking, and stamped again at every reschedule. `confirmationRequired` measures
+notice from it, and `dueStages` will not queue a stage whose moment fell before
+it — so a session moved to tomorrow gets the day-of message and not a five-day
+one sent five days late, for the same reason a session *booked* tomorrow does.
+
+`createdAt` keeps its own job, and the phase-3 lesson with it: it is written from
+the clock rather than the database's, and the grep lint that guarantees it now
+names both columns at every insert. A second lint covers the update nobody has
+written yet — a drag-and-drop calendar, a bulk shift for a clinician's changed
+availability, a script nudging a day's sessions by fifteen minutes. Any
+`appointment.update` whose `data` block writes `startAt` must write `bookedAt`
+too, or the suite fails.
+
+### The reminder trail is evidence, so the key changed rather than the rows
+
+Resetting `confirmation` is not enough on its own. `AppointmentReminder` was
+keyed `@@unique([appointmentId, stage])`, so the withdrawn hour's `d0` row would
+have blocked the cadence from ever asking about the new one — the client would
+be moved to a different time and never told.
+
+The cheap fix is to delete the old reminder rows on reschedule. It is also the
+wrong instinct on this particular feature, and worth naming as such: those rows
+are the only proof the practice ever asked, and the fee's whole defensibility
+rests on that proof. Deleting evidence to make room for the next ask is the
+shape of the mistake this project keeps refusing.
+
+So the key moved instead: `@@unique([appointmentId, stage, dueAt])`. `dueAt` is
+derived from `startAt` and a fixed lead, so two horizon runs over an unmoved
+appointment compute the same key and the second still loses the race — which is
+all the key was ever for. What it now *also* says is that a moved appointment is
+a different question. The old rows stay exactly where they are.
+
+Which leaves the sweep needing to tell them apart, and it does it with the same
+predicate `dueStages` uses:
+
+```ts
+const asked = appt.reminders.filter((r) => r.dueAt >= appt.bookedAt);
+```
+
+The evidence the fee may rest on is exactly the set of stages the cadence was
+allowed to send about the hour the client is actually expected at. One line, and
+it reads as the sentence it enforces.
+
+### What the quarter says
+
+Front desk now moves sessions during the simulation, on the day, after the
+client has already been asked about them — and deliberately in **both**
+directions, because the two produce different and both-correct outcomes:
+
+- **Moved later**, and the day-of stage for the new hour has not fallen yet. The
+  cadence asks again, the client ignores that message too, and the fee lands.
+  Defensibly: they were asked about the hour they were expected at.
+- **Moved earlier**, and every stage for the new hour is already in the past.
+  Nothing can be sent, so the practice ends the day with a session it never
+  asked about, and charges nothing.
+
+Five sessions moved in the seeded quarter — three later, two earlier. The two
+that could not be asked again are the rows that used to carry an indefensible
+ninety dollars each. Four metrics hold the shape: the quarter contains moved
+sessions at all, no fee rests on a message about a withdrawn hour, the withdrawn
+hour's messages are still on the record, and at least one session moved too late
+to re-ask is not charged for the silence.
+
+The practice-wide charge rate fell from 4.57% to **4.28%**, 29 fees from 677
+eligible sessions. That drop is two clients, which is the correct size for this
+kind of finding: the bug was not common, and it was unanswerable every time it
+happened.
+
+### What this deliberately does not do
+
+- **It does not notify the client that their session moved.** A reschedule is a
+  phone call in every practice this is modelled on, and inventing a
+  "your appointment has changed" template would put a message in front of a
+  client that nobody at the practice has decided to send. What the fix
+  guarantees is narrower and is the part with money on it: if the cadence *can*
+  ask about the new hour it will, and if it cannot, nobody is charged.
+- **It does not track which message named which hour.** `OutboxMessage` has no
+  `appointmentId`, so the appointment→message link runs through
+  `AppointmentReminder` and `bookedAt` is what dates it. Recording the rendered
+  hour on the message would also close the language-correction case below, and
+  is the honest next step rather than this one.
+- **A client whose language is corrected from `en` to `es` after delivery still
+  has English reminders counting as having asked.** `OutboxMessage` carries no
+  language column, so this is not checkable today. It is the same shape of bug
+  as the one this phase fixed — evidence that is no longer about the thing it is
+  being read as evidence for — and it is written down here rather than quietly
+  left.
+
+---
+
 ## Decisions log
 
 | Decision | Why |
@@ -1516,6 +1673,13 @@ charged at the same rate, because they were asked in a language they read.
 | `reminder_cadence` is its own resource rather than a use of `client` | "A token may update the client record" would be a broader statement than the truth, and a matrix that overstates is the thing this file exists to refuse. It costs 42 cells, every new denial asserted |
 | Turning a client's messages off stopped being a one-way door | The cadence form only rendered for a client who was *not* on `none`, so setting somebody there — by seed, by import, or by their own STOP — put them where no screen could bring them back from. The fix needed the fields validated one at a time: a form demanding a cadence would silently drop the submission that turns the messages back on, because that form cannot carry one |
 | The README's screenshot pass is a design review, not a documentation chore | Capturing the client's door in Spanish is what showed two identically-worded reason pickers stacked under one appointment, one of them attached to a cancellation with a fee on it. Nothing in the suite could have caught that — every spec passed, and the page was still asking the same question twice with no way to tell which answer went where |
+| `bookedAt` as a column of its own rather than overwriting `createdAt` | They are two facts that happen to coincide at booking: when the row was made, and when the hour it names was set. A reschedule separates them, and every confirmation rule wants the second. Overwriting `createdAt` would make the row lie about its own age to fix a different problem |
+| A moved appointment's `confirmation` resets to `not_required`, `confirmed` included | Every message on the row named an hour that no longer exists. A surviving `pending` lets the sweep charge for a question the practice withdrew; a surviving `confirmed` is the practice's record that somebody agreed to a time nobody put to them, which front desk reads as one fewer person to ring |
+| The reminder key gained `dueAt` instead of the old rows being deleted | Deleting them is the cheap way to let the cadence re-ask, and it destroys the only proof the practice asked the first time — on the one feature whose defensibility is that proof. `dueAt` derives from `startAt`, so the key still catches two runs racing on an unmoved appointment, and now also says that a moved appointment is a different question |
+| The sweep filters its evidence on `dueAt >= bookedAt` rather than on a flag | It is the same predicate `dueStages` uses to decide what may be sent, read back at the moment of the fee: the evidence a charge may rest on is exactly the set of stages the cadence was allowed to send about the hour the client is expected at. A flag would be a second copy of that rule, free to drift |
+| A lint on `appointment.update`, not only on `appointment.create` | The insert lint catches the booking path written next month; this catches the *move* written next month — a drag-and-drop calendar, a bulk shift for changed availability, a script nudging a day by fifteen minutes. Any update whose `data` writes `startAt` must write `bookedAt`, or every one of those appointments carries delivered reminders about a time that no longer exists |
+| Seeded reschedules move sessions in both directions | Moving later leaves room for the cadence to re-ask, and a client who ignores *that* message is charged like anybody else; moving earlier leaves none, and nobody is charged. A fixture that only did one would prove the rule it happened to exercise and hide the other |
+| The fix sends no "your appointment has changed" message | A reschedule is a phone call in every practice this is modelled on, and inventing that template puts a message in front of a client nobody at the practice decided to send. The guarantee stays narrower and keeps the money in it: ask about the new hour if there is time, and charge nobody if there is not |
 | The cadence is a script and a function, with no scheduler dependency | Due times derive from `startAt` and the injected clock, so the job is idempotent and the schedule is an implementation detail of whatever calls it — cron, a timer, a hosted trigger, or a person typing `npm run reminders:run`. A missed hour costs lateness and nothing else, and the whole five-day cadence runs in a test in a millisecond because the clock is an argument |
 
 ## What this project deliberately is not

@@ -87,9 +87,20 @@ async function recentAnswers(
 }
 
 /**
- * Two runs racing on the same stage. The `@@unique([appointmentId, stage])` key
- * is the idempotency guarantee — the pre-filter below is only an optimisation —
- * so losing the race means the work is already done, not that anything failed.
+ * One ask, identified the way the database identifies it.
+ *
+ * The unique key is `(appointmentId, stage, dueAt)`, so this is the pre-filter's
+ * half of the same statement: a stage is "already done" for the hour it was due
+ * at, and a rescheduled appointment's stages fall at new moments and are
+ * therefore new questions.
+ */
+const askKey = (stage: ReminderStage, dueAt: Date) => `${stage}@${dueAt.getTime()}`;
+
+/**
+ * Two runs racing on the same stage. The `@@unique([appointmentId, stage,
+ * dueAt])` key is the idempotency guarantee — the pre-filter above is only an
+ * optimisation — so losing the race means the work is already done, not that
+ * anything failed.
  */
 const isDuplicateStage = (e: unknown): boolean =>
   typeof e === 'object' && e !== null && (e as { code?: unknown }).code === 'P2002';
@@ -135,10 +146,14 @@ export async function runReminderHorizon(
       id: true,
       clientId: true,
       startAt: true,
-      createdAt: true,
+      bookedAt: true,
       confirmation: true,
       client: { select: { reminderPreference: true, reminderCadence: true, language: true, email: true, phone: true } },
-      reminders: { select: { stage: true } },
+      // The moment as well as the stage. Since a reschedule re-keys the
+      // cadence on `dueAt`, "d1 is done" is no longer a fact about an
+      // appointment — it is a fact about an appointment at an hour, and the
+      // old hour's d1 must not stand in for the new one's.
+      reminders: { select: { stage: true, dueAt: true } },
     },
     orderBy: { startAt: 'asc' },
   });
@@ -190,10 +205,10 @@ export async function runReminderHorizon(
     // mean two things.
     const capApplies = appt.client.reminderCadence === 'full' && earned;
 
-    const already = new Set(appt.reminders.map((r) => r.stage));
+    const already = new Set(appt.reminders.map((r) => askKey(r.stage, r.dueAt)));
     const due = dueStages(appt, now, {
       ...settings, capped: earned, cadence: appt.client.reminderCadence,
-    }).filter((stage) => !already.has(stage));
+    }).filter((stage) => !already.has(askKey(stage, stageDueAt(appt.startAt, stage, settings))));
     if (!due.length) continue;
     if (capApplies) result.capped.push(appt.id);
 

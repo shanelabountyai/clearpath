@@ -14,7 +14,7 @@ const { prisma } = await import('../src/db');
 const { actor, resetDb } = await import('../src/test/harness');
 const { TEMPLATES } = await import('../src/forms/fixtures');
 const { publishTemplate, issueForm, submitForm } = await import('../src/forms/service');
-const { bookAppointment, materialiseSeries } = await import('../src/scheduling/booking');
+const { bookAppointment, materialiseSeries, rescheduleAppointment } = await import('../src/scheduling/booking');
 const { createProgressNote, signProgressNote, coSignProgressNote, createProcessNote } =
   await import('../src/notes/service');
 const { guarded } = await import('../src/auth/guard');
@@ -302,7 +302,7 @@ async function main() {
   );
 
   const everything = await prisma.appointment.findMany({
-    select: { id: true, clientId: true, clinicianId: true, startAt: true, createdAt: true },
+    select: { id: true, clientId: true, clinicianId: true, startAt: true, bookedAt: true },
     orderBy: [{ startAt: 'asc' }, { id: 'asc' }],
   });
 
@@ -322,6 +322,44 @@ async function main() {
   for (const a of skillsGroup.appointments.slice(1)) behaviour.set(a.id, 'confirm_late');
   behaviour.set(lateBooked.id, 'silent_absent');
 
+  /**
+   * Sessions the practice moves on the day, after the client has been asked.
+   *
+   * The reschedule defect in one fixture: every message these clients received
+   * named an hour that no longer exists, so a `pending` left standing would let
+   * the sweep charge them for not answering a question the practice itself
+   * withdrew. They are drawn from the silent set on purpose — a client who
+   * answers cannot demonstrate the bug, because their answer, not their
+   * silence, is what the sweep reads.
+   *
+   * Drawn from the quarter's second half so a full cadence has already run, and
+   * moved in both directions on purpose, because the two produce different and
+   * both-correct outcomes:
+   *
+   *   - **Later**, and the day-of stage for the new hour has not fallen yet, so
+   *     the cadence asks again and a client who ignores *that* message is in
+   *     exactly the position of anybody else. Charged, defensibly.
+   *   - **Earlier**, and the new hour's stages are all in the past at the moment
+   *     of the move, so nothing can be sent and the practice ends the day with
+   *     a session it never asked about. Exempt — and this is the row that used
+   *     to be an indefensible fee, charged on a message about an hour that no
+   *     longer existed.
+   *
+   * Several will find the new hour taken and stay where they are, which is what
+   * a real front desk finds too — the fixture is "some sessions were moved", not
+   * "these exact ones".
+   */
+  const MOVES = 8;
+  /** id → hours to shift the session by, alternating direction. */
+  const toMove = new Map<string, number>();
+  for (const appt of everything) {
+    if (toMove.size >= MOVES) break;
+    if (behaviour.get(appt.id) !== 'silent_absent') continue;
+    if (localDateOf(appt.startAt) <= addDays(QUARTER_START, 45)) continue;
+    if (localDateOf(appt.startAt) >= TODAY) continue;
+    toMove.set(appt.id, toMove.size % 2 === 0 ? -2 : 2);
+  }
+
   const startsOn = new Map<string, typeof everything>();
   for (const a of everything) {
     const d = localDateOf(a.startAt);
@@ -337,6 +375,7 @@ async function main() {
 
   const answered = { confirmed: 0, declined: 0 };
   let unanswerable = 0;
+  let moved = 0;
   const attendance = { completed: 0, noShow: 0, cancelled: 0, lateCancelled: 0 };
   const clock = fixedClock(BOOKED_AT);
 
@@ -355,6 +394,41 @@ async function main() {
     // the cadence's.
     for (let hour = 8; hour <= 20; hour++) {
       clock.set(zonedToUtc(date, hour * 60));
+
+      // Front desk moves an hour, after the client has been asked about it.
+      //
+      // Before the cadence run, so the re-ask — if the new hour leaves room for
+      // one — happens on this same tick rather than a hypothetical later one.
+      // The move waits for a *delivered* reminder rather than firing at a fixed
+      // offset: a session moved before anybody was reached is not this defect,
+      // it is an ordinary reschedule, and a fixture that produced those would
+      // pass the metric below without ever exercising the rule.
+      for (const [id, shiftHours] of toMove) {
+        const appt = await prisma.appointment.findUniqueOrThrow({
+          where: { id },
+          select: {
+            startAt: true, confirmation: true,
+            reminders: { select: { outboxMessage: { select: { deliveryState: true } } } },
+          },
+        });
+        if (appt.startAt.getTime() - clock.now().getTime() > 4 * 3600_000) continue;
+        if (appt.confirmation !== 'pending') { toMove.delete(id); continue; }
+        if (!appt.reminders.some((r) => r.outboxMessage?.deliveryState === 'delivered')) continue;
+
+        const to = utcToZoned(new Date(appt.startAt.getTime() + shiftHours * 3600_000));
+        try {
+          await rescheduleAppointment(desk, id, {
+            date: to.date, startMinute: to.minutes, clock,
+          });
+          moved++;
+        } catch {
+          // The room or the clinician is taken at the later hour. A real front
+          // desk hits this too; the fixture is "some sessions were moved", not
+          // "these exact three", so a refusal is a skipped row.
+        }
+        toMove.delete(id);
+      }
+
       await runReminderHorizon(clock);
 
       // P2. The carrier, on the same hourly tick as the cadence: settle what it
@@ -476,6 +550,7 @@ async function main() {
   const swept = await prisma.appointment.count({ where: { confirmation: 'no_response' } });
   const autoNoShows = await prisma.appointment.count({ where: { confirmation: 'no_response', status: 'no_show' } });
   log(`${eligibleCount} sessions the practice could ask about; ${answered.confirmed} confirmed, ${answered.declined} declined${unanswerable ? ` (${unanswerable} unreachable at the moment they would have answered)` : ''}`);
+  log(`${moved} sessions moved on the day, after the client had already been asked about them`);
   log(`${await prisma.appointmentReminder.count()} reminders queued across ${await prisma.outboxMessage.count()} outbox rows`);
   const deliveredCount = await prisma.outboxMessage.count({ where: { deliveryState: 'delivered' } });
   const failedCount = await prisma.outboxMessage.count({ where: { deliveryState: 'failed' } });

@@ -396,6 +396,67 @@ export async function seedMetrics(): Promise<Metric[]> {
     `${chargedForAbsence.length} charged the absence fee; `
     + `${stoodDown.filter((a) => a.status === 'completed').length} attended and paid the session fee`);
 
+  // ── the hour the practice moved ──────────────────────────────────────
+  //
+  // The precondition that came before the other four and went five phases
+  // without being written. Each of those asks something about the *message* —
+  // were we allowed to send it, did it arrive, did it arrive in time, could
+  // they read it — and none of them asks whether it is still about this
+  // appointment. A reschedule is what separates the two: the messages named the
+  // old hour, and `answerable` measured their delivery against the new one, so
+  // moving a session *later* made the fee easier to earn. The client would have
+  // been charged for not answering a question the practice itself withdrew.
+  const rescheduled = [...new Set((await prisma.auditEvent.findMany({
+    where: { reason: 'rescheduled' }, select: { resourceId: true },
+  })).map((r) => r.resourceId).filter((id): id is string => !!id))];
+  check('the quarter contains sessions the practice moved after asking about them',
+    rescheduled.length >= 1,
+    `${rescheduled.length} moved`);
+
+  // The invariant, and it is deliberately not "a moved session is never
+  // charged". A move far enough out leaves room for the cadence to ask again
+  // about the new hour, and a client who ignores *that* message is in exactly
+  // the position of anybody else. What must never happen is a fee resting on a
+  // message that was about the withdrawn hour — which is what `bookedAt`
+  // separates: a reminder due before this hour was set was about a different
+  // one.
+  const movedRows = await prisma.appointment.findMany({
+    where: { id: { in: rescheduled } },
+    select: {
+      id: true, confirmation: true, chargeFeeCents: true, bookedAt: true,
+      reminders: {
+        select: { dueAt: true, outboxMessage: { select: { deliveryState: true } } },
+      },
+    },
+  });
+  const chargedOnAWithdrawnHour = movedRows.filter((a) =>
+    a.confirmation === 'no_response' && a.chargeFeeCents !== null
+    && !a.reminders.some((r) => r.dueAt >= a.bookedAt && r.outboxMessage?.deliveryState === 'delivered'));
+  check('no fee rests on a message about an hour the practice moved',
+    chargedOnAWithdrawnHour.length === 0,
+    `${chargedOnAWithdrawnHour.length} of ${movedRows.length} moved sessions`);
+
+  // And the trail of the withdrawn ask is still there. Clearing the reminder
+  // rows would have been the cheap way to let the cadence re-ask, and it would
+  // have deleted the only proof the practice ever asked the first time — on a
+  // feature whose entire defensibility is that proof.
+  const keptTheTrail = movedRows.filter((a) => a.reminders.some((r) => r.dueAt < a.bookedAt));
+  check('and the messages about the withdrawn hour are still on the record',
+    keptTheTrail.length === movedRows.length,
+    `${keptTheTrail.length} of ${movedRows.length} kept their earlier reminders`);
+
+  // And the case the fix exists for, present in the quarter rather than argued
+  // about: a session moved with no room left to ask about the new hour. Every
+  // message on the row is about the withdrawn one, the client said nothing, and
+  // the practice does not charge — which is precisely the fee that used to land
+  // and could not have been defended.
+  const neverReAsked = movedRows.filter(
+    (a) => !a.reminders.some((r) => r.dueAt >= a.bookedAt) && a.chargeFeeCents === null,
+  );
+  check('and a session moved too late to re-ask is not charged for the silence',
+    neverReAsked.length >= 1,
+    `${neverReAsked.length} of ${movedRows.length} could not be asked again`);
+
   // ── the freed hour ───────────────────────────────────────────────────
   //
   // P2-2, and the first thing in this feature whose number is worth something

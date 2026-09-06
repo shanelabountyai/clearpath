@@ -61,6 +61,10 @@ async function setup() {
         startAt: new Date(now + offset),
         endAt: new Date(now + offset + 50 * 60_000),
         modality: 'telehealth',
+        // Booked a month back, which is the notice a `pending` row implies —
+        // the cadence will not promote one without the time to have asked.
+        createdAt: new Date(now - 30 * DAY),
+        bookedAt: new Date(now - 30 * DAY),
         // The cadence has already asked. Phase 2 puts it here; this spec is
         // about the answer, not about the asking.
         confirmation: 'pending',

@@ -128,6 +128,7 @@ describe('who may produce one', () => {
         clientId: client.id, clinicianId: mine.id, roomId: room.id,
         startAt: zonedToUtc('2026-03-10', 15 * 60),
         endAt: zonedToUtc('2026-03-10', 15 * 60 + 50),
+        bookedAt: zonedToUtc('2026-02-10', 15 * 60),
         type: 'standard', modality: 'in_person', status: 'arrived',
       },
     });
@@ -192,6 +193,7 @@ describe('who may produce one', () => {
         clientId: client.id, clinicianId: mine.id, roomId: room.id,
         startAt: zonedToUtc('2026-03-17', 15 * 60),
         endAt: zonedToUtc('2026-03-17', 15 * 60 + 50),
+        bookedAt: zonedToUtc('2026-02-17', 15 * 60),
         type: 'standard', modality: 'in_person',
       },
     });

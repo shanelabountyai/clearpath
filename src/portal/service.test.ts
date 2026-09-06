@@ -489,7 +489,10 @@ describe('a group session confirms per attendee', () => {
     });
     await prisma.appointment.updateMany({
       where: { groupSessionId: group.id },
-      data: { createdAt: new Date(START.getTime() - 30 * DAY) },
+      data: {
+        createdAt: new Date(START.getTime() - 30 * DAY),
+        bookedAt: new Date(START.getTime() - 30 * DAY),
+      },
     });
 
     await runReminderHorizon(fiveDaysOut);
