@@ -79,7 +79,7 @@ createdb clearpath_dev clearpath_test clearpath_e2e clearpath_shadow
 npm install
 npm run db:setup     # migrate all three, generate the client, seed dev + e2e
 npm run dev          # http://localhost:3700
-npm test             # 1,403 unit + integration tests
+npm test             # 1,410 unit + integration tests
 npm run test:e2e     # 22 Playwright tests against a production build
 ```
 

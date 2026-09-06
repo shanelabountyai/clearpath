@@ -34,22 +34,27 @@ export interface Session {
   secondFactor: { required: boolean; satisfied: boolean };
 }
 
-export async function currentSession(): Promise<Session | null> {
-  const jar = await cookies();
-  const id = jar.get(USER_COOKIE)?.value;
-  if (!id) return null;
+/** The user row `currentSession` reads, and all this decision needs. */
+type UserRow = { id: string; name: string; role: Actor['role']; supervisorId: string | null; active: boolean };
 
-  const user = await prisma.user.findUnique({
-    where: { id },
-    select: { id: true, name: true, role: true, supervisorId: true, active: true },
-  });
+/**
+ * Who a request is, given the user its cookie named and what the break-glass
+ * cookie carried.
+ *
+ * Separated from the cookie jar and the database around it because the two
+ * decisions here are worth stating on their own: a deactivated user is nobody,
+ * and an unrecognised break-glass value is simply not a break-glass session.
+ * Neither could be tested while they were wrapped in a request.
+ */
+export function sessionFor(user: UserRow | null, breakGlassCookie: string | undefined): Session | null {
+  // The cookie in somebody's browser outlives the decision to deactivate them.
   if (!user || !user.active) return null;
 
   // Parsed, not read. A cookie is supplied by the request, and `httpOnly` only
   // keeps a browser script out of it — it says nothing about a request composed
   // by hand. An unrecognised value is not an error page, it is simply no
   // break-glass session, and the ordinary refusal follows.
-  const breakGlass = parseBreakGlass(jar.get(BREAK_GLASS_COOKIE)?.value);
+  const breakGlass = parseBreakGlass(breakGlassCookie);
   return {
     user,
     secondFactor: { required: requiresSecondFactor(user.role), satisfied: false },
@@ -59,6 +64,18 @@ export async function currentSession(): Promise<Session | null> {
       ...(breakGlass ? { breakGlass } : {}),
     },
   };
+}
+
+export async function currentSession(): Promise<Session | null> {
+  const jar = await cookies();
+  const id = jar.get(USER_COOKIE)?.value;
+  if (!id) return null;
+
+  const user = await prisma.user.findUnique({
+    where: { id },
+    select: { id: true, name: true, role: true, supervisorId: true, active: true },
+  });
+  return sessionFor(user, jar.get(BREAK_GLASS_COOKIE)?.value);
 }
 
 export async function requireSession(): Promise<Session> {
