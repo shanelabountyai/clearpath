@@ -866,6 +866,73 @@ That is the feature working: one of those charges was for a message that never
 arrived.
 
 
+## 14. The hour the record already knew was free
+
+The waitlist could always answer "who wants a Tuesday at three." What it could
+not answer was *which* Tuesday at three was going spare — so the work-list page
+asked it about tomorrow at 15:00, hardcoded, whether or not anything had freed
+up then. A matcher with nothing to match against is a feature in the shape of a
+demo.
+
+The answer was already in the record twice over, written by two different parts
+of the system that had never been introduced:
+
+- A **cancellation** frees the hour outright. The row keeps its `startAt`, so a
+  future `cancelled` or `late_cancelled` appointment *is* an empty slot with a
+  clinician and a room attached.
+- A **decline** is the other half, and it is the one §11 earned. A client who
+  taps "I can't make this" in the portal, or texts back `can't make it`, has
+  told the practice they are not coming. At `d5` that is five days' notice —
+  the longest warning this system ever receives about an empty room.
+
+So `waitlistOpenings` is a join, not a new fact: every appointment in the next
+30 days that is free or about to be, each carrying the waitlist entries whose
+stated weekday and time window fit that hour.
+
+### The two are shown together and labelled apart
+
+They are not the same offer, and merging them would be the bug.
+
+A cancelled hour is free. A declined one is **still on the books** — because
+`messaging/inbound.ts` will record an answer and will never move a session:
+a caller ID is not a credential, and the fee disclosure the portal shows before
+a late cancel cannot be shown in a text. The hour stays scheduled until a human
+rings the client and cancels it properly.
+
+That makes a declined opening two calls, not one — the client first, then the
+person you are offering it to. A list that rendered both as "free" would
+eventually put a client in a room somebody else was still booked into, and the
+person who arrives to find their room taken had done nothing wrong: they said
+"I can't make it" to a text message.
+
+### Small things that are not small
+
+- **A client is never offered the hour they just gave back.** Someone on the
+  waitlist who declines their own Tuesday would otherwise match their own
+  opening perfectly, which is the most confident wrong row a list can show.
+- **One query for the entries, not one per opening.** The matching rule is
+  pure and cheap; the round trips are not. Same predicate now serves both
+  `waitlistMatches` and `waitlistOpenings`, so the two surfaces cannot drift
+  into disagreeing about what "fits."
+- **Two audit rows, not one.** The list reads appointments *and* client
+  records, so it goes through `guardedAll` and says both — one nested pair in
+  one transaction, rather than one row that under-describes what was read.
+
+### What it deliberately does not do
+
+- **It does not book, offer, or message anybody.** Same rule as the matcher it
+  is built on: this is a list of phone calls. An automatic offer would put a
+  client in a room with a clinician neither of them chose for that hour, and
+  would do it from a decline that a forged text could have produced.
+- **It does not filter by notice.** A four-hour opening is worth less than a
+  five-day one, so the notice is shown and the list is sorted by start time —
+  but "too short to bother with" is a front-desk judgement, not a constant.
+- **It does not check the candidate's clinician against the opening's.** A
+  waitlisted client of a different therapist appears against this hour, and
+  whether that is an offer at all is a clinical question about caseloads and
+  continuity, not one a filter should silently answer.
+
+
 ## Decisions log
 
 | Decision | Why |
@@ -878,6 +945,8 @@ arrived.
 | List reads logged once, not once per row | Forty audit rows for one page view buries the individual record opens that matter |
 | The confirmation report reads under `attendance_history`, not `appointment` | A confirmation rate alone is operational, but a per-clinician silence breakdown carrying a fee total is not — the guard belongs on the strictest thing in the payload, never on the name of the feature |
 | The confirmation rate divides by decided, not by booked | A `reminderPreference: 'none'` client would otherwise drag their clinician's number down for choosing a safety setting — the P0 category error, reappearing as a denominator |
+| A declined hour and a cancelled one are shown as separate kinds of opening | The declined one is still on the books; rendering both as "free" is how a client arrives to find their room taken |
+| The openings list never filters by how much notice an opening carries | The notice is shown and the list sorts by start; "too short to bother with" is a front-desk judgement, not a constant |
 | Only a `no_response` no-show counts toward the policy's fee total | A late cancel is charged whether or not anyone was asked, so counting it would credit this feature with revenue it did not cause |
 | `declineReason` is nullable and usually null | The portal asks without requiring an answer and a keyword decline cannot carry one; a default value would turn every texted "no" into a preference the client never stated |
 | The decline reason reuses `RescheduleReason` rather than a new enum | A decline and a reschedule request ask the same four sentences; two lists would drift, and the PRD named reuse explicitly |

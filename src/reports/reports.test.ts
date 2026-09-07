@@ -5,7 +5,7 @@ import { prisma } from '../db';
 import { Forbidden } from '../errors';
 import { bookAppointment } from '../scheduling/booking';
 import { cancelAppointment, setStatus, waiveFee } from '../scheduling/lifecycle';
-import { continuityQueue, unconfirmedSoon, vacationImpact, waitlistMatches } from '../scheduling/worklists';
+import { continuityQueue, unconfirmedSoon, vacationImpact, waitlistMatches, waitlistOpenings } from '../scheduling/worklists';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { queryAuditLog, toCsv } from './audit';
 import { confirmationReport, utilizationReport, weeklyVolume, weekStart } from './utilization';
@@ -196,6 +196,58 @@ describe('the waitlist', () => {
     const matches = await waitlistMatches(actor(desk), { date: '2026-09-01', startMinute: 900 });
     expect(matches.map((m) => m.client.code).sort()).toEqual(['TC-ANY', 'TC-WANTS']);
     expect(await prisma.appointment.count()).toBe(0);
+  });
+
+  /**
+   * The join P2-2 is about: an hour the record already knows is going spare,
+   * beside the people who said they want one.
+   */
+  it('reads the openings out of confirmation and cancellation state, and never offers a client their own hour', async () => {
+    const clock = fixedClock('2026-08-27T12:00:00Z');
+    const saidNo = await makeClient(therapist.id, { code: 'TC-SAIDNO' });
+    const gaveItBack = await makeClient(therapist.id, { code: 'TC-CANCELLED' });
+    const coming = await makeClient(therapist.id, { code: 'TC-COMING' });
+    const wants = await makeClient(therapist.id, { code: 'TC-WANTS' });
+    const wrongDay = await makeClient(therapist.id, { code: 'TC-WRONGDAY' });
+
+    // 15:00 Tuesday: the client declined, so the hour is still on the books.
+    const declined = await book(saidNo.id, 900);
+    await prisma.appointment.update({ where: { id: declined.id }, data: { confirmation: 'declined' } });
+    // 10:00 the same day: actually cancelled, so the hour is free.
+    const cancelled = await book(gaveItBack.id, 600);
+    await cancelAppointment(actor(desk), cancelled.id, { clock });
+    // And one nobody is giving up.
+    await book(coming.id, 660);
+
+    await prisma.waitlistEntry.createMany({
+      data: [
+        { clientId: wants.id, weekdays: [2] },
+        { clientId: wrongDay.id, weekdays: [4] },
+        // On the list, and also the person who declined the 15:00.
+        { clientId: saidNo.id, weekdays: [2] },
+      ],
+    });
+
+    const open = await waitlistOpenings(actor(desk), { clock });
+    expect(open.map((o) => o.client.code)).toEqual(['TC-CANCELLED', 'TC-SAIDNO']);
+
+    const [free, stillBooked] = open;
+    expect(free!.freed).toBe(true);
+    expect(stillBooked!.freed).toBe(false);
+    // 15:00 local on 1 Sep (19:00Z) from midday UTC on 27 Aug — five days and
+    // seven hours, which is the `d5` reminder still ahead of it.
+    expect(stillBooked!.noticeHours).toBe(5 * 24 + 7);
+    // The Tuesday entries, minus the client whose hour it is.
+    expect(stillBooked!.matches.map((m) => m.client.code)).toEqual(['TC-WANTS']);
+    expect(free!.matches.map((m) => m.client.code)).toEqual(['TC-WANTS', 'TC-SAIDNO']);
+  });
+
+  it('offers nothing from an hour still standing and answered', async () => {
+    const clock = fixedClock('2026-08-27T12:00:00Z');
+    const c = await makeClient(therapist.id, { code: 'TC-PENDING' });
+    const appt = await book(c.id, 900);
+    await prisma.appointment.update({ where: { id: appt.id }, data: { confirmation: 'pending' } });
+    expect(await waitlistOpenings(actor(desk), { clock })).toEqual([]);
   });
 });
 

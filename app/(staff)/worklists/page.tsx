@@ -1,11 +1,11 @@
 import Link from 'next/link';
 import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
-import { continuityQueue, unconfirmedSoon, vacationImpact, waitlistMatches } from '../../../src/scheduling/worklists';
+import { continuityQueue, unconfirmedSoon, vacationImpact, waitlistOpenings } from '../../../src/scheduling/worklists';
 import { openRescheduleRequests } from '../../../src/portal/service';
 import { openInboundReplies } from '../../../src/messaging/inbound';
 import { handleRescheduleRequest, markInboundHandled } from './actions';
-import { addDays, localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
+import { localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
 import { Badge, Card, CONFIRMATION_META, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
 import { withDenial } from '@/src/ui/denied';
@@ -14,8 +14,6 @@ export const dynamic = 'force-dynamic';
 
 async function WorkListsPage() {
   const { actor } = await requireSession();
-  const today = localDateOf(systemClock.now());
-
   const [unconfirmed, continuity, absences] = await Promise.all([
     unconfirmedSoon(actor),
     continuityQueue(actor),
@@ -37,7 +35,7 @@ async function WorkListsPage() {
     })),
   );
 
-  const waiting = await waitlistMatches(actor, { date: addDays(today, 1), startMinute: 15 * 60 }).catch(() => []);
+  const openings = await waitlistOpenings(actor).catch(() => []);
   const rescheduleAsks = await openRescheduleRequests(actor).catch(() => []);
   const wroteBack = await openInboundReplies(actor).catch(() => []);
 
@@ -271,32 +269,78 @@ async function WorkListsPage() {
         </section>
 
         <section>
-          <h2 className="mb-2 text-subhead font-semibold">Waitlist</h2>
+          <h2 className="mb-2 text-subhead font-semibold">Hours going spare — and who wants one</h2>
           <p className="mb-3 max-w-prose text-body text-muted">
-            Who to offer a freed slot to. Clearpath surfaces candidates; a person rings them.
-            Nothing here books itself.
+            Two different offers, deliberately not merged. A <strong>cancelled</strong> hour
+            is free. A <strong>declined</strong> one is still on the books: the client has
+            said they are not coming, but nobody has cancelled it yet, so it is two calls —
+            them first, then the person you are offering it to. Clearpath surfaces
+            candidates; a person rings them. Nothing here books itself.
           </p>
-          {waiting.length === 0 ? (
-            <EmptyState title="Nobody waiting for tomorrow afternoon" />
+          {openings.length === 0 ? (
+            <EmptyState title="Nothing going spare in the next month">
+              Cancellations and declines appear here as they land, with the waitlist matched
+              against the hour.
+            </EmptyState>
           ) : (
-            <Card className="p-0">
-              <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                {waiting.map((w) => (
-                  <li key={w.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-body">
-                    <Link href={`/clients/${w.client.id}`} className="font-medium text-accent hover:underline">
-                      {w.client.lastName}, {w.client.firstName}
-                    </Link>
-                    <span className="text-muted">
-                      {w.weekdays.length ? w.weekdays.map((d) => WEEKDAYS[d]).join(', ') : 'any day'}
-                      {w.earliestMinute !== null ? ` · from ${minutesToHHMM(w.earliestMinute)}` : ''}
-                      {' · '}{w.client.treatingClinician.name}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </Card>
+            <div className="space-y-3">
+              {openings.map((o) => {
+                const when = utcToZoned(o.startAt);
+                return (
+                  <Card key={o.id}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="font-semibold">
+                        {WEEKDAYS[when.weekday]} {when.date} {minutesToHHMM(when.minutes)}
+                        <span className="ml-2 font-normal text-muted">{o.clinician.name}</span>
+                        {o.room && <span className="ml-2 font-normal text-subtle">{o.room.name}</span>}
+                      </h3>
+                      <span className="flex items-center gap-2">
+                        <Badge tone="neutral">
+                          {o.noticeHours >= 48
+                            ? `${Math.floor(o.noticeHours / 24)} days notice`
+                            : `${o.noticeHours} hours notice`}
+                        </Badge>
+                        {o.freed ? (
+                          <Badge tone="success" glyph="○">hour is free</Badge>
+                        ) : (
+                          <Badge tone="warning" glyph="!">declined — still on the books</Badge>
+                        )}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-caption text-subtle">
+                      {o.freed ? 'Was ' : 'Held by '}
+                      <Link href={`/appointments/${o.id}`} className="text-accent hover:underline">
+                        {o.client.lastName}, {o.client.firstName}
+                      </Link>{' '}
+                      <span className="font-mono">{o.client.code}</span>
+                      {o.declineReason && ` · ${o.declineReason.replace(/_/g, ' ')}`}
+                    </p>
+                    {o.matches.length === 0 ? (
+                      <p className="mt-2 text-body text-muted">Nobody on the waitlist wants this hour.</p>
+                    ) : (
+                      <ul className="mt-2 divide-y" style={{ borderColor: 'var(--border)' }}>
+                        {o.matches.map((w) => (
+                          <li key={w.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-body">
+                            <Link href={`/clients/${w.client.id}`} className="font-medium text-accent hover:underline">
+                              {w.client.lastName}, {w.client.firstName}
+                            </Link>
+                            <span className="flex items-center gap-2 text-muted">
+                              {w.weekdays.length ? w.weekdays.map((d) => WEEKDAYS[d]).join(', ') : 'any day'}
+                              {w.earliestMinute !== null ? ` · from ${minutesToHHMM(w.earliestMinute)}` : ''}
+                              {' · '}{w.client.treatingClinician.name}
+                              {w.client.reminderPreference === 'none' && <Badge tone="warning">call only</Badge>}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </Card>
+                );
+              })}
+            </div>
           )}
         </section>
+
       </div>
     </>
   );

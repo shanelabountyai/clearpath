@@ -495,7 +495,7 @@ async function main() {
     where: { clientId: writers[3]!.id, classification: 'unparsed' },
   });
   if (handled) await resolveInboundReply(desk, handled.id);
-  log('4 inbound replies: 1 confirm, 1 decline that freed nothing, 2 unparsed (1 already called back)');
+  log('4 inbound replies: 1 confirm, 1 decline that leaves the hour standing, 2 unparsed (1 already called back)');
 
   // ── notes ─────────────────────────────────────────────────────────────
   const byClinician = new Map<string, typeof past>();

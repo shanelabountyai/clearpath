@@ -1,8 +1,8 @@
-import { guarded } from '../auth/guard';
+import { guarded, guardedAll } from '../auth/guard';
 import { ownCaseloadOnly, type Actor } from '../auth/permissions';
 import { systemClock, type Clock, DAY, HOUR } from '../clock';
 import { prisma } from '../db';
-import { addDays, localDateOf, weekdayOf, zonedToUtc, type LocalDate } from '../time';
+import { addDays, localDateOf, utcToZoned, weekdayOf, zonedToUtc, type LocalDate } from '../time';
 
 /**
  * The work-lists. Each one exists because something that ought to be visible
@@ -160,6 +160,29 @@ export async function continuityQueue(
   );
 }
 
+/** The entry shape both waitlist surfaces read. */
+const ENTRY_SELECT = {
+  id: true, weekdays: true, earliestMinute: true, latestMinute: true, note: true, createdAt: true,
+  client: {
+    select: {
+      id: true, code: true, firstName: true, lastName: true, reminderPreference: true,
+      treatingClinician: { select: { id: true, name: true } },
+    },
+  },
+} as const;
+
+/** Does this entry's stated preference cover that hour? Pure, so both callers agree. */
+const fits = (
+  e: { weekdays: number[]; earliestMinute: number | null; latestMinute: number | null },
+  weekday: number,
+  startMinute: number,
+): boolean => {
+  if (e.weekdays.length && !e.weekdays.includes(weekday)) return false;
+  if (e.earliestMinute !== null && startMinute < e.earliestMinute) return false;
+  if (e.latestMinute !== null && startMinute > e.latestMinute) return false;
+  return true;
+};
+
 /**
  * Who to offer a freed slot to. Surfaces candidates for a human to ring; it
  * never books. An automatic rebooking would put a client in a room with a
@@ -175,23 +198,90 @@ export async function waitlistMatches(
     async (tx) => {
       const entries = await tx.waitlistEntry.findMany({
         where: { active: true },
-        select: {
-          id: true, weekdays: true, earliestMinute: true, latestMinute: true, note: true, createdAt: true,
-          client: {
-            select: {
-              id: true, code: true, firstName: true, lastName: true, reminderPreference: true,
-              treatingClinician: { select: { id: true, name: true } },
-            },
-          },
+        select: ENTRY_SELECT,
+        orderBy: { createdAt: 'asc' },
+      });
+      return entries.filter((e) => fits(e, weekday, slot.startMinute));
+    },
+  );
+}
+
+/**
+ * The hours that are about to be empty, each with the people who want one.
+ *
+ * The waitlist could always answer "who fits Tuesday at three"; what it could
+ * not do was say which Tuesday at three was going spare. That question is
+ * already answered elsewhere in the record and was simply never joined up: a
+ * cancellation frees an hour outright, and a client who *declined* has told the
+ * practice they are not coming — five days out, at `d5`, that is the longest
+ * notice this system ever gets, and it is exactly the notice a waitlisted
+ * client can use.
+ *
+ * The two are shown together and labelled apart, because they are not the same
+ * offer. A cancelled hour is free. A declined one is still on the books, and
+ * stays there until somebody rings the client and cancels it properly — an
+ * inbound `NO` may record an answer but must never move a session or a fee
+ * (see `messaging/inbound.ts`), so front desk has two calls to make here, not
+ * one, and offering the hour before making the first is how a client arrives to
+ * find their room taken.
+ *
+ * Nothing is booked, offered or messaged from here. Same rule as the matcher it
+ * is built on: this is a list of phone calls.
+ */
+export async function waitlistOpenings(
+  actor: Actor,
+  opts: { clock?: Clock; withinDays?: number } = {},
+) {
+  const now = (opts.clock ?? systemClock).now();
+  const until = new Date(now.getTime() + (opts.withinDays ?? 30) * DAY);
+
+  return guardedAll(
+    [
+      { actor, action: 'read' as const, resource: 'appointment' as const },
+      { actor, action: 'read' as const, resource: 'client' as const },
+    ],
+    async (tx) => {
+      const openings = await tx.appointment.findMany({
+        where: {
+          startAt: { gte: now, lte: until },
+          OR: [
+            { status: { in: ['cancelled', 'late_cancelled'] } },
+            { status: 'scheduled', confirmation: 'declined' },
+          ],
         },
+        select: {
+          id: true, startAt: true, endAt: true, modality: true, status: true,
+          confirmation: true, declineReason: true, clientId: true,
+          client: { select: { code: true, firstName: true, lastName: true } },
+          clinician: { select: { id: true, name: true } },
+          room: { select: { name: true } },
+        },
+        orderBy: { startAt: 'asc' },
+      });
+      if (openings.length === 0) return [];
+
+      // One query for the whole list rather than one per opening: the matching
+      // rule is cheap and the round trips are not.
+      const entries = await tx.waitlistEntry.findMany({
+        where: { active: true },
+        select: ENTRY_SELECT,
         orderBy: { createdAt: 'asc' },
       });
 
-      return entries.filter((e) => {
-        if (e.weekdays.length && !e.weekdays.includes(weekday)) return false;
-        if (e.earliestMinute !== null && slot.startMinute < e.earliestMinute) return false;
-        if (e.latestMinute !== null && slot.startMinute > e.latestMinute) return false;
-        return true;
+      return openings.map((o) => {
+        const when = utcToZoned(o.startAt);
+        return {
+          ...o,
+          date: when.date,
+          startMinute: when.minutes,
+          /** Free now, versus told-us-they-are-not-coming. */
+          freed: o.status !== 'scheduled',
+          noticeHours: Math.floor((o.startAt.getTime() - now.getTime()) / HOUR),
+          matches: entries.filter(
+            // Never offer a client the hour they just gave back.
+            (e) => e.client.id !== o.clientId && fits(e, when.weekday, when.minutes),
+          ),
+        };
       });
     },
   );
