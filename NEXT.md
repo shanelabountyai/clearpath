@@ -1,119 +1,82 @@
 # Next
 
-**Item:** nothing outstanding. Phase 15 recorded the rendered language on
-`OutboxMessage` — the oldest carried-over item, open since Phase 11 — and the
-next step is again a choice rather than a queue.
+**Item:** nothing outstanding. Phase 16 built the work list for charges a
+correction leaves standing — the item Phase 15's handoff called its best-argued
+next one — and the directions below are again a choice rather than a queue.
 
-Phase 15 is committed and pushed. What landed on top of Phase 14:
+Phase 16 is committed and pushed. What landed on top of Phase 15:
 
-**Every phase since P2 has added a precondition to the same fee, and every one
-was found by asking what a piece of evidence actually proves.** This one asks it
-of the last thing left unasked: the messages are in a language, and the system
-could not say which. `OutboxMessage` carried a body, a channel, a delivery state
-and four timestamps, and every reader that needed the language looked at
-`Client.language` instead.
+**The sweep asks its preconditions once, before the money, and reads only
+`pending`.** That is correct for a job and wrong for a record. `Client.language`
+is a field somebody corrects, and a correction travels back into neither the
+messages already delivered nor the fees those messages justified.
 
-**The rule that was already there is a rule about the send, not about the
-evidence.** `queueToClient` refuses to render a template with no body in the
-client's language and the cadence asks the same thing before it queues, so
-nothing is ever *sent* in a language the client is not down as reading. Both read
-`Client.language` live, which is correct and is the only thing they could read.
-It says nothing about a record corrected afterwards. A client entered as English
-in June and put right in August has three delivered English reminders on the row:
-they arrived, they arrived in time, nobody could read them, and every precondition
-returned true because each one asked the *record* what the client can read.
+**And the realistic order is the awkward one.** Corrections often happen
+*because* somebody was charged: the client rings about ninety dollars, and
+somewhere in that conversation it comes out that the practice has had them down
+in the wrong language since intake. The sweep produced the phone call and is the
+one thing that will never revisit its own answer.
 
-**One column, written once, at render time.**
-
-```prisma
-/// The language this body was actually written in, decided at render time and
-/// never re-derived.
-language Language?
-```
-
-Nullable, and the migration backfills nothing. Stamping historical rows with the
-client's current language would manufacture exactly the agreement the column
-exists to test for — a corrected client's English reminders relabelled Spanish,
-erasing the one case it is for. `null` reads as unproven, the same posture
-`deliveryProven` takes towards a message no carrier ever spoke about.
-
-**The exemption is the visible half; the filter is the half that took the
-thinking.** Every other precondition now runs on the legible messages alone:
+**Three answers, and the third is the one worth the type:**
 
 ```ts
-const legible = asked.filter((r) => readable([r.outboxMessage?.language], appt.client.language));
+export type FeeSupport = 'supported' | 'unreadable' | 'unrecorded';
 ```
 
-A client corrected mid-cadence has two delivered English reminders and one
-Spanish one that failed. Asking only "was there *a* readable message" passes —
-there was one — and `deliveryProven` would then look at all three, find two
-deliveries, and charge them on messages they cannot read. Narrowing the evidence
-set makes the right answer (`confirmation_undelivered`) fall out instead of
-needing a rule of its own.
+Rows from before `OutboxMessage.language` existed cannot be checked either way.
+Calling them unsupported turns every historical fee into an accusation nothing
+can back; calling them supported is the assumption the whole line of work
+refuses. They are counted and not named, and the count is on the page — a list
+that omitted them silently would read as "these are all of them".
 
-**The seeded quarter had a metric for this and it could not fail.** It read
-`canRender(templateKey, client.language)` — whether a body *exists* in that
-language — and both shipped languages have every body, so the answer was yes for
-every row regardless of what any of them said. It is now
-`canRender(templateKey, m.language)`, a claim about what was written, and three
-metrics replace what it was pretending to be.
+**The list decides nothing, which is the design rather than a limitation.**
+`waiveFee` already exists with a named actor, a reason and one role that may use
+it; the row may already have been discussed with the client; and how a practice
+handles its own billing errors is a policy question rather than a rule a nightly
+job applies. What was missing was never the decision — it was that nobody could
+see the rows. Derived rather than stored, so correcting a record back clears the
+row on its own and a waived fee leaves it.
 
-Gate at this commit: unit **2100/2100**, typecheck clean, e2e **98/98** against a
-production build, seed green on **all fifty-one** metrics. The charge rate falls
-from 4.28% to **4.00%** — 27 fees of 675 eligible, down from 29 of 677. Two fees,
-which is the right size: rare, and indefensible every time.
-
-**The handoff asked for the rendered hour too, and it should not exist.**
-`expiresAt` already holds it, documented on the schema as "the start of the hour
-it is about", and the hour is in the body as text besides. A third copy of a fact
-the row holds twice is what this codebase argues against everywhere else. The
-language is different in kind: it cannot be recovered from the row at all, and
-its only pointer was a field that mutates. That item is closed, not deferred.
+Gate at this commit: unit **2118/2118**, typecheck clean, e2e **100/100** against a
+production build, seed green on **all fifty-four** metrics.
 
 **Four things worth knowing before building on this.**
 
-1. **A correction is retroactive and the sweep is not.** `runNonResponseSweep`
-   reads only `pending`, so a correction arriving after the sweep leaves the old
-   fee standing on evidence that is no longer good — and that is the *realistic*
-   case, because corrections often happen because somebody was charged. It is
-   named in the write-up rather than closed, and it is why the seed fixture picks
-   clients with exactly one silent session in the quarter: seeded the other way,
-   the quarter would contain a charge its own metric correctly calls unsupported.
-   This is the best-argued next item on the list below.
-2. **A session the client attended is not affected, and the first draft of the
-   e2e assertion said it was.** Those rows carry the ordinary session fee, which
-   rests on their having come rather than on anything they read. Scoping the
-   query to `no_response` alone found five of them; the fee this policy produces
-   is the `no_show` one, which is the distinction `metrics.ts` already drew.
-3. **`auth.spec.ts` "the same code will not open a second session" now sets its
-   own 90-second budget.** `freshCode` blocks until the step the sign-in before
-   it just spent has rolled over — up to a full thirty-second TOTP period, which
-   is the entire default per-test budget — and then two more sign-in flows have
-   to fit in what is left. It failed one of four gate runs on nothing but where
-   the wall clock happened to be. Waiting is the rule the spec is testing, so the
-   budget is what gives. Unrelated to this phase; found by running the gate.
-4. **The seed's per-appointment fixtures check the time window before the row
-   state.** `toMove` does; `toCorrect` did not on the first draft, and every
-   entry was silently dropped on the first tick of the quarter, because a session
-   is `not_required` until the cadence reaches it and promotes it. The fixture
-   produced nothing and the only symptom was two metrics reading zero.
+1. **A metric inverted when the fixture landed, and the number was right.**
+   Seeding two late corrections took *a translated client is charged at the same
+   rate as anybody else* from 4.48% to 5.62%. A correction to Spanish is exactly
+   what moves a wrongly-charged client into the Spanish cohort, so the metric had
+   begun counting the practice's own discovered errors as policy outcomes — the
+   more mistakes it found, the more it would report that translated clients get
+   charged more. It counts supported charges only now, and reads 3.37%. The
+   pattern is worth remembering: a fixture that introduces a new population can
+   invert a metric measuring a different one, and the failure looks exactly like
+   a regression in the thing the metric names.
+2. **"No fee rests on an unreadable message" was one sentence carrying two
+   facts.** The rule — the sweep never charges on what the record then called
+   unreadable — still holds absolutely, and is now scoped to fees whose client's
+   record has not been touched since the charge. The state it also implied is not
+   true of any practice where people correct records. Three metrics replace it.
+3. **The retrospective check reuses the sweep's own narrowings rather than
+   inventing its own.** `dueAt >= bookedAt` from §16 and `deliveryState ===
+   'delivered'` from the carrier rule. Asking a wider question afterwards than
+   the fee was answered by would produce findings the charge never rested on.
+4. **`npx playwright test <spec>` does not reseed the e2e database.** Only
+   `npm run test:e2e` does. A new seed fixture will not be there for a
+   single-spec run, and the symptom is a section that renders empty rather than
+   an error — an hour is available to anybody who forgets this twice.
 
 Where this could go next, in no particular order and none of it queued:
 
-- **What a correction owes the fees it invalidates.** Item 1 above. The narrow
-  version is a work-list entry — "this client's language changed; three sessions
-  were charged on messages in the old one" — which tells a person and decides
-  nothing. The wide version is an automatic stand-down, which is money reversed
-  on a row somebody may already have discussed with the client, and is a decision
-  about how a practice handles its own mistakes rather than a rule a nightly job
-  applies. The narrow version is the defensible one and it is still not free: it
-  needs a query that is honest about *when* the correction happened, which today
-  is only recoverable from the audit log.
 - **Rate-limiting the reset request form.** An unauthenticated form that sends
   mail is a form somebody can point at a list of addresses. What it cannot do is
   *answer* — every outcome is one sentence — so today's exposure is mail volume
   rather than the staff list, which is why this is a direction rather than a
   hole.
+- **The same question about a corrected phone number.** A number corrected after
+  a charge raises the retrospective question in a much narrower form, because
+  `deliveryProven` already refuses to charge without a receipt. Named in the
+  write-up as not built rather than pretended to be covered.
 - **A third language**, and **the intake forms in Spanish** — the second is not
   a copy task, because a screener's wording is clinically validated per language
   and a mistranslated item changes what the score means.
@@ -121,8 +84,9 @@ Where this could go next, in no particular order and none of it queued:
 **The standing recommendation, unchanged and not withdrawn.** Risk 1: in
 counseling, non-response correlates with the reason people are attending, so
 this policy's fee falls hardest on the clients least able to answer, and the
-practice learns about it as attrition rather than as complaints. The seeded
-quarter now reads **27 charged of 675 (4.00%)**. Seven phases of preconditions
+practice learns about it as attrition rather than as complaints. The seeded quarter reads **27 charged of 675 (4.00%)**, and four of those
+charges are now visibly resting on nothing — which is the number this phase
+added and the practice's to act on. Seven phases of preconditions
 have removed ways of charging the *wrong* people, and every one of those guards is
 green: 0 charged without a delivered message, 0 charged when never messaged, 0
 charged for a session moved too late to re-ask, 0 charged on a message they could

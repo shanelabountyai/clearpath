@@ -2135,6 +2135,142 @@ corrects a record, and the whole phase is about the interval where they do not.
 
 ---
 
+## 20. What a correction owes the fees it already produced
+
+Every precondition on the non-response fee is asked **once**, before the money,
+by a job that reads only `pending`. That is correct for a job — it is what makes
+the sweep idempotent and safe to run hourly — and it is wrong for a record.
+
+`Client.language` is a field somebody corrects. A correction does not travel
+back into the messages already delivered, and it does not travel back into the
+fees those messages justified. The previous phase closed the prospective half:
+the sweep now refuses to charge on messages written in a language the record
+does not say the client reads. What it cannot do is revisit a charge it has
+already made.
+
+The realistic version is worse than the abstract one, and it is the reason this
+is a phase rather than a footnote. **Corrections often happen *because* somebody
+was charged.** The client rings up about ninety dollars, and somewhere in that
+conversation it comes out that the practice has had them down in the wrong
+language since intake. The sweep produced the phone call, and the sweep is the
+one thing in the system that will never look at that row again.
+
+### Three answers, not two
+
+```ts
+export type FeeSupport = 'supported' | 'unreadable' | 'unrecorded';
+
+export function feeSupport(
+  rendered: readonly (Language | null | undefined)[],
+  language: Language,
+): FeeSupport {
+  if (readable(rendered, language)) return 'supported';
+  return rendered.some((l) => !!l) ? 'unreadable' : 'unrecorded';
+}
+```
+
+The third answer is the one worth the type. Rows from before
+`OutboxMessage.language` existed carry no rendered language at all, and nobody
+can say whether the client could read them. Folding them into `unreadable` would
+turn every historical fee into an accusation nothing can back; folding them into
+`supported` would be the assumption this whole line of work exists to refuse. So
+they are counted and not named, and the count is on the page — because a list
+that quietly omitted them would read as *these are all of them*.
+
+The mixed case settles the wording. One recorded English message and one
+unrecorded is `unreadable`, and what the row may therefore claim is "no message
+behind this charge is known to be in a language they read" — not "the client
+could not read these", which would be asserting something about the unknown one.
+
+### The list decides nothing, and that is the design
+
+`unsupportedFees` reverses no fee, marks nothing handled, and writes nothing at
+all. Three reasons, in order of how much they mattered:
+
+1. **`waiveFee` already exists**, and it is the right shape: a named actor, a
+   reason code, an audit row, and one role that may do it. Money coming back is
+   a decision, and it should keep having a decider.
+2. **The row may already have been discussed with the client.** A nightly job
+   reversing a charge somebody agreed to pay last Tuesday is the practice
+   contradicting itself in front of the person it is trying to make things right
+   with.
+3. **It is a policy question, not a rule.** How a practice handles its own
+   billing errors — reverse silently, ring and explain, credit the next session
+   — is a decision about that practice. What was missing was never the decision.
+   It was that *nobody could see the rows*.
+
+Derived rather than stored, like `unreachableClients`: correcting a record back
+takes a row off the list on its own, and a fee somebody waives leaves it. There
+is no state to tidy, which matters because a list that has to be tidied gets
+tidied instead of worked.
+
+### The evidence set is the one the charge rested on
+
+```ts
+const delivered = appt.reminders
+  .filter((r) => r.dueAt >= appt.bookedAt)
+  .filter((r) => r.outboxMessage?.deliveryState === 'delivered')
+  .map((r) => r.outboxMessage?.language);
+```
+
+Both narrowings are borrowed rather than invented. `dueAt >= bookedAt` is the
+reschedule rule from §16 — messages about an hour the practice withdrew were
+never evidence for this charge. `deliveryState === 'delivered'` is the carrier
+rule. Asking a *wider* question afterwards than the fee was answered by would
+produce findings the charge never rested on, which is a different kind of wrong
+from the one being fixed.
+
+The case that makes it concrete: a client corrected mid-cadence has two English
+reminders delivered and one Spanish reminder that failed. The Spanish one is in
+a language they read and it does not rescue the fee, because it never arrived.
+
+### The metric that had to be split
+
+The seeded quarter asserted *no fee rests on a message the client could not
+read* — zero, across the whole quarter. That sentence was carrying two facts,
+and only one of them is a rule:
+
+- The sweep never **charges** on a message the record then said was unreadable.
+  That is the guarantee, and it still holds absolutely.
+- No charged fee currently rests on unreadable messages. That is not true of any
+  practice where people correct records, which is every practice.
+
+So the invariant is now scoped to what the sweep actually decided — fees whose
+client's record has not been touched since the charge — and three metrics carry
+what the old one was pretending to cover: the quarter contains such charges, the
+work list names them and only them, and reading it reverses nothing.
+
+### A metric that inverted when the fixture landed
+
+Seeding two late corrections broke *a translated client is charged at the same
+rate as anybody else*: it went from 4.48% to 5.62% against a practice-wide 4%.
+
+The number was right and the claim had become wrong. A correction to Spanish is
+exactly what moves a wrongly-charged client into the Spanish cohort, so the
+metric was counting the practice's own discovered errors as policy outcomes —
+the more mistakes it found, the more it would report that translated clients get
+charged more. It now counts supported charges only, and reads 3.37%.
+
+Worth naming as a pattern rather than a fix: a fixture that introduces a new
+population can invert a metric that was measuring a different one, and the
+failure looks exactly like a regression in the thing the metric names.
+
+### What this deliberately does not do
+
+- **It does not reverse anything.** See above. The affordance on the row is a
+  link to the session, where `waiveFee` lives behind the one role that holds it.
+- **It does not tell you when the correction happened.** The audit log has the
+  update rows and the metric uses them, but the list does not: "the record says
+  Spanish and the messages say English" is the whole finding, and a date on it
+  would imply a causal claim about *which* edit did it that a generic client
+  update cannot support.
+- **It does not look at anything but language.** A phone number corrected after
+  a charge raises the same question, and `deliveryProven` already refuses to
+  charge without a receipt, so the case is much narrower. It is not built, and
+  it is not pretended to be.
+
+---
+
 ## Decisions log
 
 | Decision | Why |
@@ -2284,6 +2420,13 @@ corrects a record, and the whole phase is about the interval where they do not.
 | Every precondition runs on the legible messages, not just the new one | A client corrected mid-cadence has delivered English reminders and a failed Spanish one. Asking only "was there a readable message" passes, and `deliveryProven` then charges them on the two they cannot read. Narrowing the evidence set makes the right answer fall out instead of needing a rule of its own |
 | The language check runs before the delivery check | When both are true it is the more fundamental: a message that could not have been answered had it arrived is not an addressing problem, and the four exemptions have to stay four distinct reasons |
 | A fee already charged is not revisited when a record is corrected | The sweep reads only `pending`. Reversing money on a row a person may already have discussed with the client is a decision about how a practice handles a mistake, not a rule a nightly job applies. Named as the open case rather than closed badly |
+| `feeSupport` has three answers rather than two | Rows from before the rendered language was recorded cannot be checked either way. Calling them unsupported turns every historical fee into an accusation nothing can back; calling them supported is the assumption the whole line of work refuses. They are counted, not named, and the count is on the page — a list that omitted them silently would read as "these are all of them" |
+| The mixed case is `unreadable`, and the row's wording follows from it | One recorded English message and one unrecorded means nothing there is *known* to be readable, which is what the list claims. "The client could not read these" would be asserting something about the unknown one |
+| The work list reverses nothing | `waiveFee` already exists with a named actor, a reason and one role that may use it; the row may already have been discussed with the client; and how a practice handles its own billing errors is a policy question rather than a rule a nightly job applies. What was missing was never the decision — it was that nobody could see the rows |
+| Derived, not stored, like `unreachableClients` | Correcting a record back clears the row on its own and a waived fee leaves it, so there is no state to tidy. A list that must be tidied gets tidied instead of worked |
+| The retrospective check reuses the sweep's own two narrowings | `dueAt >= bookedAt` and `deliveryState === 'delivered'` are borrowed from §16 and from the carrier rule. Asking a wider question afterwards than the fee was answered by would produce findings the charge never rested on — a different kind of wrong from the one being fixed |
+| "No fee rests on an unreadable message" split into three metrics | One sentence was carrying a rule and a state. The rule — the sweep never charges on what the record then called unreadable — still holds absolutely, and is now scoped to fees whose record has not moved since. The state is not true of any practice where people correct records |
+| The translated-client rate counts supported charges only | A correction to Spanish is exactly what moves a wrongly-charged client into that cohort, so the metric had begun counting the practice's own discovered errors as policy outcomes: the more mistakes it found, the more it would report that translated clients are charged more |
 | The cadence is a script and a function, with no scheduler dependency | Due times derive from `startAt` and the injected clock, so the job is idempotent and the schedule is an implementation detail of whatever calls it — cron, a timer, a hosted trigger, or a person typing `npm run reminders:run`. A missed hour costs lateness and nothing else, and the whole five-day cadence runs in a test in a millisecond because the clock is an argument |
 
 ## What this project deliberately is not

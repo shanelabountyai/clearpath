@@ -8,8 +8,9 @@ import { bookAppointment, rescheduleAppointment } from './booking';
 import { bookGroupSession } from './groups';
 import { setStatus, type Status } from './lifecycle';
 import { dispatchOutbox, recordReceipt } from '../messaging/delivery';
+import { LANGUAGES, type Language } from '../messaging/language';
 import { runReminderHorizon } from './reminders';
-import { sweepAt, runNonResponseSweep, type SweepAction } from './nonresponse';
+import { sweepAt, feeSupport, runNonResponseSweep, type SweepAction } from './nonresponse';
 import type { Confirmation } from './confirmation';
 
 /** 2026-09-01 15:00 America/New_York, as everywhere else in this suite. */
@@ -88,6 +89,80 @@ describe('what silence means (pure)', () => {
     expect(decide('scheduled', 'pending', false)).toBe('record');
     for (const status of STATUSES) {
       expect(decide(status, 'pending', false), status).not.toBe('no_show');
+    }
+  });
+});
+
+/**
+ * P16. The same question, asked of a charge that has already landed.
+ *
+ * The sweep asks its preconditions once and never again — it reads only
+ * `pending`, so a row it has decided is a row it will not look at twice. A
+ * correction arriving afterwards is therefore invisible to it, and that is the
+ * realistic case rather than the exotic one: corrections often happen *because*
+ * somebody was charged and rang up about it.
+ *
+ * Three answers, and the third is the one worth the table. "We cannot tell" is a
+ * different statement from "this was wrong", and a list that conflated them
+ * would either accuse every historical fee or quietly excuse every one.
+ */
+describe('whether a charge still rests on anything (pure)', () => {
+  it('holds where one delivered message was in a language they read', () => {
+    expect(feeSupport(['es'], 'es')).toBe('supported');
+    expect(feeSupport(['en', 'es'], 'es')).toBe('supported');
+    // Order is not evidence: one readable message anywhere in the set is enough,
+    // exactly as one delivered stage is enough for `deliveryProven`.
+    expect(feeSupport(['es', 'en', 'en'], 'es')).toBe('supported');
+  });
+
+  it('reports a charge whose messages were all in some other language', () => {
+    expect(feeSupport(['en'], 'es')).toBe('unreadable');
+    expect(feeSupport(['en', 'en', 'en'], 'es')).toBe('unreadable');
+  });
+
+  /**
+   * The rows from before the language was recorded, and the reason this is not
+   * a boolean. `null` is not agreement — `readable` already says so, and the
+   * sweep refuses to charge on it — but a fee that *already exists* cannot be
+   * called unsupported on the strength of a column that did not exist when it
+   * was written. Nobody can tell, and the list says so rather than guessing in
+   * either direction.
+   */
+  it('says it cannot tell where no language was ever recorded', () => {
+    expect(feeSupport([null], 'es')).toBe('unrecorded');
+    expect(feeSupport([null, undefined], 'es')).toBe('unrecorded');
+    expect(feeSupport([], 'es')).toBe('unrecorded');
+  });
+
+  /**
+   * The mixed case, and the wording it forces. One recorded English message and
+   * one unrecorded is enough to say "nothing here is *known* to be readable",
+   * which is what the list claims — not "the client could not read these",
+   * which would be claiming something about the unknown one.
+   */
+  it('reports the mixed case, because nothing in it is known to be readable', () => {
+    expect(feeSupport(['en', null], 'es')).toBe('unreadable');
+    expect(feeSupport([null, 'en'], 'es')).toBe('unreadable');
+  });
+
+  it('never returns an answer outside the three', () => {
+    const sets: (Language | null | undefined)[][] = [
+      [], [null], ['en'], ['es'], ['en', 'es'], ['en', null], [null, undefined, 'es'],
+    ];
+    for (const language of LANGUAGES) {
+      for (const set of sets) {
+        expect(['supported', 'unreadable', 'unrecorded']).toContain(feeSupport(set, language));
+      }
+    }
+  });
+
+  /** A client reading the language it was written in is always supported. */
+  it('agrees with itself across every shipped language', () => {
+    for (const language of LANGUAGES) {
+      expect(feeSupport([language], language)).toBe('supported');
+      for (const other of LANGUAGES.filter((l) => l !== language)) {
+        expect(feeSupport([other], language)).toBe('unreadable');
+      }
     }
   });
 });

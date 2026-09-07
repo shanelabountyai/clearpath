@@ -5,8 +5,9 @@ import { prisma } from '../db';
 import { Forbidden } from '../errors';
 import { bookAppointment } from '../scheduling/booking';
 import { cancelAppointment, setStatus, waiveFee } from '../scheduling/lifecycle';
-import { continuityQueue, freedSlots, unconfirmedSoon, unreachableClients, vacationImpact, waitlistMatches } from '../scheduling/worklists';
+import { continuityQueue, freedSlots, unconfirmedSoon, unreachableClients, unsupportedFees, vacationImpact, waitlistMatches } from '../scheduling/worklists';
 import { actor, deliverOutbox, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
+import { ROLES } from '../auth/permissions';
 import { confirmationTrail, noResponseFees, queryAuditLog, toCsv } from './audit';
 import { runReminderHorizon } from '../scheduling/reminders';
 import { runNonResponseSweep } from '../scheduling/nonresponse';
@@ -998,6 +999,226 @@ describe('the clients nobody could reach', () => {
     await messaged('failed');
     const text = JSON.stringify(await unreachableClients(actor(desk), { clock }));
     for (const term of ['Appointment reminder: Tuesday 15:00', 'Stillwater', 'subject', 'body']) {
+      expect(text).not.toContain(term);
+    }
+  });
+});
+
+
+/**
+ * P16. Charges the record no longer supports.
+ *
+ * Every precondition on the fee is asked once, before the money, by a job that
+ * reads only `pending` — so a correction arriving afterwards is invisible to it,
+ * and that is the realistic case rather than the exotic one: the client rings
+ * about a ninety-dollar fee, and in that conversation it emerges the practice
+ * has had them down in the wrong language since intake. The sweep produced the
+ * call and will never revisit its own answer.
+ */
+describe('the charges a correction leaves standing', () => {
+  const START = new Date('2026-09-01T19:00:00Z');
+  const clock = fixedClock(START);
+  let desk: Awaited<ReturnType<typeof makeUser>>;
+  let therapist: Awaited<ReturnType<typeof makeUser>>;
+  let other: Awaited<ReturnType<typeof makeUser>>;
+
+  beforeEach(async () => {
+    await resetDb();
+    await settings();
+    desk = await makeUser('front_desk');
+    therapist = await makeUser('therapist');
+    other = await makeUser('therapist');
+  });
+
+  /**
+   * A session charged for silence, with its reminders written in `renderedIn`.
+   *
+   * Built directly rather than driven through the cadence, because what this
+   * list reads is a *finished* row — the sweep has already run, the money has
+   * already landed, and the correction is what happens next. Driving the cadence
+   * would test the cadence.
+   */
+  async function charged(opts: {
+    renderedIn: ('en' | 'es' | null)[];
+    reads?: 'en' | 'es';
+    /** Indices of `renderedIn` a carrier never delivered. */
+    failed?: number[];
+    clinicianId?: string;
+    status?: 'no_show' | 'completed';
+    waived?: boolean;
+    startAt?: Date;
+  }) {
+    const clinicianId = opts.clinicianId ?? therapist.id;
+    const client = await makeClient(clinicianId);
+    await prisma.client.update({
+      where: { id: client.id },
+      data: { email: 'tc@example.test', language: opts.reads ?? 'es' },
+    });
+    const startAt = opts.startAt ?? new Date(START.getTime() - 2 * DAY);
+    const appt = await prisma.appointment.create({
+      data: {
+        clientId: client.id, clinicianId, startAt,
+        endAt: new Date(startAt.getTime() + 50 * 60_000),
+        modality: 'telehealth',
+        createdAt: new Date(startAt.getTime() - 30 * DAY),
+        bookedAt: new Date(startAt.getTime() - 30 * DAY),
+        status: opts.status ?? 'no_show',
+        confirmation: 'no_response',
+        chargeFeeCents: 9000,
+        ...(opts.waived
+          ? { feeWaivedAt: START, feeWaiveReason: 'practice_error', feeWaivedById: desk.id }
+          : {}),
+      },
+    });
+
+    const stages = ['d5', 'd1', 'd0'] as const;
+    for (const [i, language] of opts.renderedIn.entries()) {
+      const message = await prisma.outboxMessage.create({
+        data: {
+          clientId: client.id, channel: 'email', templateKey: 'appointment_reminder',
+          subject: 'Appointment reminder', body: 'Appointment reminder: Tuesday 15:00.',
+          scheduledFor: startAt, language,
+          deliveryState: opts.failed?.includes(i) ? 'failed' : 'delivered',
+          ...(opts.failed?.includes(i)
+            ? { failureCode: 'unreachable', decidedAt: startAt }
+            : { deliveredAt: startAt, sentAt: startAt, decidedAt: startAt }),
+        },
+      });
+      await prisma.appointmentReminder.create({
+        data: {
+          appointmentId: appt.id, stage: stages[i]!,
+          dueAt: new Date(startAt.getTime() - (3 - i) * DAY),
+          sentAt: startAt, outboxMessageId: message.id,
+        },
+      });
+    }
+    return { client, appt };
+  }
+
+  it('names a charge whose messages were all in the language the record used to say', async () => {
+    const { client } = await charged({ renderedIn: ['en', 'en', 'en'], reads: 'es' });
+
+    const { fees, uncheckable } = await unsupportedFees(actor(desk), { clock });
+    expect(uncheckable).toBe(0);
+    expect(fees).toHaveLength(1);
+    expect(fees[0]).toMatchObject({
+      chargeFeeCents: 9000, renderedIn: ['en'], readsIn: 'es',
+    });
+    expect(fees[0]!.client.id).toBe(client.id);
+  });
+
+  it('leaves a charge alone where one delivered message was readable', async () => {
+    await charged({ renderedIn: ['en', 'es'], reads: 'es' });
+    expect((await unsupportedFees(actor(desk), { clock })).fees).toEqual([]);
+  });
+
+  /**
+   * The narrowing the sweep already does, applied to the same question asked
+   * afterwards.
+   *
+   * A client corrected mid-cadence: two English reminders delivered, and the one
+   * Spanish reminder the corrected record produced never arrived. A message that
+   * did not arrive is not evidence the charge rested on, so it does not rescue
+   * the fee — this is the case the previous phase's `legible` filter exists for,
+   * read back from the other end.
+   */
+  it('does not count a readable message that never arrived', async () => {
+    await charged({ renderedIn: ['en', 'en', 'es'], failed: [2], reads: 'es' });
+
+    const { fees } = await unsupportedFees(actor(desk), { clock });
+    expect(fees).toHaveLength(1);
+    // And the row says what was actually read, not what was attempted.
+    expect(fees[0]!.renderedIn).toEqual(['en']);
+  });
+
+  /**
+   * The third answer, and the reason this is not a boolean. Rows from before
+   * `OutboxMessage.language` existed cannot be checked either way. Calling them
+   * unsupported would turn every historical fee into an accusation nothing can
+   * back; calling them supported would be the assumption the phase refuses.
+   */
+  it('counts a charge it cannot check, and does not name it', async () => {
+    await charged({ renderedIn: [null, null], reads: 'es' });
+    const { fees, uncheckable } = await unsupportedFees(actor(desk), { clock });
+    expect(fees).toEqual([]);
+    expect(uncheckable).toBe(1);
+  });
+
+  it('names the mixed case, because nothing in it is known to be readable', async () => {
+    await charged({ renderedIn: ['en', null], reads: 'es' });
+    const { fees, uncheckable } = await unsupportedFees(actor(desk), { clock });
+    expect(fees).toHaveLength(1);
+    expect(uncheckable).toBe(0);
+  });
+
+  /**
+   * A client who never answered and then walked in pays the ordinary session
+   * fee, which rests on their having come rather than on anything they read. A
+   * correction does not touch it, and a list that named it would be sending
+   * somebody to reverse a charge for a session that happened.
+   */
+  it('ignores a session the client attended, whatever language it was asked in', async () => {
+    await charged({ renderedIn: ['en'], reads: 'es', status: 'completed' });
+    const { fees, uncheckable } = await unsupportedFees(actor(desk), { clock });
+    expect(fees).toEqual([]);
+    expect(uncheckable).toBe(0);
+  });
+
+  /** Already stood down by a person. Listing it sends somebody to fix what is fixed. */
+  it('drops a fee somebody has already waived', async () => {
+    await charged({ renderedIn: ['en'], reads: 'es', waived: true });
+    expect((await unsupportedFees(actor(desk), { clock })).fees).toEqual([]);
+  });
+
+  /**
+   * Derived, so correcting the record back clears the row without anybody
+   * marking anything handled — the same property `unreachableClients` has, and
+   * for the same reason: a list that has to be tidied gets tidied instead of
+   * worked.
+   */
+  it('clears itself when the record is corrected back', async () => {
+    const { client } = await charged({ renderedIn: ['en'], reads: 'es' });
+    expect((await unsupportedFees(actor(desk), { clock })).fees).toHaveLength(1);
+
+    await prisma.client.update({ where: { id: client.id }, data: { language: 'en' } });
+    expect((await unsupportedFees(actor(desk), { clock })).fees).toEqual([]);
+  });
+
+  it('writes nothing at all — it reverses no fee and marks nothing handled', async () => {
+    const { appt } = await charged({ renderedIn: ['en'], reads: 'es' });
+    await unsupportedFees(actor(desk), { clock });
+
+    const after = await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } });
+    expect(after.chargeFeeCents).toBe(9000);
+    expect(after.feeWaivedAt).toBeNull();
+    expect(after.confirmation).toBe('no_response');
+  });
+
+  it('shows a clinician their own caseload and nobody else’s', async () => {
+    await charged({ renderedIn: ['en'], reads: 'es', clinicianId: other.id });
+
+    expect((await unsupportedFees(actor(therapist), { clock })).fees).toEqual([]);
+    expect((await unsupportedFees(actor(other), { clock })).fees).toHaveLength(1);
+    // Front desk and the practice manager handle the money, so they see all.
+    expect((await unsupportedFees(actor(desk), { clock })).fees).toHaveLength(1);
+  });
+
+  it('is refused to a role with no claim on a fee', async () => {
+    for (const role of ROLES.filter((r) => r === 'auditor' || r === 'client')) {
+      const who = await makeUser(role);
+      await expect(unsupportedFees(actor(who), { clock })).rejects.toBeInstanceOf(Forbidden);
+    }
+  });
+
+  /**
+   * The same rule every work-list built on the outbox meets. This one is one
+   * careless `select` from putting a reminder body on a front-desk screen, and
+   * the finding needs the *language* rather than the words.
+   */
+  it('carries no message content anywhere in it', async () => {
+    await charged({ renderedIn: ['en'], reads: 'es' });
+    const text = JSON.stringify(await unsupportedFees(actor(desk), { clock }));
+    for (const term of ['Appointment reminder: Tuesday 15:00', 'subject', 'body']) {
       expect(text).not.toContain(term);
     }
   });

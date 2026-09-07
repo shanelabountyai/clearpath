@@ -131,6 +131,43 @@ test.describe('what the practice sees', () => {
   });
 
   /**
+   * P16. The one list on the page about money already taken.
+   *
+   * The seeded quarter corrects two records *after* their fee was charged, which
+   * is the realistic order: the client rings about a ninety-dollar charge, and
+   * in that conversation it emerges the practice has had them down in the wrong
+   * language since intake. The sweep produced the call and reads only `pending`,
+   * so it will never revisit its own answer.
+   */
+  test('front desk gets the charges a correction left unsupported, and nothing is reversed', async ({ page }) => {
+    const before = sql(
+      `select count(*) from "Appointment" where status = 'no_show'`
+      + ` and confirmation = 'no_response' and "chargeFeeCents" is not null and "feeWaivedAt" is null`,
+    );
+
+    await actAs(page, USERS.frontDesk);
+    await page.goto('/worklists');
+
+    const section = page.locator('section').filter({ hasText: 'Charges the record no longer supports' });
+    await expect(section.getByRole('heading', { name: 'Charges the record no longer supports' })).toBeVisible();
+    // The finding on the row is the two languages and the money, and no more
+    // than that: what was written, what they read, what it cost.
+    await expect(section.getByText(/asked in en, reads es/).first()).toBeVisible();
+    await expect(section.getByText('$90.00 charged').first()).toBeVisible();
+
+    // It is a list, not a lever. There is nothing on it that reverses a fee —
+    // `waiveFee` is the reversal and it takes a named actor and a reason.
+    await expect(section.getByRole('button')).toHaveCount(0);
+    expect(sql(
+      `select count(*) from "Appointment" where status = 'no_show'`
+      + ` and confirmation = 'no_response' and "chargeFeeCents" is not null and "feeWaivedAt" is null`,
+    )).toBe(before);
+
+    // And no message content, here as on every other front-desk surface.
+    await expect(page.getByText('Please let us know if you are coming')).toHaveCount(0);
+  });
+
+  /**
    * The delivery rate belongs in the same glance as the charge rate, because it
    * is now the charge's precondition: a practice reading "we charged 33 people"
    * needs "and 23 reminders never arrived" without changing pages.

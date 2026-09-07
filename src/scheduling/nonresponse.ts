@@ -3,7 +3,7 @@ import { SYSTEM_ACTOR } from '../auth/permissions';
 import { systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
 import { answerable, deliveryProven } from '../messaging/carrier';
-import { readable } from '../messaging/language';
+import { readable, type Language } from '../messaging/language';
 import { confirmationRequired, type Confirmation, type ConfirmationSettings } from './confirmation';
 import { setStatus, type Status } from './lifecycle';
 
@@ -76,6 +76,50 @@ export function sweepAt(
   // money, which is what a practice will want the week its client agreement
   // gets reviewed.
   return settings.autoNoShowOnNoResponse ? 'no_show' : 'record';
+}
+
+/**
+ * Whether a charge that has already landed still rests on anything.
+ *
+ * Every precondition in this file is asked *before* the money, once, and never
+ * again — `runNonResponseSweep` reads only `pending`, so a row it has decided is
+ * a row it will never look at twice. That is correct for a job and wrong for a
+ * record: `Client.language` is a field somebody corrects, and a correction that
+ * arrives after the sweep leaves the old fee standing on evidence that has since
+ * stopped being evidence.
+ *
+ * The realistic version is worse than the abstract one. Corrections often happen
+ * *because* somebody was charged — the client rings up, and in the conversation
+ * it emerges that the practice has had them down in the wrong language all
+ * along. The sweep is what produced the call, and the sweep is the one thing
+ * that will never revisit its own answer.
+ *
+ * So the question gets asked again, from the outside, of fees that already
+ * exist. Three answers rather than two, and the third is the honest one:
+ *
+ *   - `supported` — a delivered message in a language the client reads. The
+ *     charge rests on what it always rested on.
+ *   - `unreadable` — no such message, and at least one whose language *was*
+ *     recorded. The strongest thing that can be said is what the list says: no
+ *     message behind this charge is known to be in a language they read.
+ *   - `unrecorded` — no such message and no recorded language at all. These are
+ *     the rows from before `OutboxMessage.language` existed, and the answer is
+ *     that nobody can tell. Counting them as unsupported would turn every
+ *     historical fee into an accusation nothing can back; counting them as
+ *     supported would be the assumption this whole phase exists to refuse.
+ *
+ * Pure, so the table is assertable without a fee, a client or a database — and
+ * so the difference between "we know this was wrong" and "we cannot say" is one
+ * function rather than a condition somebody re-derives on a page.
+ */
+export type FeeSupport = 'supported' | 'unreadable' | 'unrecorded';
+
+export function feeSupport(
+  rendered: readonly (Language | null | undefined)[],
+  language: Language,
+): FeeSupport {
+  if (readable(rendered, language)) return 'supported';
+  return rendered.some((l) => !!l) ? 'unreadable' : 'unrecorded';
 }
 
 export interface SweepResult {

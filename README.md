@@ -171,6 +171,13 @@ and a test greps the rest of `src/` to prove no endpoint re-implements a role ch
 
 ## Known limitations (deliberate)
 
+- **A fee the record no longer supports is surfaced, not reversed.** Every
+  precondition on the charge is asked once, before the money, by a job that reads
+  only `pending` — so a client's language corrected *after* the charge leaves the
+  fee standing on evidence that has stopped being evidence. Front desk gets a
+  work list naming those charges; nothing reverses one. `waiveFee` is the
+  reversal, it takes a named actor and a reason, and how a practice handles its
+  own billing errors is a decision that should keep having a decider.
 - **Nobody can be removed, only deactivated.** Their id is on every note they
   wrote and every audit row they made, and a trail that can lose the person it
   names is not a trail. Deactivating ends their sessions immediately and revokes
@@ -255,8 +262,8 @@ createdb clearpath_dev clearpath_test clearpath_e2e clearpath_shadow
 npm install
 npm run db:setup     # migrate all three, generate the client, seed dev + e2e
 npm run dev          # http://localhost:3700
-npm test             # 2,100 unit + integration tests
-npm run test:e2e     # 98 Playwright tests against a production build
+npm test             # 2,118 unit + integration tests
+npm run test:e2e     # 100 Playwright tests against a production build
 npm run verify:seed  # the seeded quarter, against its own success metrics
 ```
 
@@ -367,7 +374,7 @@ session, after the practice has already asked in the first one, because a
 corrected record is what separates "we asked" from "we asked in a language they
 read".
 
-The seed then checks itself. Fifty-one success metrics run as queries at the end of
+The seed then checks itself. Fifty-four success metrics run as queries at the end of
 `npm run db:seed`, and it refuses to finish if any fails — no fee for a client on
 `reminderPreference: 'none'`, **no fee without a delivered message behind it**,
 no more than 5% of eligible sessions charged, and every one of the 91 sessions
@@ -418,6 +425,7 @@ means replacing that file's values and nothing else.
 | Two languages, and what neither may say | [`src/messaging/language.ts`](src/messaging/language.ts) |
 | The carrier port, "delivered", and "in time to answer" | [`src/messaging/carrier.ts`](src/messaging/carrier.ts) |
 | The freed hour, and who may be offered it | [`src/scheduling/openings.ts`](src/scheduling/openings.ts) |
+| Whether a charge still rests on anything | [`src/scheduling/worklists.ts`](src/scheduling/worklists.ts) |
 | What a reset link may do, and the case it may not | [`src/auth/recovery.ts`](src/auth/recovery.ts) |
 | Which door an account gets, and why an admin cannot set a password | [`src/auth/accounts.ts`](src/auth/accounts.ts) |
 | The seed's own success metrics | [`prisma/metrics.ts`](prisma/metrics.ts) |

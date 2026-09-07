@@ -1,5 +1,5 @@
 import { prisma } from '../src/db';
-import { freedSlots } from '../src/scheduling/worklists';
+import { freedSlots, unsupportedFees } from '../src/scheduling/worklists';
 import { zonedToUtc } from '../src/time';
 import { indiscreetTerms } from '../src/messaging/outbox';
 
@@ -270,9 +270,26 @@ export async function seedMetrics(): Promise<Metric[]> {
   check('every message a client was sent was written in a language it has a body in',
     messagedInWrongLanguage.length === 0, `${messagedInWrongLanguage.length} such messages`);
 
-  const spanishCharged = await prisma.appointment.count({
+  // Counting only charges that still rest on something, which P16 made a
+  // distinction worth drawing.
+  //
+  // A fee the record no longer supports is a mistake under review, not a policy
+  // outcome — and it lands in this cohort by construction, because a correction
+  // to Spanish is exactly what puts a wrongly-charged client into it. Counting
+  // those here would make the number say the opposite of what it means: the
+  // quarter's Spanish rate would rise *because* the practice found its own
+  // errors, and the metric would read as a policy that charges translated
+  // clients more.
+  const spanishCharged = (await prisma.appointment.findMany({
     where: { confirmation: 'no_response', status: 'no_show', client: { language: 'es' } },
-  });
+    select: {
+      id: true, chargeFeeCents: true, feeWaivedAt: true,
+      client: { select: { language: true } },
+      reminders: { select: { outboxMessage: { select: { deliveryState: true, language: true } } } },
+    },
+  })).filter((a) => a.chargeFeeCents === null || a.feeWaivedAt !== null || a.reminders.some((r) =>
+    r.outboxMessage?.deliveryState === 'delivered' && r.outboxMessage.language === a.client.language)
+  ).length;
   const spanishAsked = await prisma.appointment.count({
     where: { ...past, confirmation: { not: 'not_required' }, client: { language: 'es' } },
   });
@@ -334,16 +351,83 @@ export async function seedMetrics(): Promise<Metric[]> {
   const feesCharged = await prisma.appointment.findMany({
     where: { confirmation: 'no_response', status: 'no_show', chargeFeeCents: { not: null } },
     select: {
-      id: true,
+      id: true, clientId: true, startAt: true, feeWaivedAt: true,
       client: { select: { language: true } },
       reminders: { select: { outboxMessage: { select: { deliveryState: true, language: true } } } },
     },
   });
   const chargedUnreadably = feesCharged.filter((a) => !a.reminders.some((r) =>
     r.outboxMessage?.deliveryState === 'delivered' && r.outboxMessage.language === a.client.language));
-  check('no fee rests on a message the client could not read',
-    chargedUnreadably.length === 0,
-    `${chargedUnreadably.length} of ${feesCharged.length} fees`);
+
+  // P16 split this metric in two, because one sentence had stopped covering two
+  // facts.
+  //
+  // What the sweep guarantees is that it never *charges* on a message the record
+  // said was unreadable. What it cannot guarantee is that the record stays where
+  // it was: it reads only `pending`, so a correction arriving after the charge
+  // leaves the fee standing on evidence that has since stopped being evidence.
+  // Asserting zero unsupported fees across the whole quarter was asserting the
+  // second, and the second is not true of any practice where people correct
+  // records — which is every practice.
+  //
+  // So the invariant is scoped to what the sweep decided: a fee whose client's
+  // record has not been touched since the charge. Anything else is a change
+  // nobody made at the time of the decision, and the metric below is what says
+  // the quarter contains some.
+  const correctionsAfter = await prisma.auditEvent.findMany({
+    where: { action: 'update', resource: 'client', allowed: true },
+    select: { clientId: true, at: true },
+  });
+  const changedSince = (clientId: string, since: Date) =>
+    correctionsAfter.some((r) => r.clientId === clientId && r.at > since);
+
+  const wrongWhenCharged = chargedUnreadably.filter(
+    (a) => !changedSince(a.clientId, a.startAt),
+  );
+  check('no fee was charged on a message the record then said the client could not read',
+    wrongWhenCharged.length === 0,
+    `${wrongWhenCharged.length} of ${feesCharged.length} fees`);
+
+  // The subset the work list is about: unsupported *and* not already stood down
+  // by a person. A waived fee is a decision somebody made, and listing it would
+  // send the next person to fix what is fixed.
+  const standing = chargedUnreadably.filter((a) => a.feeWaivedAt === null);
+
+  // And the other half, which is a fact about the quarter rather than a rule:
+  // some of those charges are no longer supported, because the record moved
+  // afterwards. The work list is the whole of what the system does about it —
+  // no fee is reversed by a job.
+  check('the quarter contains charges a later correction left unsupported',
+    standing.length >= 1,
+    `${standing.length} of ${feesCharged.length} fees, every one explained by a correction after the charge`);
+
+  // The list a person actually reads, run against the real seed. It must name
+  // exactly the unsupported fees and nothing else — a list that quietly included
+  // a supported charge would send somebody to reverse money that was properly
+  // taken.
+  // Read as front desk, the way the page reads it — the same reasoning
+  // `freedSlots` gives below: a number that needs a wider actor to produce is a
+  // number measuring the wrong one.
+  const deskActor = await prisma.user.findFirstOrThrow({ where: { role: 'front_desk' } });
+  const listed = await unsupportedFees(
+    { id: deskActor.id, role: deskActor.role },
+    { clock: { now: () => zonedToUtc(TODAY, 23 * 60) }, withinDays: 400 },
+  );
+  check('and the work list names them, and only them',
+    listed.fees.length === standing.length
+    && listed.fees.every((f) => standing.some((a) => a.id === f.appointmentId)),
+    `${listed.fees.length} listed, ${standing.length} unsupported, ${listed.uncheckable} uncheckable`);
+
+  // And it changed nothing. The whole point of the narrow version is that it
+  // tells a person and decides nothing, so the fees are still there afterwards.
+  const afterReading = await prisma.appointment.findMany({
+    where: { id: { in: listed.fees.map((f) => f.appointmentId) } },
+    select: { chargeFeeCents: true, feeWaivedAt: true },
+  });
+  check('and reading it reverses nothing',
+    afterReading.length === listed.fees.length
+    && afterReading.every((a) => a.chargeFeeCents !== null && a.feeWaivedAt === null),
+    `${afterReading.length} listed charges still standing, unwaived`);
 
   // P1-2, exercised by data rather than asserted in the abstract. A quarter in
   // which nobody ever earns the quieter cadence would leave the cap untested by

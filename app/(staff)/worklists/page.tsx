@@ -1,12 +1,12 @@
 import Link from 'next/link';
 import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
-import { continuityQueue, freedSlots, unconfirmedSoon, unreachableClients, vacationImpact } from '../../../src/scheduling/worklists';
+import { continuityQueue, freedSlots, unconfirmedSoon, unreachableClients, unsupportedFees, vacationImpact } from '../../../src/scheduling/worklists';
 import { openRescheduleRequests } from '../../../src/portal/service';
 import { handleRescheduleRequest, handleInboundReplyCall } from './actions';
 import { openInboundReplies } from '../../../src/messaging/inbound';
 import { addDays, localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
-import { Badge, Card, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
+import { Badge, Card, EmptyState, money, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
 import { withDenial } from '@/src/ui/denied';
 
@@ -16,10 +16,11 @@ async function WorkListsPage() {
   const { actor } = await requireSession();
   const today = localDateOf(systemClock.now());
 
-  const [replies, unconfirmed, unreachable, continuity, absences] = await Promise.all([
+  const [replies, unconfirmed, unreachable, unsupported, continuity, absences] = await Promise.all([
     openInboundReplies(actor),
     unconfirmedSoon(actor, { clock: systemClock, withinHours: 48 }),
     unreachableClients(actor, { clock: systemClock }),
+    unsupportedFees(actor, { clock: systemClock }),
     continuityQueue(actor),
     prisma.availabilityOverride.findMany({
       where: { kind: 'unavailable', toDate: { gte: systemClock.now() } },
@@ -143,6 +144,68 @@ async function WorkListsPage() {
                 ))}
               </ul>
             </Card>
+          </section>
+        )}
+
+        {/* P16. The one list on this page about money already taken.
+            
+            Every precondition on the fee is asked once, before the charge, by a
+            job that reads only `pending` — so a correction arriving afterwards
+            is invisible to it. And that is the realistic order: the client rings
+            about a ninety-dollar fee, and in that conversation it comes out that
+            the practice has had them down in the wrong language since intake.
+            The sweep produced the call and will never revisit its own answer.
+
+            It reverses nothing. `waiveFee` is the reversal, it takes a named
+            actor and a reason, and it stays that way — this list exists because
+            nobody could see the rows, not because the rows need a robot. */}
+        {unsupported.fees.length > 0 && (
+          <section>
+            <h2 className="mb-2 text-subhead font-semibold">Charges the record no longer supports</h2>
+            <p className="mb-3 max-w-prose text-body text-muted">
+              These clients were charged for not answering, and their language has since been
+              corrected — so no message behind the charge is one they are down as reading. The
+              fee stands until somebody decides otherwise; nothing here has changed it. Correcting
+              a record back takes a row off this list on its own.
+            </p>
+            <Card className="p-0">
+              <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                {unsupported.fees.map((f) => (
+                  <li key={f.appointmentId} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+                    <span className="text-body">
+                      <Link href={`/clients/${f.client.id}`} className="font-medium text-accent hover:underline">
+                        {f.client.lastName}, {f.client.firstName}
+                      </Link>
+                      <span className="ml-1.5 font-mono text-caption text-subtle">{f.client.code}</span>
+                      <span className="ml-2 text-muted">
+                        {f.date} · asked in {f.renderedIn.join(', ')}, reads {f.readsIn}
+                        {' · '}{f.treatingClinician.name}
+                      </span>
+                    </span>
+                    <span className="flex flex-wrap items-center gap-2">
+                      <Link
+                        href={`/appointments/${f.appointmentId}`}
+                        className="text-caption text-accent hover:underline"
+                      >
+                        Open the session
+                      </Link>
+                      <Badge tone="warning">{money(f.chargeFeeCents ?? 0)} charged</Badge>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+            {/* Said on the page rather than left as a silence. Rows from before
+                the rendered language was recorded cannot be checked either way,
+                and a list that quietly omitted them would read as "these are all
+                of them". */}
+            {unsupported.uncheckable > 0 && (
+              <p className="mt-2 text-caption text-subtle">
+                {unsupported.uncheckable} older {unsupported.uncheckable === 1 ? 'charge' : 'charges'} cannot
+                be checked either way — their reminders predate the practice recording which language
+                each one was written in.
+              </p>
+            )}
           </section>
         )}
 

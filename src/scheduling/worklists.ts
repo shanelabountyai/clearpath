@@ -4,6 +4,8 @@ import { systemClock, type Clock, DAY } from '../clock';
 import { prisma } from '../db';
 import { addDays, localDateOf, utcToZoned, weekdayOf, zonedToUtc, type LocalDate } from '../time';
 import { workingWindows, type Override } from './availability';
+import { feeSupport } from './nonresponse';
+import type { Language } from '../messaging/language';
 import {
   describeNotice, fillability, openingSuits,
   type Opening, type WaitlistPreference,
@@ -267,6 +269,122 @@ export async function unreachableClients(
           treatingClinician: f.client!.treatingClinician,
         }))
         .sort((a, b) => (b.lastFailureAt?.getTime() ?? 0) - (a.lastFailureAt?.getTime() ?? 0));
+    },
+  );
+}
+
+/**
+ * P16. Charges the record no longer supports.
+ *
+ * Every precondition on the fee is asked once, before the money, by a job that
+ * reads only `pending` — so a row the sweep has decided is a row it will never
+ * look at again. That is correct for a job and wrong for a record.
+ * `Client.language` is a field somebody corrects, and a correction does not
+ * travel back into the messages already delivered: the charge stays, and the
+ * evidence under it stops being evidence.
+ *
+ * The realistic version is worse than the abstract one. Corrections often happen
+ * *because* somebody was charged — the client rings about a ninety-dollar fee,
+ * and in that conversation it comes out that the practice has had them down in
+ * the wrong language since intake. The sweep produced the call, and the sweep is
+ * the one thing that will never revisit its own answer.
+ *
+ * **This list decides nothing.** It reverses no fee, marks nothing handled and
+ * writes nothing at all. Reversing money on a row somebody may already have
+ * discussed with the client is a decision about how a practice handles its own
+ * mistakes, not a rule a nightly job applies — and `waiveFee` already exists,
+ * with a named actor and an audit row, which is the shape that decision should
+ * keep. What is missing is only that nobody could see the rows.
+ *
+ * Derived rather than stored, like `unreachableClients`: a client corrected back,
+ * or a fee waived, leaves the list on its own, and there is no state to tidy.
+ *
+ * Two lists rather than one, because `feeSupport` has three answers and the
+ * third is "nobody can tell". Fees whose messages predate
+ * `OutboxMessage.language` cannot be checked either way, and folding them into
+ * the first list would turn every historical charge into an accusation nothing
+ * can back. They are a count, and the count is on the page.
+ */
+export async function unsupportedFees(
+  actor: Actor,
+  opts: { clock?: Clock; withinDays?: number } = {},
+) {
+  const now = (opts.clock ?? systemClock).now();
+  const since = new Date(now.getTime() - (opts.withinDays ?? 90) * DAY);
+
+  return guarded(
+    {
+      actor, action: 'read', resource: 'fee',
+      target: { clinicianId: actor.id, treatingSupervisorId: actor.id },
+    },
+    async (tx) => {
+      const charged = await tx.appointment.findMany({
+        where: {
+          // The fee this policy produces, and only it. A client who never
+          // answered and then walked in ends `completed` / `no_response` and
+          // pays the ordinary session fee — which rests on their having come,
+          // not on anything they read, and is untouched by a correction.
+          status: 'no_show',
+          confirmation: 'no_response',
+          chargeFeeCents: { not: null },
+          // Already stood down by a person. A waived fee on this list would
+          // send somebody to fix what is fixed.
+          feeWaivedAt: null,
+          startAt: { gte: since, lte: now },
+          ...(ownCaseloadOnly(actor) ? { clinicianId: actor.id } : {}),
+        },
+        select: {
+          id: true, startAt: true, chargeFeeCents: true, bookedAt: true,
+          client: {
+            select: {
+              id: true, code: true, firstName: true, lastName: true, language: true,
+              treatingClinician: { select: { id: true, name: true } },
+            },
+          },
+          reminders: {
+            where: { outboxMessageId: { not: null } },
+            select: {
+              dueAt: true,
+              outboxMessage: { select: { language: true, deliveryState: true } },
+            },
+          },
+        },
+        orderBy: { startAt: 'desc' },
+      });
+
+      let uncheckable = 0;
+      const rows = [];
+
+      for (const appt of charged) {
+        // The same evidence set the sweep charged on, narrowed the same two
+        // ways: about *this* hour, and actually delivered. Asking a wider
+        // question than the fee was answered by would produce findings the
+        // charge never rested on.
+        const delivered = appt.reminders
+          .filter((r) => r.dueAt >= appt.bookedAt)
+          .filter((r) => r.outboxMessage?.deliveryState === 'delivered')
+          .map((r) => r.outboxMessage?.language);
+
+        const support = feeSupport(delivered, appt.client.language);
+        if (support === 'supported') continue;
+        if (support === 'unrecorded') { uncheckable++; continue; }
+
+        rows.push({
+          appointmentId: appt.id,
+          startAt: appt.startAt,
+          date: localDateOf(appt.startAt),
+          chargeFeeCents: appt.chargeFeeCents,
+          client: appt.client,
+          treatingClinician: appt.client.treatingClinician,
+          // What was actually written, deduplicated — the practice reads this as
+          // "we asked in English and they read Spanish", which is the whole of
+          // the finding and the whole of what the row may say.
+          renderedIn: [...new Set(delivered.filter((l): l is Language => !!l))],
+          readsIn: appt.client.language,
+        });
+      }
+
+      return { fees: rows, uncheckable };
     },
   );
 }

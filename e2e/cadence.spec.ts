@@ -172,7 +172,7 @@ test.describe('what the cadence costs and does not cost', () => {
    * could; reading `OutboxMessage.language` says what was actually sent. Only
    * the second one can tell that nobody asked them anything they could read.
    */
-  test('nobody is charged for a message written in a language they do not read', async () => {
+  test('nobody is charged for a message the record then said they could not read', async () => {
     const unreadable = Number(sql(
       `select count(*) from "Appointment" a join "Client" c on c.id = a."clientId"`
       // `no_show` as well as `no_response`, which the two assertions above do
@@ -189,9 +189,43 @@ test.describe('what the cadence costs and does not cost', () => {
       + ` and not exists (select 1 from "AppointmentReminder" r`
       + `   join "OutboxMessage" m on m.id = r."outboxMessageId"`
       + `   where r."appointmentId" = a.id and m."deliveryState" = 'delivered'`
-      + `   and m.language = c.language)`,
+      + `   and m.language = c.language)`
+      // P16. And only where the record has not moved since the charge.
+      //
+      // This assertion used to end here, and it was one sentence carrying two
+      // facts. The rule — the sweep never charges on what the record then called
+      // unreadable — still holds absolutely and is what the clause above tests.
+      // What it also implied is that no charged fee *currently* rests on an
+      // unreadable message, and that is not true of any practice where people
+      // correct records: a correction arriving after the sweep leaves the old
+      // fee standing, and the sweep reads only `pending`, so it never looks
+      // again. The quarter now seeds exactly that case on purpose.
+      //
+      // Those charges are not silently excused. They are the work list, and the
+      // test below is what says the practice can see them.
+      + ` and not exists (select 1 from "AuditEvent" e`
+      + `   where e."clientId" = a."clientId" and e.action = 'update'`
+      + `   and e.resource = 'client' and e.allowed = true and e.at > a."startAt")`,
     ));
     expect(unreadable).toBe(0);
+  });
+
+  /**
+   * The other half, and the reason the assertion above needed narrowing rather
+   * than deleting: the quarter *does* contain charges resting on nothing, and
+   * what the system does about them is show them to a person.
+   */
+  test('and the charges a later correction left standing are on a work list', async () => {
+    const stranded = Number(sql(
+      `select count(*) from "Appointment" a join "Client" c on c.id = a."clientId"`
+      + ` where a.confirmation = 'no_response' and a.status = 'no_show'`
+      + ` and a."chargeFeeCents" is not null and a."feeWaivedAt" is null`
+      + ` and not exists (select 1 from "AppointmentReminder" r`
+      + `   join "OutboxMessage" m on m.id = r."outboxMessageId"`
+      + `   where r."appointmentId" = a.id and m."deliveryState" = 'delivered'`
+      + `   and m.language = c.language)`,
+    ));
+    expect(stranded).toBeGreaterThan(0);
   });
 
   /**

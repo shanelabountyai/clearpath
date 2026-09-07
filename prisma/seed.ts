@@ -649,6 +649,51 @@ async function main() {
     await runNonResponseSweep(clock);
   }
 
+  // ── the correction that arrives too late ──────────────────────────────
+  //
+  // P16, and the case the previous phase deliberately kept out of the quarter.
+  //
+  // Every correction above lands *before* the sweep reaches its session, so the
+  // fee is never charged. This one lands after: the quarter is over, the money
+  // was taken weeks ago, and only now does somebody put the record right. That
+  // is the realistic order rather than the awkward one — a client rings up about
+  // a ninety-dollar fee, and in that conversation it comes out that the practice
+  // has had them down in the wrong language since intake. The sweep produced the
+  // call and is idempotent, so it will never revisit its own answer.
+  //
+  // Seeded last, after the loop, so it disturbs nothing the simulation produced:
+  // every count above is what it was, and what changes is only that two of the
+  // charges already in it stop resting on anything.
+  const charged = await prisma.appointment.findMany({
+    where: {
+      status: 'no_show', confirmation: 'no_response', chargeFeeCents: { not: null },
+      feeWaivedAt: null, client: { language: 'en' },
+    },
+    select: {
+      clientId: true,
+      reminders: {
+        select: { outboxMessage: { select: { language: true, deliveryState: true } } },
+      },
+    },
+    orderBy: { startAt: 'asc' },
+  });
+  const lateCorrections = new Set<string>();
+  for (const appt of charged) {
+    if (lateCorrections.size >= 2) break;
+    if (lateCorrections.has(appt.clientId)) continue;
+    // Only where the charge actually rests on English deliveries, so the
+    // fixture produces the finding rather than merely the correction.
+    const delivered = appt.reminders
+      .filter((r) => r.outboxMessage?.deliveryState === 'delivered')
+      .map((r) => r.outboxMessage?.language);
+    if (!delivered.some((l) => l === 'en')) continue;
+    lateCorrections.add(appt.clientId);
+  }
+  for (const clientId of lateCorrections) {
+    await updateClient(desk, clientId, { language: 'es' });
+  }
+  log(`${lateCorrections.size} records corrected after the fee had already been charged — the work list is what says so`);
+
   const swept = await prisma.appointment.count({ where: { confirmation: 'no_response' } });
   const autoNoShows = await prisma.appointment.count({ where: { confirmation: 'no_response', status: 'no_show' } });
   log(`${eligibleCount} sessions the practice could ask about; ${answered.confirmed} confirmed, ${answered.declined} declined${unanswerable ? ` (${unanswerable} unreachable at the moment they would have answered)` : ''}`);
