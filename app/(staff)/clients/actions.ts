@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { requireSession } from '../../../src/session';
-import { setFee } from '../../../src/clients/repository';
+import { setFee, updateClient } from '../../../src/clients/repository';
 import { issueForm } from '../../../src/forms/service';
 import { createProcessNote } from '../../../src/notes/service';
 import { issuePortalLink } from '../../../src/portal/service';
@@ -37,5 +37,20 @@ export async function sendPortalLink(formData: FormData) {
   const { actor } = await requireSession();
   const clientId = String(formData.get('clientId'));
   await issuePortalLink(actor, { clientId });
+  revalidatePath(`/clients/${clientId}`);
+}
+
+/**
+ * Which stages this client is asked at. No boxes ticked means the practice
+ * cadence, which is the normal state and the one the streak cap still applies
+ * to — so "clear the selection" and "follow the practice" are the same gesture
+ * rather than two settings that can disagree.
+ */
+export async function saveReminderStages(formData: FormData) {
+  const { actor } = await requireSession();
+  const clientId = String(formData.get('clientId'));
+  const picked = formData.getAll('stages').map(String);
+  const stages = (['d5', 'd1', 'd0'] as const).filter((s) => picked.includes(s));
+  await updateClient(actor, clientId, { reminderStages: [...stages] });
   revalidatePath(`/clients/${clientId}`);
 }

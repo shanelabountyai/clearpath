@@ -113,11 +113,24 @@ export function stageDueAt(
  * Note what breaks a streak: one `declined` or one `no_response`, and the full
  * three stages come straight back. The cap is a reward for answering, not a
  * setting somebody has to remember to reverse.
+ *
+ * `chosen` is the client's own selection, and it wins outright rather than
+ * intersecting with the cap. Two reductions stacked would produce silence — a
+ * client who asked for the day-of nudge only, and who then answers four times
+ * running, would earn a cap of `d1` that shares nothing with their `d0` and be
+ * left with no message at all. That is the one outcome a preference for *fewer*
+ * messages must never produce, and it would have arrived quietly, four
+ * confirmations after somebody set the field.
+ *
+ * It is filtered through `STAGES` rather than used as given, so the order is
+ * the cadence's and a duplicate or an unknown value cannot survive the trip.
  */
 export function cadenceStages(
   recent: readonly Confirmation[],
   cap: number,
+  chosen: readonly ReminderStage[] = [],
 ): readonly ReminderStage[] {
+  if (chosen.length) return STAGES.filter((stage) => chosen.includes(stage));
   if (cap <= 0) return STAGES;
   let streak = 0;
   for (const answer of recent) {

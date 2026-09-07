@@ -466,6 +466,26 @@ async function main() {
   if (nextForReliable) await asked(nextForReliable, 'pending', ['d1']);
   log(`1 client with ${theirLastFour.length} confirmations in a row — their next session asked about once, not three times`);
 
+  // ── P2: the client who asked for one nudge, on the day ─────────────────
+  //
+  // The same four confirmations as the client above, and a selection of their
+  // own on top. The pair is the point: the streak would cap this one to the day
+  // before, and their `d0` is what they actually get. Two reductions stacked
+  // would have left them with nothing.
+  const dayOfOnly = clients[55]!;
+  await prisma.client.update({
+    where: { id: dayOfOnly.id },
+    data: { reminderPreference: 'sms', reminderStages: ['d0'] },
+  });
+  for (const appt of await prisma.appointment.findMany({
+    where: { clientId: dayOfOnly.id, status: 'completed' },
+    orderBy: { startAt: 'desc' },
+    take: 4,
+  })) {
+    await asked(appt, 'confirmed');
+  }
+  log('1 client on a day-of-only cadence they chose — the streak cap does not narrow it further');
+
   // ── P1-3: the clients who wrote back in words ──────────────────────────
   //
   // Through the real path, so the alert, the auto-reply and the audit row are

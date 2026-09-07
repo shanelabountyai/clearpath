@@ -82,9 +82,19 @@ export async function runReminderHorizon(
    * volume mitigation from being its own volume problem.
    */
   const cadence = new Map<string, readonly ReminderStage[]>();
-  const stagesFor = async (clientId: string): Promise<readonly ReminderStage[]> => {
+  const stagesFor = async (
+    clientId: string,
+    chosen: readonly ReminderStage[],
+  ): Promise<readonly ReminderStage[]> => {
     const cached = cadence.get(clientId);
     if (cached) return cached;
+    // A client who has chosen their own stages needs no track record read at
+    // all: their answer is the answer, and the cap does not apply to it.
+    if (chosen.length) {
+      const picked = cadenceStages([], cap, chosen);
+      cadence.set(clientId, picked);
+      return picked;
+    }
     // Past sessions only. A streak is a track record, and "until they miss one"
     // is a fact that can only be known after the hour has been and gone —
     // counting confirmations for sessions still in the future would let a
@@ -115,7 +125,7 @@ export async function runReminderHorizon(
       startAt: true,
       createdAt: true,
       confirmation: true,
-      client: { select: { reminderPreference: true, email: true, phone: true } },
+      client: { select: { reminderPreference: true, email: true, phone: true, reminderStages: true } },
       reminders: { select: { stage: true } },
     },
     orderBy: { startAt: 'asc' },
@@ -139,7 +149,7 @@ export async function runReminderHorizon(
     }
 
     const already = new Set(appt.reminders.map((r) => r.stage));
-    const due = dueStages(appt, now, settings, await stagesFor(appt.clientId))
+    const due = dueStages(appt, now, settings, await stagesFor(appt.clientId, appt.client.reminderStages))
       .filter((stage) => !already.has(stage));
     if (!due.length) continue;
 

@@ -182,3 +182,44 @@ describe('cadenceStages — the cap on a standing client, and how it lifts', () 
     expect(dueStages(appt(6 * HOUR), START, SETTINGS, cadenceStages(yes(4), 4))).toEqual([]);
   });
 });
+
+describe('cadenceStages — the client\'s own selection', () => {
+  const yes = (n: number): Confirmation[] => Array.from({ length: n }, () => 'confirmed');
+
+  it('is the normal state to have none: empty means the practice cadence', () => {
+    expect(cadenceStages([], 4, [])).toEqual(STAGES);
+    expect(cadenceStages(yes(4), 4, [])).toEqual(['d1']);
+  });
+
+  it('gives a client who asked for the day-of nudge only the day-of nudge', () => {
+    expect(cadenceStages([], 4, ['d0'])).toEqual(['d0']);
+  });
+
+  /**
+   * The bug this rule exists to prevent, and it would have arrived quietly:
+   * intersecting a `d0` selection with a `d1` cap is the empty set, so a client
+   * who asked for *fewer* messages would be silenced entirely — four
+   * confirmations after somebody ticked the box, not on the day they ticked it.
+   * A preference for fewer must never become none.
+   */
+  it('wins over the streak cap instead of intersecting with it', () => {
+    expect(cadenceStages(yes(50), 4, ['d0'])).toEqual(['d0']);
+    expect(cadenceStages(yes(50), 4, ['d5'])).toEqual(['d5']);
+    expect(cadenceStages(yes(50), 4, ['d5', 'd0'])).toEqual(['d5', 'd0']);
+  });
+
+  it('is the cadence\'s order and the cadence\'s vocabulary, whatever order it arrives in', () => {
+    expect(cadenceStages([], 4, ['d0', 'd5', 'd1'])).toEqual(STAGES);
+    expect(cadenceStages([], 4, ['d0', 'd0'])).toEqual(['d0']);
+  });
+
+  /**
+   * A selection narrows; it never promotes. A `d5` client booked three days out
+   * gets nothing at all — same as the cap, and for the same reason: the fee
+   * rests on the cadence having actually queued something.
+   */
+  it('still cannot manufacture a stage that dueStages would refuse', () => {
+    expect(dueStages(appt(), START, SETTINGS, cadenceStages([], 4, ['d0']))).toEqual(['d0']);
+    expect(dueStages(appt(6 * HOUR), START, SETTINGS, cadenceStages([], 4, ['d1']))).toEqual([]);
+  });
+});

@@ -12,12 +12,15 @@ import { localDateOf, minutesToHHMM, utcToZoned } from '../../../../src/time';
 import {
   Badge, Card, EmptyState, Field, LockedPanel, PageHeader, StatusChip, TierBanner, money,
 } from '../../../../src/ui/primitives';
-import { addProcessNote, saveFee, sendForm, sendPortalLink } from '../actions';
+import { addProcessNote, saveFee, saveReminderStages, sendForm, sendPortalLink } from '../actions';
 import { BreakGlassPrompt } from '../../break-glass';
 import { systemClock } from '@/src/clock';
 import { Button } from '@/src/ui/primitives';
 
 export const dynamic = 'force-dynamic';
+
+/** Staff-facing names for the cadence stages. `d5`/`d1`/`d0` are the rule's vocabulary, not front desk's. */
+const STAGE_LABEL = { d5: 'Five days before', d1: 'Day before', d0: 'Day of' } as const;
 
 export default async function ClientPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -140,6 +143,11 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
                 {client.reminderPreference === 'none'
                   ? <Badge tone="warning">None — do not message</Badge>
                   : client.reminderPreference}
+                <span className="ml-1 text-caption text-subtle">
+                  {client.reminderStages.length
+                    ? `· ${client.reminderStages.map((s) => STAGE_LABEL[s]).join(', ')} only`
+                    : '· practice cadence'}
+                </span>
               </Field>
             </dl>
 
@@ -160,6 +168,35 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
                 <button className="rounded-[var(--radius)] border px-2.5 py-1.5 text-caption font-medium" style={{ borderColor: 'var(--border-strong)' }}>
                   Save fee
                 </button>
+              </form>
+            )}
+
+            {can.edit && client.reminderPreference !== 'none' && (
+              <form action={saveReminderStages} className="mt-4 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
+                <input type="hidden" name="clientId" value={client.id} />
+                <span className="block text-micro font-medium tracking-wide text-subtle uppercase">
+                  When to ask this client
+                </span>
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                  {(['d5', 'd1', 'd0'] as const).map((stage) => (
+                    <label key={stage} className="flex items-center gap-1.5 text-body">
+                      <input
+                        type="checkbox" name="stages" value={stage}
+                        defaultChecked={client.reminderStages.includes(stage)}
+                      />
+                      {STAGE_LABEL[stage]}
+                    </label>
+                  ))}
+                  <button className="rounded-[var(--radius)] border px-2.5 py-1.5 text-caption font-medium" style={{ borderColor: 'var(--border-strong)' }}>
+                    Save cadence
+                  </button>
+                </div>
+                <p className="mt-2 text-caption text-subtle">
+                  Nothing ticked is the normal state: the practice cadence, which already
+                  drops to the day before once this client has confirmed four times running.
+                  Ticking boxes is the client&rsquo;s own answer instead, and the streak no
+                  longer changes it.
+                </p>
               </form>
             )}
 

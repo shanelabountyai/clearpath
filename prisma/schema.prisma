@@ -87,6 +87,12 @@ model Client {
   feeCents Int?
 
   reminderPreference ReminderPreference @default(email)
+  /// Which cadence stages this client has asked for. Empty is the normal
+  /// state and means "whatever the practice cadence says", streak cap and
+  /// all. A non-empty list is the client's own answer to the volume question,
+  /// so the cap does not also apply — two reductions stacked would silence
+  /// somebody who only asked for fewer.
+  reminderStages     ReminderStage[]
   status             ClientStatus       @default(active)
 
   appointments  Appointment[]

@@ -37,7 +37,7 @@ const DEMOGRAPHICS = {
   id: true, code: true, firstName: true, lastName: true, dateOfBirth: true,
   email: true, phone: true,
   emergencyContactName: true, emergencyContactPhone: true, emergencyContactRelation: true,
-  treatingClinicianId: true, feeCents: true, reminderPreference: true, status: true,
+  treatingClinicianId: true, feeCents: true, reminderPreference: true, reminderStages: true, status: true,
   createdAt: true,
 } as const;
 
@@ -123,6 +123,8 @@ type ClientEdit = Partial<{
   emergencyContactName: string | null; emergencyContactPhone: string | null;
   emergencyContactRelation: string | null;
   reminderPreference: 'email' | 'sms' | 'none';
+  /// Empty means the practice cadence. See `cadenceStages`.
+  reminderStages: ('d5' | 'd1' | 'd0')[];
   status: 'active' | 'inactive';
   treatingClinicianId: string;
 }>;

@@ -933,6 +933,64 @@ person who arrives to find their room taken had done nothing wrong: they said
   continuity, not one a filter should silently answer.
 
 
+## 15. Two reductions, and the one that must not stack
+
+The cadence already had a way to send fewer messages: the streak cap in §11.
+Confirm four times running and the practice stops asking five days out, because
+a client who always answers does not need three questions. What it had no way to
+express is the other direction — a client who says, at intake or on the phone,
+"just tell me on the day."
+
+The field is `Client.reminderStages`, an empty-by-default list of the same three
+stages the rule already speaks in. Empty is the normal state and means *the
+practice cadence*, cap and all; a non-empty list is the client's own answer.
+There is no second "use custom cadence" flag, for the same reason the cap is off
+at a value of zero rather than behind its own boolean: two fields that can
+disagree is a bug waiting for somebody to only update one of them.
+
+### The bug worth naming is the one that would have arrived four weeks late
+
+The obvious implementation intersects. The client picked `d0`; the streak cap
+says `d1`; take what they have in common and you get **nothing at all**.
+
+A client who asked for *fewer* messages ends up with none — and not on the day
+somebody ticked the box, which is when it would have been noticed. It arrives
+four confirmations later, silently, on a client whose entire distinguishing
+feature is that they reliably answer. They then stop being asked, stop
+confirming, and the sweep that reads silence has no message behind it to read.
+
+So a selection **wins outright** rather than narrowing further. The cap is an
+automatic reduction the system applies on the client's behalf; the selection is
+the client having already answered that question themselves. Applying both is
+answering it twice.
+
+### What it is still not allowed to do
+
+The selection narrows. It cannot promote, and everything downstream of it is
+unchanged:
+
+- **`dueStages` still applies every rule it applied before.** A `d5`-only client
+  booked three days out gets no message, exactly as before — the stage still has
+  to fall after the booking and before now. The selection can take a message
+  away; it can never move one earlier.
+- **`reminderPreference: 'none'` still outranks it.** A selection is *which*
+  stages, never *whether* — the do-not-message setting is checked first and the
+  checkboxes do not render for a client on it.
+- **The fee rests on exactly the same evidence.** Where a selection queues
+  something, the appointment is still promoted to `pending` with an outbox row
+  behind it, and a delivery receipt is still what a charge requires. Fewer
+  messages is still a message.
+
+A `d0`-only client is therefore askable on three hours' notice and chargeable
+for silence on the same evidence as anybody else. That is the practice's call to
+make per client and it is now visible on the record, which is the improvement
+over it being unavailable and therefore never discussed.
+
+The seed carries the pair deliberately: TC-051 confirms four times and is capped
+to the day before, TC-056 confirms four times *and* chose the day of — same
+history, different cadence, and the second one is the row that would have gone
+silent under an intersection.
+
 ## Decisions log
 
 | Decision | Why |
@@ -1021,6 +1079,9 @@ person who arrives to find their room taken had done nothing wrong: they said
 | An undelivered sweep logs `no_response_undelivered` | A missing fee with no explanation is indistinguishable from a bug. It is the row a client disputing a charge needs, and the row an auditor looks for when the charge everybody expected is absent |
 | A terminal receipt never moves, in either direction | A carrier reporting `failed` on a message it already reported `delivered` is retracting evidence a fee rests on. The first receipt stands and a human looks; a webhook may not quietly un-charge somebody, and may even less quietly start charging them. Duplicates are a no-op, because carriers retry |
 | The reminder's link to its message became a relation with `onDelete: Restrict` | A dangling id is exactly the failure that would silently un-prove the ask. The evidence cannot be deleted out from under the fee, and the database enforces it rather than a convention — the same argument as the append-only audit rule |
+| A per-client stage selection wins over the streak cap instead of intersecting with it | Intersecting `d0` with a capped `d1` is the empty set: a client who asked for *fewer* messages gets none, four confirmations after the box was ticked rather than on the day. The cap is a reduction the system applies for the client; the selection is the client having answered that question already. Applying both answers it twice |
+| Empty means "the practice cadence", with no second flag beside it | Same argument as a streak cap of zero being the off switch. A `useCustomCadence` boolean next to a list is two fields that can disagree, and somebody will eventually update one of them |
+| The selection is *which* stages, never *whether* | `reminderPreference: 'none'` is still checked first and the checkboxes do not render for a client on it. A cadence preference must not become a second, quieter way to turn messaging back on for somebody who asked for silence |
 | The carrier stub always succeeds, and the failure is a seeded fixture | Random failures would make the hand-tallied fee totals unreproducible, and a fixture that only probably exists is a spec that only probably means anything. One client, three `failed` receipts, no charge — the one row in the quarter where `no_response`, `no_show` and no fee sit together |
 
 ## What this project deliberately is not

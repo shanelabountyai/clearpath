@@ -26,7 +26,7 @@ async function clinicianWorkingTuesdays() {
  * the notice the test wants. `createdAt` is what decides which stages were ever
  * sendable, and Prisma's default writes wall time.
  */
-async function appointmentBooked(msBeforeStart: number, clientOpts: { email?: string | null; phone?: string | null; reminderPreference?: 'email' | 'sms' | 'none' } = {}) {
+async function appointmentBooked(msBeforeStart: number, clientOpts: { email?: string | null; phone?: string | null; reminderPreference?: 'email' | 'sms' | 'none'; reminderStages?: ('d5' | 'd1' | 'd0')[] } = {}) {
   const client = await makeClient(therapist.id);
   await prisma.client.update({
     where: { id: client.id },
@@ -324,5 +324,75 @@ describe('the cadence cap on a client who always answers', () => {
     const appt = await withHistory(confirmedTimes(4));
     await runReminderHorizon(clock);
     expect(await stagesFor(appt.id)).toEqual(['d5', 'd1']);
+  });
+});
+
+describe('the stages a client picked for themselves', () => {
+  /** Twelve hours out: `d5` and `d1` are due, `d0` is three hours away and is not. */
+  const clock = fixedClock(new Date(START.getTime() - 12 * HOUR));
+
+  const pastSession = (clientId: string, date: string, confirmation: Confirmation) =>
+    prisma.appointment.create({
+      data: {
+        clientId, clinicianId: therapist.id, modality: 'telehealth',
+        startAt: new Date(`${date}T19:00:00Z`), endAt: new Date(`${date}T19:50:00Z`),
+        status: 'completed', confirmation,
+      },
+    });
+
+  it('asks a five-days-only client five days out, and never again', async () => {
+    const appt = await appointmentBooked(30 * DAY, { reminderStages: ['d5'] });
+    await runReminderHorizon(clock);
+    expect(await stagesFor(appt.id)).toEqual(['d5']);
+  });
+
+  /**
+   * The whole point of the field, and the case the PRD names: one nudge, on the
+   * day. Twelve hours out there is nothing to send yet — the selection narrows
+   * the cadence, it does not move a message earlier.
+   */
+  it('sends a day-of-only client nothing until the day-of lead', async () => {
+    const appt = await appointmentBooked(30 * DAY, { reminderStages: ['d0'] });
+    await runReminderHorizon(clock);
+    expect(await stagesFor(appt.id)).toEqual([]);
+
+    await runReminderHorizon(fixedClock(new Date(START.getTime() - 2 * HOUR)));
+    expect(await stagesFor(appt.id)).toEqual(['d0']);
+  });
+
+  /**
+   * Stacking the two reductions is how a preference for *fewer* messages
+   * becomes none, four confirmations after somebody ticked the box. The
+   * selection wins outright, and the client still gets their one message.
+   */
+  it('is not narrowed further by a streak that would otherwise cap them', async () => {
+    const appt = await appointmentBooked(30 * DAY, { reminderStages: ['d5'] });
+    for (const date of ['2026-08-04', '2026-08-11', '2026-08-18', '2026-08-25']) {
+      await pastSession(appt.clientId, date, 'confirmed');
+    }
+    await runReminderHorizon(clock);
+    expect(await stagesFor(appt.id)).toEqual(['d5']);
+  });
+
+  /**
+   * Fewer messages is still a message. A selection can take the promotion to
+   * `pending` away by queuing nothing, but where it queues something the
+   * evidence behind a later fee is exactly what it is for anybody else.
+   */
+  it('still promotes to pending, with an outbox row behind it', async () => {
+    const appt = await appointmentBooked(30 * DAY, { reminderStages: ['d1'] });
+    await runReminderHorizon(clock);
+
+    const after = await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } });
+    expect(after.confirmation).toBe('pending');
+    expect(await prisma.outboxMessage.count({ where: { clientId: appt.clientId } })).toBe(1);
+  });
+
+  /** `none` still outranks it: a selection is which stages, never whether. */
+  it('never overrides the do-not-message setting', async () => {
+    const appt = await appointmentBooked(30 * DAY, { reminderPreference: 'none', reminderStages: ['d1'] });
+    await runReminderHorizon(clock);
+    expect(await stagesFor(appt.id)).toEqual([]);
+    expect(await prisma.outboxMessage.count({ where: { clientId: appt.clientId } })).toBe(0);
   });
 });
