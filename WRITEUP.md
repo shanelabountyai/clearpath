@@ -572,12 +572,10 @@ planted violation, verified by planting one. It exists for the batch job somebod
 writes next month that sets `no_response` from a query of its own — every
 behavioural spec in the suite would still pass, because none of them call it.
 
-**What it still does not do.** The fee's precondition is an `OutboxMessage` row,
-which proves the practice *intended* to ask. Nothing sends, so nothing proves it
-arrived. When a carrier is attached the precondition has to become a delivery
-receipt, or the practice charges clients for its own failed sends — named in the
-PRD's P2 list, and the single biggest honesty upgrade this feature has available.
-The policy may also simply be the wrong product: in counseling, not answering
+**What it did not do, until §13.** The fee's precondition was an `OutboxMessage`
+row, which proves the practice *intended* to ask. Nothing sends, so nothing
+proved it arrived — the single biggest honesty upgrade the feature had available,
+and the one it has since taken. The policy may also simply be the wrong product: in counseling, not answering
 messages correlates with the reason for attending, so this fee falls hardest on
 the clients least able to answer. That is a clinical decision rather than an
 engineering one, and the settings page says so beside the switch.
@@ -790,6 +788,84 @@ code in a URL, and the rule about what may appear in a URL is not one to spend
 on saving a client one click.
 
 
+## 13. Queued is not delivered
+
+The fee had a precondition and it was the wrong one.
+
+Everything in §10 rests on the practice having asked. What the code actually
+checked was that an `OutboxMessage` row existed — and a queued message is an
+intention. It is the practice's own note to itself that it meant to ask. It is
+not evidence that a phone ever buzzed.
+
+The gap between those two claims is the practice's own infrastructure, and it
+falls entirely on the client. A carrier outage, a dead number, a bounced address
+produce a client who is billed for silence they were never given the chance to
+break — and who has nothing to point at when they say the message never came,
+because the only artifact is a row proving the practice *wanted* to send one.
+That is the same failure mode as charging a client on `reminderPreference:
+'none'`, arriving by a different route: a fee for not answering a question
+nobody asked.
+
+So `OutboxMessage` grew a lifecycle — `queued` → `sent` → `delivered` | `failed`
+— and the sweep reads the terminal state rather than the row's existence.
+
+**What did not change is the more important half.** Silence is still recorded
+whatever became of the message. `confirmation` is a communication fact and the
+sweep writes it unconditionally, exactly as it does for a client who became
+unreachable mid-cadence (D-01) or with the auto-transition flag off (D-10).
+Delivery is now the fourth independent thing that can stop the charge and the
+fourth that cannot stop the write. The evidence is never optional; only the
+money is.
+
+Four decisions inside it:
+
+- **One arrival, not three.** A client whose `d5` landed and whose `d0` bounced
+  was asked. Requiring every stage to arrive would make the practice's own
+  flakiness into a client's exemption, which is the opposite error to the one
+  this fixes.
+- **`sent` never counts.** It is the practice's record of handing a message
+  over — the same class of claim as `queued`, one hop further along. Only a
+  receipt is somebody other than the practice saying the message arrived, and
+  the whole point is that the evidence should not come from the party doing the
+  charging.
+- **A terminal receipt does not move.** A carrier reporting `failed` on a
+  message it already reported `delivered` is retracting evidence a fee may
+  already rest on. The first receipt stands and a human looks at the dispute; a
+  webhook is not allowed to quietly un-charge somebody, and it is even less
+  allowed to quietly start charging them. Duplicate receipts are a no-op rather
+  than an error, because a carrier retrying a webhook is normal.
+- **The trail says which silence it was.** An undelivered sweep logs
+  `no_response_undelivered`, not `no_response`. It is the row a client disputing
+  a charge would need, and the row an auditor would look for when the charge
+  everybody expected is missing. A missing fee with no explanation is
+  indistinguishable from a bug.
+
+Two structural things came with it. `AppointmentReminder.outboxMessageId` became
+a real relation with `onDelete: Restrict`, because a dangling id is precisely
+the failure that would silently un-prove the ask — the evidence cannot be
+deleted out from under the fee, and the database says so rather than a
+convention. And `failureCode` is a code, never a carrier's prose: the same rule
+the inbound classifier lives by, for the same reason, since this column is read
+by roles that may not open a record.
+
+`npm run delivery:run` is the carrier that does not exist. Two steps rather than
+one — hand over, then hear back — because the gap between them is the entire
+feature. A real integration replaces the first half with an API call and the
+second with a signed webhook, and until it does, that script is the only thing
+that can move a message to `delivered`. Which is deliberate: the fee depends on
+that state, so nothing should reach it by accident. The stub always succeeds,
+because a stub inventing random failures would make the seeded fee totals
+unreproducible, and a fixture that only probably exists is a spec that only
+probably means anything. The failure path is a seeded fixture instead — one
+client in the quarter, three messages, three `failed` receipts, `no_response`
+and `no_show` on the record and nothing charged. It is the only row in the
+quarter where those three sit together.
+
+The visible cost is that the quarter's fee from silence fell from $270 to $180.
+That is the feature working: one of those charges was for a message that never
+arrived.
+
+
 ## Decisions log
 
 | Decision | Why |
@@ -871,6 +947,12 @@ on saving a client one click.
 | `InboundReply` gets a structural lint on its *columns*, not just behavioural tests | The specs prove the current code stores no body. They say nothing about the migration that adds a `body` column "just for debugging" next month — every one of them would still pass, because none of them would write to it. So the lint reads the model out of `schema.prisma` and asserts its only `String` fields are identifiers |
 | The inbound channel is a command, not an HTTP route | The PRD asked for a "simulated inbound endpoint". An unauthenticated public POST that writes to a client's record needs a provider signature to verify, and a signature nobody issues is a security control that only looks like one. `npm run inbound:simulate` is honest about being a stub, the same way nothing sending is |
 | Carrier opt-out keywords are left unparsed, reaching a person | `STOP` silently setting `reminderPreference: 'none'` would look like compliance without being it — real opt-out is enforced by the carrier and the provider above this layer. Routing it to a human is the honest behaviour for a simulation, and the wrong one to fake |
+| The fee's precondition is a delivery receipt, not an outbox row | A queued message proves the practice *intended* to ask. The gap between intending and arriving is the practice's own infrastructure, and billing on the first makes a client pay for the second. `delivered` on at least one stage; `sent` never counts, because it is still the practice's own account of what it did |
+| Delivery gates the money and not the write | The fourth independent thing that can stop the charge and the fourth that cannot stop the record. `no_response` is the evidence, and a client who was never reached was still silent — the practice just cannot bill for it |
+| An undelivered sweep logs `no_response_undelivered` | A missing fee with no explanation is indistinguishable from a bug. It is the row a client disputing a charge needs, and the row an auditor looks for when the charge everybody expected is absent |
+| A terminal receipt never moves, in either direction | A carrier reporting `failed` on a message it already reported `delivered` is retracting evidence a fee rests on. The first receipt stands and a human looks; a webhook may not quietly un-charge somebody, and may even less quietly start charging them. Duplicates are a no-op, because carriers retry |
+| The reminder's link to its message became a relation with `onDelete: Restrict` | A dangling id is exactly the failure that would silently un-prove the ask. The evidence cannot be deleted out from under the fee, and the database enforces it rather than a convention — the same argument as the append-only audit rule |
+| The carrier stub always succeeds, and the failure is a seeded fixture | Random failures would make the hand-tallied fee totals unreproducible, and a fixture that only probably exists is a spec that only probably means anything. One client, three `failed` receipts, no charge — the one row in the quarter where `no_response`, `no_show` and no fee sit together |
 
 ## What this project deliberately is not
 

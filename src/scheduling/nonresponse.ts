@@ -60,6 +60,10 @@ export async function runNonResponseSweep(
       startAt: true,
       createdAt: true,
       client: { select: { reminderPreference: true, email: true, phone: true } },
+      // The receipts. A reminder row proves the practice queued a message; the
+      // state on the message beside it is the only thing that proves one
+      // arrived, and that is what the fee now rests on.
+      reminders: { select: { outboxMessage: { select: { deliveryState: true } } } },
     },
     orderBy: { startAt: 'asc' },
   });
@@ -76,7 +80,25 @@ export async function runNonResponseSweep(
      * the thing it is protecting them from. Recording the silence is not gated
      * on it: the evidence is never optional, only the money is.
      */
-    const mayCharge = confirmationRequired(appt.client, appt, settings);
+    const eligible = confirmationRequired(appt.client, appt, settings);
+
+    /**
+     * Did anything actually reach them?
+     *
+     * Before receipts existed the precondition for this charge was an
+     * `OutboxMessage` row, which proves the practice *intended* to ask. That is
+     * not the same claim, and the gap between them is the practice's own
+     * infrastructure: a carrier that dropped every message produces a client
+     * who is billed for silence they were never given the chance to break, and
+     * who has nothing to point at when they say the message never came.
+     *
+     * So `delivered`, on at least one stage. Not all three — one arrival is a
+     * question asked, and a client whose `d5` landed and whose `d0` bounced was
+     * still asked. And not `sent`, which is only the practice's own record of
+     * handing it over.
+     */
+    const reached = appt.reminders.some((r) => r.outboxMessage?.deliveryState === 'delivered');
+    const mayCharge = eligible && reached;
 
     // A front-desk check-in always beats the sweep, and a client mid-session is
     // untouchable. Only a row nobody has said anything about is guessable —
@@ -101,7 +123,11 @@ export async function runNonResponseSweep(
           resource: 'appointment',
           resourceId: appt.id,
           clientId: appt.clientId,
-          reason: 'no_response',
+          // Two different silences, and the trail says which. `undelivered`
+          // means the practice never reached them — the row a client disputing
+          // a policy would need, and the row an auditor would look for when the
+          // charge everybody expected is missing.
+          reason: eligible && !reached ? 'no_response_undelivered' : 'no_response',
         },
         (tx) =>
           tx.appointment.update({ where: { id: appt.id }, data: { confirmation: 'no_response' } }),

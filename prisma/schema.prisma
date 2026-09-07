@@ -366,9 +366,12 @@ model AppointmentReminder {
   stage           ReminderStage
   dueAt           DateTime      @db.Timestamptz(3)
   sentAt          DateTime?
-  /// The proof the practice asked. The fee rule depends on one of these
-  /// existing, which is why it is a row and not a boolean.
-  outboxMessageId String?
+  /// The proof the practice asked — and, since delivery receipts, the proof it
+  /// arrived. A real relation rather than a loose id, because a dangling id is
+  /// exactly the failure that would silently un-prove it; `Restrict` means the
+  /// evidence cannot be deleted out from under the fee.
+  outboxMessageId String?        @unique
+  outboxMessage   OutboxMessage? @relation(fields: [outboxMessageId], references: [id], onDelete: Restrict)
 
   createdAt DateTime @default(now())
 
@@ -603,6 +606,16 @@ enum OutboxChannel {
   sms
 }
 
+/// How far a message actually got. The fee rule reads this and nothing else:
+/// `queued` is an intention, `delivered` is a receipt, and only the second one
+/// is evidence the practice asked.
+enum DeliveryState {
+  queued
+  sent
+  delivered
+  failed
+}
+
 /// Nothing is actually sent. Bodies are lint-tested against a deny-list of
 /// clinical terms — a reminder says "Appointment reminder", never why.
 model OutboxMessage {
@@ -620,9 +633,19 @@ model OutboxMessage {
   scheduledFor DateTime
   sentAt       DateTime?
 
+  /// queued → sent → delivered | failed. Never moves out of a terminal state.
+  deliveryState DeliveryState @default(queued)
+  deliveredAt   DateTime?
+  /// A carrier's reason CODE for a failure. Never a body, never a client's
+  /// words — the same rule the inbound classifier lives by.
+  failureCode   String?
+
   createdAt DateTime @default(now())
 
+  reminder AppointmentReminder?
+
   @@index([scheduledFor, sentAt])
+  @@index([deliveryState])
 }
 
 // ──────────────────────────────── waitlist ────────────────────────────────

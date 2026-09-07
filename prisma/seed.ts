@@ -24,7 +24,8 @@ const { waiveFee } = await import('../src/scheduling/lifecycle');
 const { stageDueAt } = await import('../src/scheduling/confirmation');
 const { ensurePortalLink } = await import('../src/portal/service');
 const { queueToClient } = await import('../src/messaging/outbox');
-const { systemClock } = await import('../src/clock');
+const { dispatchOutbox, recordDeliveryReceipt } = await import('../src/messaging/delivery');
+const { systemClock, fixedClock } = await import('../src/clock');
 const { receiveInbound, resolveInboundReply } = await import('../src/messaging/inbound');
 
 /** mulberry32 — small, fast, and identical on every machine. */
@@ -263,6 +264,12 @@ async function main() {
     stages: readonly ('d5' | 'd1' | 'd0')[] = ['d5', 'd1', 'd0'],
     /** P1-5. Optional, and mostly absent — most declines never say why. */
     declineReason?: 'cannot_make_it' | 'need_a_different_time' | 'prefer_earlier' | 'prefer_later',
+    /**
+     * P2. Whether the carrier came back. `delivered` is the ordinary case and
+     * the one the fee rests on; `failed` is the practice's own send failing,
+     * which records the silence and charges nothing.
+     */
+    delivery: 'delivered' | 'failed' = 'delivered',
   ) {
     const link = await ensurePortalLink(appt.clientId, systemClock);
     for (const stage of stages) {
@@ -278,6 +285,11 @@ async function main() {
       await prisma.appointmentReminder.create({
         data: { appointmentId: appt.id, stage, dueAt, sentAt: dueAt, outboxMessageId: message.id },
       });
+      // Through the real receipt path, so the seeded rows are the ones a
+      // carrier would have produced rather than a shape only the seed knows.
+      await recordDeliveryReceipt(
+        message.id, delivery, fixedClock(dueAt), delivery === 'failed' ? 'unreachable' : undefined,
+      );
     }
     await prisma.appointment.update({
       where: { id: appt.id },
@@ -329,12 +341,26 @@ async function main() {
     orderBy: { startAt: 'desc' },
     take: 4,
   });
+  //
+  // One of them is the P2 row: three messages queued, three handed over, and
+  // the carrier came back `failed` on every one. Same silence, same absence,
+  // same evidence on the record — and no fee, because the practice never
+  // reached them. It is the only row in the quarter where `no_response` and
+  // `no_show` sit together with nothing charged.
+  const undelivered = silentAndAbsent.at(-1);
   for (const appt of silentAndAbsent) {
-    if (await asked(appt, 'no_response')) {
-      await prisma.appointment.update({ where: { id: appt.id }, data: { chargeFeeCents: settings.noShowFeeCents } });
+    const reached = appt.id !== undelivered?.id;
+    if (await asked(appt, 'no_response', ['d5', 'd1', 'd0'], undefined, reached ? 'delivered' : 'failed')) {
+      // Explicitly null on the undelivered one: these rows were seeded as
+      // ordinary no-shows further up and already carry a fee a human set. The
+      // policy is not allowed to keep money it could not have earned.
+      await prisma.appointment.update({
+        where: { id: appt.id },
+        data: { chargeFeeCents: reached ? settings.noShowFeeCents : null },
+      });
     }
   }
-  log(`${silentAndAbsent.length} no-shows the policy would charge for`);
+  log(`${silentAndAbsent.length} no-shows the policy would charge for, 1 of them undelivered and therefore free`);
 
   // One of them waived, through the real path so the audit row is real too.
   const toWaive = silentAndAbsent[0];
@@ -364,6 +390,7 @@ async function main() {
         await prisma.appointmentReminder.create({
           data: { appointmentId: soon.id, stage, dueAt, sentAt: dueAt, outboxMessageId: message.id },
         });
+        await recordDeliveryReceipt(message.id, 'delivered', fixedClock(dueAt));
       }
     }
     log('1 booking made inside the five-day window — d5 skipped, d1 and d0 sent');
@@ -649,6 +676,18 @@ async function main() {
       async () => null,
     ).catch(() => undefined);
   }
+  // The carrier, over the whole quarter. Everything already due goes out and
+  // comes back `delivered`; the three failures seeded above are terminal, so
+  // this cannot undo them, and messages scheduled into the future stay
+  // `queued`, which is what a message nobody has sent yet actually is.
+  for (const id of await dispatchOutbox(systemClock)) {
+    await recordDeliveryReceipt(id, 'delivered', systemClock);
+  }
+  const delivered = await prisma.outboxMessage.count({ where: { deliveryState: 'delivered' } });
+  const failed = await prisma.outboxMessage.count({ where: { deliveryState: 'failed' } });
+  const stillQueued = await prisma.outboxMessage.count({ where: { deliveryState: 'queued' } });
+  log(`${delivered} messages delivered, ${failed} failed, ${stillQueued} not yet due`);
+
   const auditRows = await prisma.auditEvent.count();
   log(`${breakGlassCases.length} break-glass events and 1 logged process-note refusal`);
   log(`${auditRows} audit rows in total`);

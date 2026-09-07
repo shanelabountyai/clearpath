@@ -1,65 +1,69 @@
 # Next
 
-**Item:** Phase 5 is complete. Nothing is queued — pick the next thing from
+**Item:** P2-1 (delivery receipts) is done, committed and pushed. Nothing is
+queued — pick the next thing from
 [prd-appointment-confirmation.md](prd-appointment-confirmation.md)'s P2 list, or
 start a new PRD.
 
-P1-4 and P1-5 are done, committed and pushed. The confirmation loop's five P1s
-are all in.
+Three P2s remain, in the order they are worth doing:
+
+1. **Confirmation state feeds the waitlist.** A decline at `d5` is a
+   five-day-notice opening, which is exactly what a waitlisted client can take.
+   Wiring two existing modules together; no new correctness risk.
+2. **Per-client cadence selection** (a client who wants only the day-of nudge).
+   Mostly a settings-UI problem on top of `cadenceStages`.
+3. **Multi-language message bodies.** The deny-list is English-only and would
+   need one per language. Widest surface, lowest leverage.
 
 ## What landed this session
 
-**P1-4 — confirmation-rate report.** `confirmationReport(actor, range)` in
-`src/reports/utilization.ts`, rendered as a full-width "Confirmations" card on
-`app/(staff)/reports/page.tsx` between the clinician table and the weekly bars.
+**P2-1 — the fee's precondition is a delivery receipt, not an outbox row.**
+`OutboxMessage` carries `deliveryState` (`queued → sent → delivered | failed`),
+`deliveredAt` and `failureCode` (migration `20260907181137_delivery_receipts`).
+New module `src/messaging/delivery.ts` with `dispatchOutbox` and
+`recordDeliveryReceipt`; new script `npm run delivery:run`.
 
-- Reads under **`attendance_history`**, the same cell as the utilisation report
-  beside it. A confirmation rate alone would be defensible for front desk; a
-  per-clinician silence breakdown carrying a fee total is not. The guard goes on
-  the strictest thing in the payload, never on the name of the feature. Front
-  desk gets `Forbidden` and the denial is asserted in the test.
-- Rate is `confirmed / (confirmed + declined + no_response)`. Dividing by booked
-  would let a `reminderPreference: 'none'` client drag their clinician's number
-  down for choosing a safety setting.
-- `feeCents` counts **only** a `no_response` that became a `no_show`. A late
-  cancel is charged whether or not anyone was asked. A waiver zeroes
-  `chargeFeeCents`, so a reversal drops out with no second condition — and the
-  `noResponse` count deliberately does not drop with it.
-- One `findMany` + JS tally, matching `utilizationReport` directly above it,
-  rather than three reconciled `groupBy`s plus a name lookup.
-- `declineReasons` is practice-wide only, and omits the nulls.
-
-**P1-5 — decline reason codes.** `Appointment.declineReason RescheduleReason?`
-(migration `20260907021406_decline_reason`), threaded
-`sayNo` → `declineAppointment` → `cancelAppointment` → `setStatus`, beside the
-existing `confirmation` option so answer and reason land in one write.
-
-- Reuses the portal's four codes. `RESCHEDULE_REASONS` /`isRescheduleReason`
-  are now exported from `src/portal/service.ts`; the type is `DeclineReason` in
-  `lifecycle.ts` (lowest layer — portal aliases it, so there is one list).
-- **Nullable, and null is the majority case.** The portal asks without requiring
-  an answer, and P1-3's keyword decline can never carry one. A default value
-  would turn every texted "no" into a preference nobody stated.
-- The server action **drops** an unrecognised value rather than throwing: the
-  reason annotates the decline, it does not authorize it.
-- The fee interstitial carries its own select rather than threading the first
-  tap's choice through the redirect — that would put a reason code in a URL.
-- `ReasonSelect` in `app/p/[token]/page.tsx` serves all three asks; `blank` is
-  what separates required (reschedule) from optional (decline).
-
-Seed: 2 portal declines, 1 with a code and 1 without, plus the group-session
-decliner now carrying `cannot_make_it`. Against the e2e seed the report reads
-8 confirmed / 4 declined / 10 no-response, $270 of fee from silence, and two
-reason codes with two declines that said nothing.
+- **`nonresponse.ts` splits `mayCharge` into `eligible && reached`.** `reached`
+  is `delivered` on at least one reminder — not all three (a bounced `d0` does
+  not un-ask a `d5` that landed), and never `sent` (that is still the practice's
+  own account of what it did). Silence is recorded either way: delivery is the
+  fourth thing that can stop the charge and the fourth that cannot stop the
+  write.
+- **An undelivered sweep audits as `no_response_undelivered`.** A missing fee
+  with no explanation is indistinguishable from a bug.
+- **Terminal receipts never move**, in either direction, and a duplicate webhook
+  returns `false` rather than throwing.
+- **`AppointmentReminder.outboxMessageId` is now a real relation** with
+  `@unique` and `onDelete: Restrict` — the evidence cannot be deleted out from
+  under the fee.
+- **The test helper `asked()` stopped lying.** It now queues a real message and
+  records a real receipt, so a spec expecting a fee stands on the row a carrier
+  would have written. The whole-loop spec builds its appointment bare and runs
+  horizon → dispatch → receipt → sweep.
+- **Seed:** one client in the quarter with three `failed` receipts —
+  `no_response` + `no_show` + no fee, the only row where those sit together. The
+  quarter's fee from silence fell **$270 → $180**, which is the feature working.
+  A final `dispatchOutbox` + deliver settles the rest: 173 delivered, 3 failed.
 
 ## Gate at this commit
 
-Unit **1561/1561**, typecheck clean, e2e **24/24** against the production build.
-Migrations applied to dev, test and e2e; e2e reseeded.
+Unit **1577/1577** (was 1561), typecheck clean, e2e **24/24** against the
+production build. Migrations applied to dev, test and e2e; both databases
+reseeded; `db:status` clean on all three.
 
-No new e2e spec: `denials.spec.ts` already crawls `/reports` as every seeded
-role, so the card is covered against a crash and against front desk the day it
-lands. The arithmetic is unit-tested.
+No new e2e spec. The gate is arithmetic and state machine, both unit-tested, and
+`denials.spec.ts` already crawls `/reports` as every seeded role.
+
+## Deliberately not done
+
+- **No settings flag for "require delivery".** The PRD's Risk 3 says the
+  precondition *must* become a receipt; a flag would make the honest behaviour
+  optional. The carrier stub is what keeps `delivered` reachable.
+- **No "undelivered" column on the confirmation report.** The rate and the fee
+  total already move correctly. Add it when somebody asks how often the practice
+  fails to reach people — that is a different question from this one.
+- **The carrier is still simulated.** What is proven is that the *rule* reads
+  delivery, not that any particular message arrived.
 
 ## Still open, answered but not actioned
 

@@ -19,8 +19,10 @@ data. Mental-health data is among the most sensitive that exists; modeling the
 protections is the lesson, claiming them would be the credibility-killer.
 
 **Nothing sends, nothing is received, and nothing charges.** `OutboxMessage` rows
-are the stub for every reminder — there is no carrier integration — and an
-inbound reply arrives through `npm run inbound:simulate` rather than a webhook,
+are the stub for every reminder — there is no carrier integration, and the
+delivery receipts the fee depends on come from `npm run delivery:run` answering
+on a carrier's behalf — and an inbound reply arrives through
+`npm run inbound:simulate` rather than a webhook,
 deliberately: an unauthenticated endpoint that writes to a client's record needs
 a provider signature to verify, and a signature nobody issues is a security
 control that only looks like one. `chargeFeeCents` is a chargeable
@@ -82,7 +84,12 @@ and a test greps the rest of `src/` to prove no endpoint re-implements a role ch
   `confirm`, `decline` or `unparsed` and the words are then dropped, with no
   column anywhere to hold them. An `unparsed` reply reaches the treating
   clinician as a reason code and reaches front desk as "call them".
-- **All outbound messages are outbox stubs.** Nothing is actually sent.
+- **All outbound messages are outbox stubs.** Nothing is actually sent. They do
+  carry a delivery lifecycle — `queued → sent → delivered | failed` — and the
+  no-show fee requires a `delivered` receipt rather than a queued row, so the
+  practice cannot charge a client for its own failed send. The receipts come
+  from `npm run delivery:run`, a simulated carrier; attaching a real one
+  replaces that script and nothing else.
 
 ## Stack
 
@@ -105,6 +112,7 @@ implementation detail of whatever calls them:
 
 ```bash
 npm run reminders:run      # queue every reminder stage that has come due
+npm run delivery:run       # the carrier stub: hand over, then hear back
 npm run nonresponse:run    # the half with money attached, stoppable on its own
 npm run inbound:simulate -- 555-0101 "can we talk first"   # a client writes back
 ```
@@ -168,4 +176,5 @@ means replacing that file's values and nothing else.
 | Scoring, thresholds and critical items | [`src/forms/scoring.ts`](src/forms/scoring.ts) |
 | Two-tier notes and co-signature | [`src/notes/service.ts`](src/notes/service.ts) |
 | The discretion deny-list | [`src/messaging/outbox.ts`](src/messaging/outbox.ts) |
+| Delivery receipts, and the fee that waits for one | [`src/messaging/delivery.ts`](src/messaging/delivery.ts) |
 | Why any of it is shaped this way | [`WRITEUP.md`](WRITEUP.md) |

@@ -31,6 +31,7 @@
     "db:seed:e2e": "dotenv -e .env.e2e -- tsx prisma/seed.ts",
     "reminders:run": "dotenv -e .env -- tsx scripts/reminders-run.ts",
     "nonresponse:run": "dotenv -e .env -- tsx scripts/nonresponse-run.ts",
+    "delivery:run": "dotenv -e .env -- tsx scripts/delivery-run.ts",
     "inbound:simulate": "dotenv -e .env -- tsx scripts/inbound-simulate.ts"
   },
   "devDependencies": {
