@@ -261,6 +261,8 @@ async function main() {
     appt: { id: string; clientId: string; startAt: Date },
     answer: 'pending' | 'confirmed' | 'declined' | 'no_response',
     stages: readonly ('d5' | 'd1' | 'd0')[] = ['d5', 'd1', 'd0'],
+    /** P1-5. Optional, and mostly absent — most declines never say why. */
+    declineReason?: 'cannot_make_it' | 'need_a_different_time' | 'prefer_earlier' | 'prefer_later',
   ) {
     const link = await ensurePortalLink(appt.clientId, systemClock);
     for (const stage of stages) {
@@ -277,7 +279,10 @@ async function main() {
         data: { appointmentId: appt.id, stage, dueAt, sentAt: dueAt, outboxMessageId: message.id },
       });
     }
-    await prisma.appointment.update({ where: { id: appt.id }, data: { confirmation: answer } });
+    await prisma.appointment.update({
+      where: { id: appt.id },
+      data: { confirmation: answer, declineReason: declineReason ?? null },
+    });
     return true;
   }
 
@@ -376,7 +381,12 @@ async function main() {
   });
   for (const [i, a] of group.appointments.entries()) {
     const full = await prisma.appointment.findUniqueOrThrow({ where: { id: a.id } });
-    await asked(full, i === 0 ? 'declined' : i === 1 ? 'pending' : 'confirmed');
+    await asked(
+      full,
+      i === 0 ? 'declined' : i === 1 ? 'pending' : 'confirmed',
+      ['d5', 'd1', 'd0'],
+      i === 0 ? 'cannot_make_it' : undefined,
+    );
   }
   await prisma.appointment.update({
     where: { id: group.appointments[0]!.id },
@@ -384,6 +394,29 @@ async function main() {
   });
   log(`1 group session of ${group.appointments.length} — 1 declined, 1 still silent, the rest confirmed`);
 
+
+  // ── P1-5: two past declines, one that said why and one that did not ────
+  //
+  // The report's decline-reason line is only honest if the seed contains both
+  // kinds. The unexplained one is the majority case in reality — the portal
+  // asks without requiring an answer, and a texted "no" cannot carry one — so
+  // it is here rather than being quietly rounded away.
+  const decliners = clients.slice(45, 47);
+  let seededDeclines = 0;
+  for (const [i, c] of decliners.entries()) {
+    const upcoming = await prisma.appointment.findFirst({
+      where: { clientId: c.id, status: 'scheduled', startAt: { gt: now } },
+      orderBy: { startAt: 'asc' },
+    });
+    if (!upcoming) continue;
+    if (!(await asked(upcoming, 'declined', ['d5', 'd1', 'd0'], i === 0 ? 'prefer_later' : undefined))) continue;
+    await prisma.appointment.update({
+      where: { id: upcoming.id },
+      data: { status: 'cancelled', cancelledAt: now, cancelReason: 'client declined' },
+    });
+    seededDeclines++;
+  }
+  log(`${seededDeclines} portal declines — 1 with a reason code, 1 that said nothing`);
 
   // ── P1-2: the standing client who has earned quiet ─────────────────────
   //

@@ -3,7 +3,8 @@
 import { redirect } from 'next/navigation';
 import { Conflict } from '../../../src/errors';
 import {
-  confirmAppointment, declineAppointment, requestReschedule, type RescheduleReason,
+  confirmAppointment, declineAppointment, isRescheduleReason, requestReschedule,
+  type RescheduleReason,
 } from '../../../src/portal/service';
 
 /**
@@ -59,9 +60,15 @@ export async function sayNo(formData: FormData) {
   const token = String(formData.get('token'));
   const appointmentId = String(formData.get('appointmentId'));
   const acknowledgeFee = formData.get('acknowledgeFee') === '1';
+  // Optional, and anything that is not one of the four is treated as no answer
+  // rather than as an error. The reason annotates the decline; it does not
+  // authorize it, so a tampered field must not stand between a client and
+  // giving the hour back.
+  const submitted = formData.get('reason');
+  const reason = isRescheduleReason(submitted) ? submitted : undefined;
 
   try {
-    await declineAppointment(token, appointmentId, { acknowledgeFee });
+    await declineAppointment(token, appointmentId, { acknowledgeFee, reason });
   } catch (e) {
     if (e instanceof Conflict && e.code === 'fee_acknowledgement_required') {
       redirect(`/p/${token}?fee=${appointmentId}`);

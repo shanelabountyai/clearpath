@@ -312,6 +312,16 @@ model Appointment {
   /// Written by the cadence job and the client's own door, by nothing else.
   confirmation AppointmentConfirmation @default(not_required)
 
+  /// Why the client said no, when there was a door to ask through. The portal's
+  /// four existing codes rather than a parallel vocabulary — a decline and a
+  /// reschedule request are the same four sentences, and a second enum would be
+  /// a second list to keep in sync for no gain.
+  ///
+  /// Null is the common, honest case and is not a gap: a keyword decline (P1-3)
+  /// arrives as one word and can never carry a reason, and the portal asks
+  /// without requiring an answer. Null means "did not say", never "unknown".
+  declineReason RescheduleReason?
+
   /// A waiver zeroes the flag and records who decided. The original amount
   /// stays recoverable from the audit trail rather than being overwritten out
   /// of existence. Practice manager only.

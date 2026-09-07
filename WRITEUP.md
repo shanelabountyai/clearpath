@@ -708,6 +708,88 @@ a scan over clients with a phone, compared in JS: fine for one practice, and it
 wants a stored normalised-number column before it is anything larger.
 
 
+## 12. The last two P1s: what the loop actually did, and why nobody says why
+
+### Which permission cell a report reads under is the design
+
+The confirmation-rate report was the smallest-looking item on the list and the
+one with a real decision in it. A confirmation *rate* — "62% of the hours we
+asked about got an answer" — is operational. Front desk could see that number
+without learning anything they do not already know from the calendar, and an
+argument for putting it under `appointment`, which they can read, is easy to
+make.
+
+What was actually being built is not that. It is a per-clinician breakdown of
+which caseloads go silent, carrying the fee total the policy generated from that
+silence. Both halves are things `attendance_history` exists to keep away from
+the front desk: `attendanceSummary` is already gated there with a comment saying
+a no-show count is a clinical-adjacent pattern rather than a scheduling fact,
+and a per-clinician version of the same pattern is not less so for being
+aggregated.
+
+So the rule the report is written under, stated once because it will come up
+again: **the guard goes on the strictest thing in the payload, not on the name
+of the feature.** `confirmationReport` reads under `attendance_history`, the
+same cell as the utilisation report beside it on the same page, and front desk
+gets a `Forbidden` with the denial on the record. The alternative — a second,
+front-desk-visible variant with the money and the clinician split removed — is a
+second query, a second permission story and a second thing to keep in sync, for
+a number nobody has asked for yet.
+
+The rate itself is the other decision. It is `confirmed / (confirmed + declined
++ no_response)`, not `confirmed / booked`. Dividing by everything booked would
+fold in the hours the practice never asked about, which means a client on
+`reminderPreference: 'none'` would drag their clinician's number down for
+choosing a safety setting — the same category error the fee rule spent the whole
+of P0 avoiding, reappearing as a denominator. `pending` is excluded for the same
+reason in the other direction: an unanswered question that is still open is not
+yet a miss.
+
+And the fee total counts only a `no_response` that became a `no_show`. A late
+cancel is charged whether or not anybody was ever asked to confirm, so counting
+it here would credit this feature with revenue it did not cause. A waiver zeroes
+`chargeFeeCents`, so a reversed fee falls out of the sum with no second
+condition — the money line and the `noResponse` count deliberately disagree
+after a waiver, because the practice did reverse the charge and the client did
+still not answer.
+
+### The reason code that is usually absent, on purpose
+
+Decline reasons reuse the portal's existing four (`cannot_make_it`,
+`need_a_different_time`, `prefer_earlier`, `prefer_later`) rather than inventing
+a parallel vocabulary. That was the whole of the requirement, and the interesting
+part is what reusing them exposed: the portal decline carried no reason at all,
+and P1-3's keyword decline — one word arriving by text — can never carry one. So
+the item was never "add reason codes to declines". It was "ask for a reason on
+the one path that has a form to ask on".
+
+Which makes the column nullable, and makes null the majority. That is the
+design, not a gap:
+
+- The portal asks **without requiring an answer**. A required select would put a
+  toll on giving an hour back, and the practice wants the hour back more than it
+  wants the reason.
+- A keyword decline writes null forever. If the column defaulted to
+  `cannot_make_it`, every texted "no" would silently become a stated preference
+  the client never expressed, and the report would be fiction.
+- So `declineReasons` on the report lists only the declines that said something,
+  and says in the caption that most do not. A bar labelled "did not say" would
+  swamp the four that mean anything.
+
+Two smaller things fell out of it. The reason is an *annotation*, not a
+permission — so the server action drops an unrecognised value rather than
+throwing, because a tampered form field must not stand between a client and
+cancelling their appointment. And it rides the same write as the decline it
+explains, through the `declineReason` option on `setStatus` next to the existing
+`confirmation` one, so there is no window in which the practice holds the answer
+but not the reason for it.
+
+The fee interstitial keeps its own copy of the select rather than carrying the
+first tap's choice through the redirect. Threading it would have meant a reason
+code in a URL, and the rule about what may appear in a URL is not one to spend
+on saving a client one click.
+
+
 ## Decisions log
 
 | Decision | Why |
@@ -718,6 +800,12 @@ wants a stored normalised-number column before it is anything larger.
 | Supervisor reach extends to a supervisee's caseload, except process notes | Countersigning blind is not supervision; the single exception is sharper against a full record than against an empty one |
 | Denials logged outside the caller's transaction | A rolled-back request must still leave the attempt on the record |
 | List reads logged once, not once per row | Forty audit rows for one page view buries the individual record opens that matter |
+| The confirmation report reads under `attendance_history`, not `appointment` | A confirmation rate alone is operational, but a per-clinician silence breakdown carrying a fee total is not — the guard belongs on the strictest thing in the payload, never on the name of the feature |
+| The confirmation rate divides by decided, not by booked | A `reminderPreference: 'none'` client would otherwise drag their clinician's number down for choosing a safety setting — the P0 category error, reappearing as a denominator |
+| Only a `no_response` no-show counts toward the policy's fee total | A late cancel is charged whether or not anyone was asked, so counting it would credit this feature with revenue it did not cause |
+| `declineReason` is nullable and usually null | The portal asks without requiring an answer and a keyword decline cannot carry one; a default value would turn every texted "no" into a preference the client never stated |
+| The decline reason reuses `RescheduleReason` rather than a new enum | A decline and a reschedule request ask the same four sentences; two lists would drift, and the PRD named reuse explicitly |
+| A tampered decline reason is dropped, not rejected | The reason annotates the decline, it does not authorize it — a bad form field must not stand between a client and giving the hour back |
 | `may()` is silent | Deciding which buttons to draw is not an access event, and logging it would drown the real ones |
 | A separate `messagingName` on practice settings | "Stillwater Counseling" on a lock screen tells a roommate what the appointment is for; the deny-list catches exactly that, so the practice needs a short name |
 | Dark mode follows the OS, with no in-app toggle | One less piece of state to get out of sync, and the OS already knows it is 9pm |

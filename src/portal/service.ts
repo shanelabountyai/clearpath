@@ -6,7 +6,7 @@ import { systemClock, DAY, type Clock } from '../clock';
 import { prisma, type Tx } from '../db';
 import { Conflict, NotFound } from '../errors';
 import { indiscreetTerms, queueToClient } from '../messaging/outbox';
-import { cancelAppointment, classifyCancellation } from '../scheduling/lifecycle';
+import { cancelAppointment, classifyCancellation, type DeclineReason } from '../scheduling/lifecycle';
 
 /**
  * The client's own door.
@@ -262,7 +262,7 @@ export async function confirmAppointment(
 export async function declineAppointment(
   token: string,
   appointmentId: string,
-  opts: { clock?: Clock; acknowledgeFee?: boolean } = {},
+  opts: { clock?: Clock; acknowledgeFee?: boolean; reason?: RescheduleReason } = {},
 ) {
   const clock = opts.clock ?? systemClock;
   const link = await liveLink(token, clock);
@@ -286,11 +286,25 @@ export async function declineAppointment(
     clock,
     reason: 'client declined',
     confirmation: 'declined',
+    declineReason: opts.reason,
   });
 }
 
-export type RescheduleReason =
-  | 'cannot_make_it' | 'need_a_different_time' | 'prefer_earlier' | 'prefer_later';
+/**
+ * The four codes, once. A decline and a reschedule request ask the same
+ * question, so they share the vocabulary and the enum — see `DeclineReason`,
+ * which is where the type lives because the lifecycle writes it.
+ */
+export const RESCHEDULE_REASONS = [
+  'cannot_make_it', 'need_a_different_time', 'prefer_earlier', 'prefer_later',
+] as const satisfies readonly RescheduleReason[];
+
+export type RescheduleReason = DeclineReason;
+
+/** Whatever arrived in a form field is a string until this says otherwise. */
+export function isRescheduleReason(value: unknown): value is RescheduleReason {
+  return RESCHEDULE_REASONS.includes(value as RescheduleReason);
+}
 
 /**
  * Ask for a different time. It books nothing.

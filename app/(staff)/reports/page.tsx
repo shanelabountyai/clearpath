@@ -1,7 +1,7 @@
 import { requireSession } from '../../../src/session';
-import { utilizationReport, weeklyVolume } from '../../../src/reports/utilization';
+import { confirmationReport, utilizationReport, weeklyVolume } from '../../../src/reports/utilization';
 import { addDays, localDateOf } from '../../../src/time';
-import { Card, PageHeader } from '../../../src/ui/primitives';
+import { Card, money, PageHeader } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
 import { withDenial } from '@/src/ui/denied';
 
@@ -15,9 +15,10 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
   const to = q.to ?? localDateOf(systemClock.now());
   const from = q.from ?? addDays(to, -90);
 
-  const [report, weeks] = await Promise.all([
+  const [report, weeks, confirmations] = await Promise.all([
     utilizationReport(actor, { from, to }),
     weeklyVolume(actor, { from, to }),
+    confirmationReport(actor, { from, to }),
   ]);
 
   const maxWeekly = Math.max(1, ...weeks.map((w) => w.sessions));
@@ -97,6 +98,62 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
         </Card>
 
         <Card className="lg:col-span-2">
+          <h2 className="mb-1 font-semibold">Confirmations</h2>
+          <p className="mb-3 text-caption text-muted">
+            The rate is answered out of asked-and-settled — {confirmations.totals.confirmed} of{' '}
+            {confirmations.totals.confirmed + confirmations.totals.declined + confirmations.totals.noResponse}.
+            Sessions nobody was asked about ({confirmations.totals.notRequired}) are excluded rather
+            than counted as misses, and {confirmations.totals.pending} are still in flight.
+          </p>
+          <div className="scroll-x">
+            <table className="w-full min-w-[520px] border-collapse text-body">
+              <thead>
+                <tr className="text-left text-muted">
+                  <Th>Clinician</Th>
+                  <Th right>Confirmed</Th>
+                  <Th right>Declined</Th>
+                  <Th right>No response</Th>
+                  <Th right>Not asked</Th>
+                  <Th right>Rate</Th>
+                  <Th right>Fee from silence</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {confirmations.clinicians.map((c) => (
+                  <tr key={c.id}>
+                    <Td>{c.name}</Td>
+                    <Td right>{c.confirmed}</Td>
+                    <Td right>{c.declined}</Td>
+                    <Td right>{c.noResponse}</Td>
+                    <Td right>{c.notRequired}</Td>
+                    <Td right>{pct(c.rate)}</Td>
+                    <Td right>{money(c.feeCents)}</Td>
+                  </tr>
+                ))}
+                <tr className="font-medium">
+                  <Td>Practice</Td>
+                  <Td right>{confirmations.totals.confirmed}</Td>
+                  <Td right>{confirmations.totals.declined}</Td>
+                  <Td right>{confirmations.totals.noResponse}</Td>
+                  <Td right>{confirmations.totals.notRequired}</Td>
+                  <Td right>{pct(confirmations.totals.rate)}</Td>
+                  <Td right>{money(confirmations.totals.feeCents)}</Td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {confirmations.declineReasons.length > 0 && (
+            <p className="mt-3 text-caption text-muted">
+              Of the declines that said why:{' '}
+              {confirmations.declineReasons.map((r) => `${REASON_LABELS[r.reason] ?? r.reason} (${r.count})`).join(', ')}.
+              Most declines say nothing, and that is the design — the portal asks without
+              requiring an answer, and a texted &ldquo;no&rdquo; can never carry one.
+            </p>
+          )}
+        </Card>
+
+        <Card className="lg:col-span-2">
           <h2 className="mb-3 font-semibold">Completed sessions per week</h2>
           <div className="scroll-x">
             <div className="flex min-w-[600px] items-end gap-1" style={{ height: 140 }}>
@@ -128,6 +185,25 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
     </>
   );
 }
+
+const REASON_LABELS: Record<string, string> = {
+  cannot_make_it: 'cannot make that time',
+  need_a_different_time: 'needs a different time',
+  prefer_earlier: 'prefers earlier',
+  prefer_later: 'prefers later',
+};
+
+const Th = ({ children, right }: { children: React.ReactNode; right?: boolean }) => (
+  <th className={`border-b py-1.5 font-medium${right ? ' text-right' : ''}`} style={{ borderColor: 'var(--border)' }}>
+    {children}
+  </th>
+);
+
+const Td = ({ children, right }: { children: React.ReactNode; right?: boolean }) => (
+  <td className={`border-b py-1.5${right ? ' text-right font-mono' : ''}`} style={{ borderColor: 'var(--border)' }}>
+    {children}
+  </td>
+);
 
 function Stat({ label, value, tone }: { label: string; value: string | number; tone?: 'danger' }) {
   return (

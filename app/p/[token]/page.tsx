@@ -1,4 +1,4 @@
-import { openPortal } from '../../../src/portal/service';
+import { openPortal, type RescheduleReason } from '../../../src/portal/service';
 import { prisma } from '../../../src/db';
 import { Conflict, NotFound } from '../../../src/errors';
 import { minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
@@ -10,12 +10,39 @@ export const dynamic = 'force-dynamic';
 // The tab title says nothing. This page is opened on a shared phone.
 export const metadata = { title: 'Your appointments' };
 
-const REASONS: { value: string; label: string }[] = [
+const REASONS: { value: RescheduleReason; label: string }[] = [
   { value: 'cannot_make_it', label: 'I cannot make this time' },
   { value: 'need_a_different_time', label: 'I need a different time' },
   { value: 'prefer_earlier', label: 'I would prefer something earlier' },
   { value: 'prefer_later', label: 'I would prefer something later' },
 ];
+
+/**
+ * The same four codes wherever the client is asked, and still no text box.
+ *
+ * `blank` is what separates the two questions. A reschedule request is
+ * meaningless without a reason — front desk would have nothing to act on — so
+ * that one is required. A decline is complete on its own: the hour comes back
+ * whether or not the client says why, and a required answer here would be a
+ * toll on giving it back. Left blank, the column stays null, which reads the
+ * same as the keyword decline that can never carry one.
+ */
+function ReasonSelect({ id, blank }: { id: string; blank?: string }) {
+  return (
+    <>
+      <label className="sr-only" htmlFor={id}>Reason</label>
+      <select
+        id={id}
+        name="reason"
+        className="rounded-[var(--radius)] border px-2 py-1.5 text-body"
+        style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
+      >
+        {blank && <option value="">{blank}</option>}
+        {REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+      </select>
+    </>
+  );
+}
 
 export default async function ClientPortalPage({
   params,
@@ -104,10 +131,11 @@ export default async function ClientPortalPage({
                       charged at {lateFee}. Do you still want to cancel it?
                     </p>
                     <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <form action={sayNo}>
+                      <form action={sayNo} className="flex flex-wrap items-center gap-2">
                         <input type="hidden" name="token" value={token} />
                         <input type="hidden" name="appointmentId" value={a.id} />
                         <input type="hidden" name="acknowledgeFee" value="1" />
+                        <ReasonSelect id={`fee-why-${a.id}`} blank="Reason (optional)" />
                         <button
                           className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
                           style={{ background: 'var(--danger)', color: 'var(--on-solid)', borderColor: 'var(--danger)' }}
@@ -132,9 +160,10 @@ export default async function ClientPortalPage({
                         Yes, I will be there
                       </button>
                     </form>
-                    <form action={sayNo}>
+                    <form action={sayNo} className="flex flex-wrap items-center gap-2">
                       <input type="hidden" name="token" value={token} />
                       <input type="hidden" name="appointmentId" value={a.id} />
+                      <ReasonSelect id={`why-${a.id}`} blank="Reason (optional)" />
                       <button
                         className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
                         style={{ borderColor: 'var(--border-strong)' }}
@@ -153,15 +182,7 @@ export default async function ClientPortalPage({
                   <form action={askToReschedule} className="mt-3 flex flex-wrap items-center gap-2">
                     <input type="hidden" name="token" value={token} />
                     <input type="hidden" name="appointmentId" value={a.id} />
-                    <label className="sr-only" htmlFor={`reason-${a.id}`}>Reason</label>
-                    <select
-                      id={`reason-${a.id}`}
-                      name="reason"
-                      className="rounded-[var(--radius)] border px-2 py-1.5 text-body"
-                      style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
-                    >
-                      {REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
-                    </select>
+                    <ReasonSelect id={`reason-${a.id}`} />
                     <button
                       className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
                       style={{ borderColor: 'var(--border-strong)' }}

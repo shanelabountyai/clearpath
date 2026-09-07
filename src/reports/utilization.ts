@@ -139,3 +139,104 @@ export function weekStart(date: LocalDate): LocalDate {
   const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
   return addDays(date, weekday === 0 ? -6 : 1 - weekday);
 }
+
+/**
+ * How the confirmation loop actually performed — per clinician and practice-wide.
+ *
+ * It reads under `attendance_history`, the same cell as the utilisation report
+ * beside it, and that is the decision worth stating. A confirmation *rate* on
+ * its own is operational, and front desk could defensibly see one. This is not
+ * that: it is a per-clinician breakdown of who is silent on whose caseload,
+ * carrying the fee total the policy generated. Naming the loosest thing in the
+ * payload would have been the wrong instinct — the guard belongs on the
+ * strictest, and per-clinician attendance patterns plus money is exactly what
+ * `attendance_history` exists to keep away from the front desk.
+ *
+ * The rate is `confirmed / decided`, never `confirmed / booked`. Dividing by
+ * everything would mix in the hours the practice never asked about — a
+ * `reminderPreference: 'none'` client would drag a clinician's number down for
+ * a safety setting, which is the same category error the fee rule spent P0
+ * avoiding.
+ */
+export async function confirmationReport(
+  actor: Actor,
+  range: { from: LocalDate; to: LocalDate },
+) {
+  return guarded(
+    { actor, action: 'read', resource: 'attendance_history' },
+    async (tx) => {
+      const rows = await tx.appointment.findMany({
+        where: {
+          startAt: {
+            gte: zonedToUtc(range.from, 0),
+            lt: zonedToUtc(addDays(range.to, 1), 0),
+          },
+        },
+        select: {
+          clinicianId: true, confirmation: true, status: true,
+          chargeFeeCents: true, declineReason: true,
+          clinician: { select: { name: true } },
+        },
+      });
+
+      const blank = () => ({
+        notRequired: 0, pending: 0, confirmed: 0, declined: 0, noResponse: 0,
+        /**
+         * Money this policy and no other produced: silence that became a
+         * no-show charge. A late cancel is charged whether or not anyone was
+         * ever asked to confirm, so counting it here would credit the loop
+         * with revenue it did not cause. A waiver zeroes `chargeFeeCents`, so
+         * a reversed fee falls out of the sum without a second condition.
+         */
+        feeCents: 0,
+      });
+
+      const totals = blank();
+      const byClinician = new Map<string, { id: string; name: string } & ReturnType<typeof blank>>();
+      const byReason = new Map<string, number>();
+
+      for (const r of rows) {
+        const row = byClinician.get(r.clinicianId)
+          ?? { id: r.clinicianId, name: r.clinician.name, ...blank() };
+
+        for (const t of [row, totals]) {
+          if (r.confirmation === 'not_required') t.notRequired++;
+          if (r.confirmation === 'pending') t.pending++;
+          if (r.confirmation === 'confirmed') t.confirmed++;
+          if (r.confirmation === 'declined') t.declined++;
+          if (r.confirmation === 'no_response') {
+            t.noResponse++;
+            if (r.status === 'no_show') t.feeCents += r.chargeFeeCents ?? 0;
+          }
+        }
+        // Practice-wide only. Which clinician a client gave "prefer_earlier" to
+        // says something about a timetable, not about a clinician.
+        if (r.confirmation === 'declined' && r.declineReason) {
+          byReason.set(r.declineReason, (byReason.get(r.declineReason) ?? 0) + 1);
+        }
+        byClinician.set(r.clinicianId, row);
+      }
+
+      return {
+        range,
+        totals: { ...totals, rate: confirmationRate(totals) },
+        clinicians: [...byClinician.values()]
+          .map((c) => ({ ...c, rate: confirmationRate(c) }))
+          .sort((a, b) => b.rate - a.rate || a.name.localeCompare(b.name)),
+        /**
+         * Null reasons are absent by construction, not counted as a category.
+         * "Did not say" is most declines — the portal asks without requiring an
+         * answer and a keyword decline cannot carry one — and a bar labelled
+         * with it would swamp the four that mean something.
+         */
+        declineReasons: [...byReason.entries()]
+          .map(([reason, count]) => ({ reason, count }))
+          .sort((a, b) => b.count - a.count),
+      };
+    },
+  );
+}
+
+/** Answered out of asked-and-settled. `pending` is still in flight, not a miss. */
+const confirmationRate = (t: { confirmed: number; declined: number; noResponse: number }) =>
+  rate(t.confirmed, t.confirmed + t.declined + t.noResponse);

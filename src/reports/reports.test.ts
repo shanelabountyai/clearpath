@@ -4,11 +4,11 @@ import { fixedClock, DAY, HOUR } from '../clock';
 import { prisma } from '../db';
 import { Forbidden } from '../errors';
 import { bookAppointment } from '../scheduling/booking';
-import { cancelAppointment, setStatus } from '../scheduling/lifecycle';
+import { cancelAppointment, setStatus, waiveFee } from '../scheduling/lifecycle';
 import { continuityQueue, unconfirmedSoon, vacationImpact, waitlistMatches } from '../scheduling/worklists';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { queryAuditLog, toCsv } from './audit';
-import { utilizationReport, weeklyVolume, weekStart } from './utilization';
+import { confirmationReport, utilizationReport, weeklyVolume, weekStart } from './utilization';
 
 let desk: Awaited<ReturnType<typeof makeUser>>;
 let therapist: Awaited<ReturnType<typeof makeUser>>;
@@ -342,3 +342,110 @@ describe('the utilization report', () => {
     expect(weekStart('2026-09-06')).toBe('2026-08-31'); // Sunday -> that Monday
   });
 });
+
+describe('the confirmation report', () => {
+  const RANGE = { from: '2026-09-01' as const, to: '2026-09-04' as const };
+
+  /**
+   * One of every state the loop can leave behind, plus a second clinician, so
+   * the per-clinician split and the practice-wide totals cannot both be right
+   * by accident.
+   */
+  const loop = async () => {
+    const c = await makeClient(therapist.id);
+
+    const yes = await book(c.id, 540);
+    await prisma.appointment.update({ where: { id: yes.id }, data: { confirmation: 'confirmed' } });
+
+    const no = await book(c.id, 600);
+    await prisma.appointment.update({
+      where: { id: no.id },
+      data: { confirmation: 'declined', declineReason: 'prefer_later' },
+    });
+
+    const quiet = await book(c.id, 660);
+    await setStatus(actor(desk), quiet.id, 'no_show', { confirmation: 'no_response' });
+
+    const asking = await book(c.id, 720);
+    await prisma.appointment.update({ where: { id: asking.id }, data: { confirmation: 'pending' } });
+
+    // Never asked: `reminderPreference: 'none'`, the case the fee rule exempts.
+    await book(c.id, 780);
+  };
+
+  it('splits the four answers and rates only what was asked and settled', async () => {
+    await loop();
+    const report = await confirmationReport(actor(admin), RANGE);
+
+    expect(report.totals).toMatchObject({
+      confirmed: 1, declined: 1, noResponse: 1, pending: 1, notRequired: 1,
+    });
+    // 1 of 3 decided. The pending hour and the one nobody was asked about are
+    // both excluded — counting either as a miss is the category error the
+    // whole feature exists to avoid.
+    expect(report.totals.rate).toBe(round4(1 / 3));
+    expect(report.clinicians).toHaveLength(1);
+    expect(report.clinicians[0]).toMatchObject({ id: therapist.id, confirmed: 1, rate: round4(1 / 3) });
+  });
+
+  it('counts only the fee that silence itself produced', async () => {
+    await loop();
+
+    // A late cancel is charged whether or not anybody was ever asked, so it
+    // must not be credited to this policy.
+    const c2 = await makeClient(therapist.id);
+    const late = await book(c2.id, 840);
+    await cancelAppointment(actor(desk), late.id, { clock: fixedClock(new Date('2026-09-01T13:30:00Z')) });
+
+    const report = await confirmationReport(actor(admin), RANGE);
+    expect((await prisma.appointment.findUniqueOrThrow({ where: { id: late.id } })).chargeFeeCents).toBe(9_000);
+    expect(report.totals.feeCents).toBe(9_000); // the no_response no-show, and only it
+  });
+
+  it('drops a waived fee out of the total without a second condition', async () => {
+    await loop();
+    const charged = await prisma.appointment.findFirstOrThrow({ where: { confirmation: 'no_response' } });
+    await waiveFee(actor(admin), charged.id, 'practice_error');
+
+    const report = await confirmationReport(actor(admin), RANGE);
+    expect(report.totals.feeCents).toBe(0);
+    // The silence itself is still on the record. A waiver reverses money, not
+    // the fact that nobody answered.
+    expect(report.totals.noResponse).toBe(1);
+  });
+
+  it('reports decline reasons practice-wide, and omits the ones that said nothing', async () => {
+    await loop();
+    const c = await makeClient(therapist.id);
+    const silent = await book(c.id, 900);
+    await prisma.appointment.update({ where: { id: silent.id }, data: { confirmation: 'declined' } });
+
+    const report = await confirmationReport(actor(admin), RANGE);
+    expect(report.totals.declined).toBe(2);
+    expect(report.declineReasons).toEqual([{ reason: 'prefer_later', count: 1 }]);
+  });
+
+  it('names no client, and no answer to anything', async () => {
+    const c = await makeClient(therapist.id, { code: 'TC-QUIET' });
+    const appt = await book(c.id, 540);
+    await prisma.appointment.update({ where: { id: appt.id }, data: { confirmation: 'no_response' } });
+
+    const json = JSON.stringify(await confirmationReport(actor(admin), RANGE));
+    expect(json).not.toContain('TC-QUIET');
+    expect(json).not.toContain(c.lastName);
+    expect(json).not.toContain(c.id);
+  });
+
+  it('is not front-desk business either', async () => {
+    // A confirmation rate alone would be defensible for front desk. This is a
+    // per-clinician breakdown carrying a fee total, so it reads under the same
+    // `attendance_history` cell as the report beside it — and the denial is
+    // on the record.
+    await expect(confirmationReport(actor(desk), RANGE)).rejects.toBeInstanceOf(Forbidden);
+    expect(await prisma.auditEvent.count({
+      where: { actorId: desk.id, resource: 'attendance_history', allowed: false },
+    })).toBe(1);
+  });
+});
+
+const round4 = (n: number) => Math.round(n * 10_000) / 10_000;

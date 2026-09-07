@@ -1,84 +1,65 @@
 # Next
 
-**Item:** Appointment confirmation loop — **P1-4 and P1-5**, the cheap
-follow-ons, from [prd-appointment-confirmation.md](prd-appointment-confirmation.md).
+**Item:** Phase 5 is complete. Nothing is queued — pick the next thing from
+[prd-appointment-confirmation.md](prd-appointment-confirmation.md)'s P2 list, or
+start a new PRD.
 
-Phase 5's three committed P1s are done, committed and pushed (`16e4117`).
+P1-4 and P1-5 are done, committed and pushed. The confirmation loop's five P1s
+are all in.
 
-## What exists now
+## What landed this session
 
-**P1-1 — front-desk work list.** `unconfirmedSoon(actor, {clock, withinHours})`
-in `src/scheduling/worklists.ts`, rendered as the first section of
-`app/(staff)/worklists/page.tsx`. Sessions in the next 48 hours, soonest first,
-with the client's phone number on the row.
+**P1-4 — confirmation-rate report.** `confirmationReport(actor, range)` in
+`src/reports/utilization.ts`, rendered as a full-width "Confirmations" card on
+`app/(staff)/reports/page.tsx` between the clinician table and the weekly bars.
 
-- Filters on `confirmation` NOT `confirmed`, not on `pending` — three silences
-  are the same phone call (`not_required`, `pending`, and a `declined` session
-  still standing, which is what a keyword decline leaves behind).
-- `status: 'scheduled'` only, so an hour front desk confirmed by hand drops off.
-- No new matrix row and no new settings column. The window is a default
-  argument (48) until somebody asks for it to be tunable.
+- Reads under **`attendance_history`**, the same cell as the utilisation report
+  beside it. A confirmation rate alone would be defensible for front desk; a
+  per-clinician silence breakdown carrying a fee total is not. The guard goes on
+  the strictest thing in the payload, never on the name of the feature. Front
+  desk gets `Forbidden` and the denial is asserted in the test.
+- Rate is `confirmed / (confirmed + declined + no_response)`. Dividing by booked
+  would let a `reminderPreference: 'none'` client drag their clinician's number
+  down for choosing a safety setting.
+- `feeCents` counts **only** a `no_response` that became a `no_show`. A late
+  cancel is charged whether or not anyone was asked. A waiver zeroes
+  `chargeFeeCents`, so a reversal drops out with no second condition — and the
+  `noResponse` count deliberately does not drop with it.
+- One `findMany` + JS tally, matching `utilizationReport` directly above it,
+  rather than three reconciled `groupBy`s plus a name lookup.
+- `declineReasons` is practice-wide only, and omits the nulls.
 
-**P1-2 — cadence cap.** `confirmationStreakCap Int @default(4)` on
-`PracticeSettings` (migration `20260906171851_cadence_streak_cap`).
-`cadenceStages(recent, cap)` is pure, in `confirmation.ts` beside the other two
-rules. `dueStages` gained an `allowed` argument rather than a branch, so the cap
-can only remove stages, never move one earlier.
+**P1-5 — decline reason codes.** `Appointment.declineReason RescheduleReason?`
+(migration `20260907021406_decline_reason`), threaded
+`sayNo` → `declineAppointment` → `cancelAppointment` → `setStatus`, beside the
+existing `confirmation` option so answer and reason land in one write.
 
-- It deliberately does **not** touch the promotion to `pending`. Fewer messages
-  is still a message, so a capped client's silence rests on the same outbox row
-  as anybody else's.
-- Only *decided* (`confirmed | declined | no_response`) and only *past*
-  appointments move the streak. `DECIDED` is exported from `confirmation.ts`.
-- `runReminderHorizon` caches one track-record lookup per client per run.
-- Shown on `/practice` beside the other policy fields.
+- Reuses the portal's four codes. `RESCHEDULE_REASONS` /`isRescheduleReason`
+  are now exported from `src/portal/service.ts`; the type is `DeclineReason` in
+  `lifecycle.ts` (lowest layer — portal aliases it, so there is one list).
+- **Nullable, and null is the majority case.** The portal asks without requiring
+  an answer, and P1-3's keyword decline can never carry one. A default value
+  would turn every texted "no" into a preference nobody stated.
+- The server action **drops** an unrecognised value rather than throwing: the
+  reason annotates the decline, it does not authorize it.
+- The fee interstitial carries its own select rather than threading the first
+  tap's choice through the redirect — that would put a reason code in a URL.
+- `ReasonSelect` in `app/p/[token]/page.tsx` serves all three asks; `blank` is
+  what separates required (reschedule) from optional (decline).
 
-**P1-3 — inbound keyword handling.** `src/messaging/inbound.ts`, plus
-`npm run inbound:simulate -- <phone-or-email> <message...>`. Migration
-`20260906172157_inbound_replies` adds the `InboundReply` model, the
-`InboundClassification` enum, `AlertKind.inbound_unparsed`, and
-`PracticeSettings.practicePhone`.
-
-- `classifyInbound` matches **whole normalised messages** against a phrase map.
-  Anything else is `unparsed`. No prefix or substring matching, ever.
-- **A keyword decline records `declined` and cancels nothing.** A caller ID is
-  not a credential; the fee interstitial cannot happen in a text. The hour lands
-  on P1-1's list instead.
-- Two clients sharing a number → `ambiguous_sender`, nothing written at all.
-- `unparsed` → `Alert` to the treating clinician with `reasons: ['inbound:unparsed']`,
-  plus the `inbound_unparsed_reply` template carrying the practice number and
-  988/911 **as digits** (the deny-list bans "crisis" and "suicide", correctly).
-- Front desk surface: "Clients who wrote back — call them" on `/worklists`,
-  cleared with `resolveInboundReply`.
-- Two checks: a behavioural one that plants a sentence and hunts it in every
-  column it could have reached, and a structural lint that reads
-  `prisma/schema.prisma` and asserts `InboundReply`'s only `String` fields are
-  identifiers.
-
-Seed: 1 client with 4 confirmations in a row (next session asked about once, not
-three times), and 4 inbound replies — 1 confirm, 1 decline that freed nothing,
-2 unparsed with 1 already called back.
-
-## Phase 5 remainder to build
-
-- **P1-4 confirmation-rate report** — per clinician and practice-wide, alongside
-  the existing utilization report in `src/reports/utilization.ts` /
-  `app/(staff)/reports/page.tsx`: confirmed / declined / no-response /
-  not-required, and the fee total the policy generated. A `groupBy` on
-  `confirmation` is most of it; `attendanceSummary` in `lifecycle.ts` is the
-  shape to copy. Watch the resource: a confirmation *rate* is operational, but
-  per-clinician breakdowns sit next to `attendance_history`, which front desk is
-  denied — decide which cell it reads under before writing the query.
-- **P1-5 decline reason codes** — reuse the portal's existing four
-  (`RescheduleReason`), do not invent a parallel vocabulary. Note the tension
-  worth resolving first: the portal decline currently carries no reason at all,
-  and P1-3's keyword decline cannot carry one either, so this is really "ask for
-  a reason on the portal decline path only".
+Seed: 2 portal declines, 1 with a code and 1 without, plus the group-session
+decliner now carrying `cannot_make_it`. Against the e2e seed the report reads
+8 confirmed / 4 declined / 10 no-response, $270 of fee from silence, and two
+reason codes with two declines that said nothing.
 
 ## Gate at this commit
 
-Unit **1552/1552**, typecheck clean, e2e **24/24** against the production build.
-Migrations applied to dev, test and e2e.
+Unit **1561/1561**, typecheck clean, e2e **24/24** against the production build.
+Migrations applied to dev, test and e2e; e2e reseeded.
+
+No new e2e spec: `denials.spec.ts` already crawls `/reports` as every seeded
+role, so the card is covered against a crash and against front desk the day it
+lands. The arithmetic is unit-tested.
 
 ## Still open, answered but not actioned
 

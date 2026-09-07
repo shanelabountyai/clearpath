@@ -9,8 +9,9 @@ import { cancelAppointment, setStatus } from '../scheduling/lifecycle';
 import { runReminderHorizon } from '../scheduling/reminders';
 import { DENY_LIST } from '../messaging/outbox';
 import {
-  confirmAppointment, declineAppointment, ensurePortalLink, issuePortalLink,
-  openPortal, openRescheduleRequests, requestReschedule, resolveRescheduleRequest,
+  confirmAppointment, declineAppointment, ensurePortalLink, isRescheduleReason,
+  issuePortalLink, openPortal, openRescheduleRequests, requestReschedule,
+  resolveRescheduleRequest, RESCHEDULE_REASONS,
 } from './service';
 
 const TUESDAY = '2026-09-01';
@@ -363,6 +364,55 @@ describe('confirming and declining', () => {
     // The practice's existing late-cancel fee, decided by `classifyCancellation`
     // — this feature adds no money logic of its own to the decline.
     expect(after.chargeFeeCents).toBe(9_000);
+  });
+
+  it('records a decline reason when the client gave one, and null when they did not', async () => {
+    const { appt, token } = await asked();
+    await declineAppointment(token, appt.id, { clock: fiveDaysOut, reason: 'prefer_later' });
+
+    const said = await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } });
+    expect(said.confirmation).toBe('declined');
+    expect(said.declineReason).toBe('prefer_later');
+
+    // Silence is the common case and stays null rather than defaulting to the
+    // first code — a keyword decline can never carry one, and a report that
+    // invented "cannot make it" for every one of them would be fiction.
+    const second = await bookOne(client.id, mine.id, 16 * 60);
+    await prisma.appointment.update({ where: { id: second.id }, data: { confirmation: 'pending' } });
+    await declineAppointment(token, second.id, { clock: fiveDaysOut });
+
+    const quiet = await prisma.appointment.findUniqueOrThrow({ where: { id: second.id } });
+    expect(quiet.confirmation).toBe('declined');
+    expect(quiet.declineReason).toBeNull();
+  });
+
+  it('carries the reason through the fee interstitial, on the tap that cancels', async () => {
+    const { appt, token } = await asked(twoHoursOut);
+
+    await expect(declineAppointment(token, appt.id, { clock: twoHoursOut, reason: 'cannot_make_it' }))
+      .rejects.toMatchObject({ code: 'fee_acknowledgement_required' });
+    // The refused first tap wrote nothing at all, reason included.
+    expect((await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } })).declineReason)
+      .toBeNull();
+
+    await declineAppointment(token, appt.id, {
+      clock: twoHoursOut, acknowledgeFee: true, reason: 'cannot_make_it',
+    });
+    const after = await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } });
+    expect(after.status).toBe('late_cancelled');
+    expect(after.declineReason).toBe('cannot_make_it');
+  });
+
+  it('takes only the four portal codes, and never free text', () => {
+    expect(RESCHEDULE_REASONS).toEqual([
+      'cannot_make_it', 'need_a_different_time', 'prefer_earlier', 'prefer_later',
+    ]);
+    for (const r of RESCHEDULE_REASONS) expect(isRescheduleReason(r)).toBe(true);
+    // The reason is an annotation, not a permission — the server action drops
+    // anything unrecognised rather than letting it near the enum column.
+    for (const junk of ['', 'CANNOT_MAKE_IT', 'my back hurts again', null, 7]) {
+      expect(isRescheduleReason(junk)).toBe(false);
+    }
   });
 
   it('acknowledging a fee that does not apply buys nothing', async () => {

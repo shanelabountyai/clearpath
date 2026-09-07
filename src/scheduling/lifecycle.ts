@@ -9,6 +9,18 @@ import type { Confirmation } from './confirmation';
 /** A category the practice reports on, never free text on a money reversal. */
 export type FeeWaiveReason = 'practice_error' | 'client_disputed' | 'emergency' | 'goodwill';
 
+/**
+ * Why a client declined, as one of the portal's four existing codes.
+ *
+ * Deliberately the same vocabulary as a reschedule request rather than a
+ * parallel one: "I cannot make this time" is the same sentence whether the
+ * client then asks for another slot or simply gives the hour back, and two
+ * lists would drift. Optional everywhere, because the keyword decline can
+ * never carry one.
+ */
+export type DeclineReason =
+  | 'cannot_make_it' | 'need_a_different_time' | 'prefer_earlier' | 'prefer_later';
+
 export type Status =
   | 'scheduled' | 'confirmed' | 'arrived' | 'in_session'
   | 'completed' | 'no_show' | 'cancelled' | 'late_cancelled';
@@ -76,6 +88,8 @@ export async function setStatus(
     reason?: string;
     clock?: Clock;
     confirmation?: Confirmation;
+    /** The client's own code for saying no. Only ever set beside `declined`. */
+    declineReason?: DeclineReason;
     /**
      * A reason CODE for the audit row. Deliberately not `reason`, which is
      * operational free text a person typed: the audit log is read by the one
@@ -114,6 +128,9 @@ export async function setStatus(
   // it causes land in one write with one audit row. Nothing else passes it: a
   // status write never infers a confirmation, which is the whole of D-02.
   if (opts.confirmation) data.confirmation = opts.confirmation;
+  // Rides the same write as the decline it explains, so there is no window in
+  // which the practice has the answer but not the reason for it.
+  if (opts.declineReason) data.declineReason = opts.declineReason;
 
   return guarded(
     {
@@ -135,7 +152,12 @@ export async function setStatus(
 export async function cancelAppointment(
   actor: Actor,
   appointmentId: string,
-  opts: { reason?: string; clock?: Clock; confirmation?: Confirmation } = {},
+  opts: {
+    reason?: string;
+    clock?: Clock;
+    confirmation?: Confirmation;
+    declineReason?: DeclineReason;
+  } = {},
 ) {
   const clock = opts.clock ?? systemClock;
   const appt = await prisma.appointment.findUnique({ where: { id: appointmentId } });
