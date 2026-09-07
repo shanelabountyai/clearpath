@@ -4,7 +4,8 @@ import { fixedClock, HOUR } from '../clock';
 import { prisma } from '../db';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { bookAppointment } from '../scheduling/booking';
-import { classifyInbound, openInboundReplies, receiveInbound, resolveInboundReply } from './inbound';
+import { PHRASES_BY_LANGUAGE, classifyInbound, openInboundReplies, receiveInbound, resolveInboundReply } from './inbound';
+import { LANGUAGES } from './outbox';
 
 /** 2026-09-01 15:00 America/New_York, as everywhere else in this suite. */
 const TUESDAY = '2026-09-01';
@@ -83,6 +84,59 @@ describe('classifyInbound — three codes, and everything else is the third', ()
     expect(classifyInbound('   ')).toBe('unparsed');
     expect(classifyInbound('👍')).toBe('unparsed');
     expect(classifyInbound('4')).toBe('unparsed');
+  });
+
+  it('reads the Spanish yes and no, accent or no accent', () => {
+    for (const yes of ['Sí', 'si', 'SÍ', 'Sí gracias', 'claro', 'Confirmo', 'Allí estaré']) {
+      expect(classifyInbound(yes), yes).toBe('confirm');
+    }
+    for (const no of ['No', 'cancelar', 'No puedo', 'no podré', 'No voy', 'no asistiré']) {
+      expect(classifyInbound(no), no).toBe('decline');
+    }
+  });
+
+  /**
+   * The accent is the whole bug. `normalise` collapses everything that is not
+   * `a-z`, so an unfolded `sí` arrives as `s` — not a phrase, therefore
+   * `unparsed`, therefore an alert to a clinician and a phone call, every
+   * single time a Spanish-speaking client says yes.
+   */
+  it('folds the accent into its letter rather than deleting it', () => {
+    expect(classifyInbound('sí')).toBe('confirm');
+    expect(classifyInbound('s')).toBe('unparsed');
+  });
+
+  it('is still strict in Spanish — a sentence that starts with a keyword is not a reply', () => {
+    expect(classifyInbound('No puedo ir, mi madre murió anoche')).toBe('unparsed');
+    expect(classifyInbound('sí pero necesito hablar con alguien primero')).toBe('unparsed');
+  });
+
+  /**
+   * The union is read language-blind, because an inbound message does not
+   * arrive with a language on it and the client's stored preference is about
+   * what the practice writes, not what they write back. That is only safe
+   * while no phrase means opposite things in two languages — a property of
+   * the data, asserted here rather than hoped for. When a third language
+   * breaks it, the fix is to delete the ambiguous phrase from both and let it
+   * fall to `unparsed`, which is a person ringing the client.
+   */
+  it('has no phrase that means confirm in one language and decline in another', () => {
+    const seen = new Map<string, string>();
+    for (const language of LANGUAGES) {
+      for (const [phrase, classification] of Object.entries(PHRASES_BY_LANGUAGE[language])) {
+        const previous = seen.get(phrase);
+        expect(previous ?? classification, `${phrase} (${language})`).toBe(classification);
+        seen.set(phrase, classification);
+      }
+    }
+  });
+
+  it('stores every phrase in the folded form normalise produces', () => {
+    for (const language of LANGUAGES) {
+      for (const phrase of Object.keys(PHRASES_BY_LANGUAGE[language])) {
+        expect(classifyInbound(phrase), `${language}: ${phrase}`).not.toBe('unparsed');
+      }
+    }
   });
 });
 
@@ -183,6 +237,24 @@ describe('an unparsed reply — one alert, one auto-reply, and nothing to read',
     const sent = await prisma.outboxMessage.findMany({ where: { clientId: client.id } });
     expect(sent).toHaveLength(1);
     expect(sent[0]!.templateKey).toBe('inbound_unparsed_reply');
+    expect(sent[0]!.body).toContain('(555) 010-0199');
+    expect(sent[0]!.body).toContain('988');
+    expect(sent[0]!.body).toContain('911');
+  });
+
+  /**
+   * The reply a Spanish-speaking client gets when they write the most acute
+   * sentence of their life to a number nobody reads. Same digits, same
+   * refusal to name the line, and in the language they wrote the practice in
+   * — an English auto-reply here is the moment the routing stops mattering.
+   */
+  it('replies in the client language, with the same digits and the same silence about why', async () => {
+    const client = await reachableClient({ language: 'es' });
+    await receiveInbound({ from: '555-0142', body: DISCLOSURE }, { clock });
+
+    const sent = await prisma.outboxMessage.findMany({ where: { clientId: client.id } });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.subject).toBe('Recibimos su mensaje');
     expect(sent[0]!.body).toContain('(555) 010-0199');
     expect(sent[0]!.body).toContain('988');
     expect(sent[0]!.body).toContain('911');

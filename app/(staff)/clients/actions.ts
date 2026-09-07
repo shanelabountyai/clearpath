@@ -54,3 +54,17 @@ export async function saveReminderStages(formData: FormData) {
   await updateClient(actor, clientId, { reminderStages: [...stages] });
   revalidatePath(`/clients/${clientId}`);
 }
+
+/**
+ * Which language this client is written in. Not a display setting — it selects
+ * the message bodies *and* the deny-list they are checked against, so the two
+ * can never come apart.
+ */
+export async function saveLanguage(formData: FormData) {
+  const { actor } = await requireSession();
+  const clientId = String(formData.get('clientId'));
+  const picked = String(formData.get('language'));
+  const language = picked === 'es' ? 'es' : 'en';
+  await updateClient(actor, clientId, { language });
+  revalidatePath(`/clients/${clientId}`);
+}

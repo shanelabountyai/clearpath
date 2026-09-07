@@ -175,6 +175,6 @@ means replacing that file's values and nothing else.
 | Recurrence, and the occurrence-key fix | [`src/scheduling/recurrence.ts`](src/scheduling/recurrence.ts) |
 | Scoring, thresholds and critical items | [`src/forms/scoring.ts`](src/forms/scoring.ts) |
 | Two-tier notes and co-signature | [`src/notes/service.ts`](src/notes/service.ts) |
-| The discretion deny-list | [`src/messaging/outbox.ts`](src/messaging/outbox.ts) |
+| The discretion deny-list, one per language | [`src/messaging/outbox.ts`](src/messaging/outbox.ts) |
 | Delivery receipts, and the fee that waits for one | [`src/messaging/delivery.ts`](src/messaging/delivery.ts) |
 | Why any of it is shaped this way | [`WRITEUP.md`](WRITEUP.md) |

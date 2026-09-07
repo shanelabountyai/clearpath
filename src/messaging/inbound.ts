@@ -3,7 +3,7 @@ import type { Actor } from '../auth/permissions';
 import { systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
 import { NotFound } from '../errors';
-import { queueToClient } from './outbox';
+import { fold, LANGUAGES, queueToClient, type Language } from './outbox';
 
 /**
  * A client wrote back in words, and what the practice is allowed to keep.
@@ -45,24 +45,61 @@ export type InboundClassification = 'confirm' | 'decline' | 'unparsed';
  * who did not need it, and the cost of looseness is a disclosure nobody reads.
  * That is not a close call.
  */
-const PHRASES: Record<string, InboundClassification> = {
-  'y': 'confirm', 'yes': 'confirm', 'yes please': 'confirm', 'yep': 'confirm',
-  'yeah': 'confirm', 'yup': 'confirm', 'ok': 'confirm', 'okay': 'confirm',
-  'confirm': 'confirm', 'confirmed': 'confirm', 'coming': 'confirm',
-  'ill be there': 'confirm', 'i will be there': 'confirm',
+export const PHRASES_BY_LANGUAGE: Record<Language, Record<string, InboundClassification>> = {
+  en: {
+    'y': 'confirm', 'yes': 'confirm', 'yes please': 'confirm', 'yep': 'confirm',
+    'yeah': 'confirm', 'yup': 'confirm', 'ok': 'confirm', 'okay': 'confirm',
+    'confirm': 'confirm', 'confirmed': 'confirm', 'coming': 'confirm',
+    'ill be there': 'confirm', 'i will be there': 'confirm',
 
-  'n': 'decline', 'no': 'decline', 'nope': 'decline', 'cancel': 'decline',
-  'decline': 'decline', 'cant make it': 'decline', 'i cant make it': 'decline',
-  'cannot make it': 'decline', 'wont be there': 'decline', 'not coming': 'decline',
+    'n': 'decline', 'no': 'decline', 'nope': 'decline', 'cancel': 'decline',
+    'decline': 'decline', 'cant make it': 'decline', 'i cant make it': 'decline',
+    'cannot make it': 'decline', 'wont be there': 'decline', 'not coming': 'decline',
+  },
+  // Written folded, like the deny-list: `sí` is stored as `si` because that is
+  // what `normalise` produces, and an accented key would match nothing.
+  es: {
+    'si': 'confirm', 'si gracias': 'confirm', 'claro': 'confirm', 'vale': 'confirm',
+    'ok': 'confirm', 'confirmo': 'confirm', 'confirmado': 'confirm',
+    'alli estare': 'confirm', 'ahi estare': 'confirm', 'voy': 'confirm',
+
+    'no': 'decline', 'cancelar': 'decline', 'cancela': 'decline',
+    'no puedo': 'decline', 'no puedo ir': 'decline', 'no podre': 'decline',
+    'no ire': 'decline', 'no voy': 'decline', 'no asistire': 'decline',
+  },
 };
 
 /**
- * Lowercase, drop apostrophes so `can't` and `cant` are one phrase, and
- * collapse everything else that is not a letter. `YES!!` and `Yes.` and `yes `
- * are the same answer, and an emoji is not one.
+ * One table, every language, because an inbound message does not come with a
+ * language on it.
+ *
+ * The client's stored `language` is a preference for what the practice writes,
+ * not a promise about what they write back — a bilingual client answers in
+ * whichever one their thumb reaches first — and the caller ID that would
+ * "identify" them is not a credential in the first place (see below). So the
+ * classifier reads the union and never guesses.
+ *
+ * The union is only safe while no phrase means opposite things in two
+ * languages, which is a property of the data rather than of this code:
+ * `inbound.test.ts` asserts it, and when it eventually fails the fix is to
+ * delete the ambiguous phrase from both. An ambiguous keyword falls to
+ * `unparsed`, which is a person ringing the client — the answer this whole
+ * file defaults to whenever it is unsure.
+ */
+const PHRASES: Record<string, InboundClassification> = Object.assign(
+  {},
+  ...LANGUAGES.map((language) => PHRASES_BY_LANGUAGE[language]),
+);
+
+/**
+ * Fold the accents into their letters, lowercase, drop apostrophes so `can't`
+ * and `cant` are one phrase, and collapse everything else that is not a
+ * letter. `YES!!` and `Yes.` and `yes ` are the same answer, an emoji is not
+ * one, and `sí` is `si` rather than `s` — which is what stripping the accent
+ * before folding it would have left.
  */
 const normalise = (body: string): string =>
-  body.toLowerCase().replace(/['‘’]/g, '').replace(/[^a-z]+/g, ' ').trim();
+  fold(body).replace(/['‘’]/g, '').replace(/[^a-z]+/g, ' ').trim();
 
 /** Pure, and the only function in the codebase that ever sees an inbound body. */
 export function classifyInbound(body: string): InboundClassification {

@@ -12,7 +12,7 @@ import { localDateOf, minutesToHHMM, utcToZoned } from '../../../../src/time';
 import {
   Badge, Card, EmptyState, Field, LockedPanel, PageHeader, StatusChip, TierBanner, money,
 } from '../../../../src/ui/primitives';
-import { addProcessNote, saveFee, saveReminderStages, sendForm, sendPortalLink } from '../actions';
+import { addProcessNote, saveFee, saveLanguage, saveReminderStages, sendForm, sendPortalLink } from '../actions';
 import { BreakGlassPrompt } from '../../break-glass';
 import { systemClock } from '@/src/clock';
 import { Button } from '@/src/ui/primitives';
@@ -21,6 +21,9 @@ export const dynamic = 'force-dynamic';
 
 /** Staff-facing names for the cadence stages. `d5`/`d1`/`d0` are the rule's vocabulary, not front desk's. */
 const STAGE_LABEL = { d5: 'Five days before', d1: 'Day before', d0: 'Day of' } as const;
+
+/** The languages the practice has message bodies *and* a deny-list for. */
+const LANGUAGE_LABEL = { en: 'English', es: 'Español' } as const;
 
 export default async function ClientPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -147,6 +150,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
                   {client.reminderStages.length
                     ? `· ${client.reminderStages.map((s) => STAGE_LABEL[s]).join(', ')} only`
                     : '· practice cadence'}
+                  {` · ${LANGUAGE_LABEL[client.language]}`}
                 </span>
               </Field>
             </dl>
@@ -167,6 +171,29 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
                 </div>
                 <button className="rounded-[var(--radius)] border px-2.5 py-1.5 text-caption font-medium" style={{ borderColor: 'var(--border-strong)' }}>
                   Save fee
+                </button>
+              </form>
+            )}
+
+            {can.edit && (
+              <form action={saveLanguage} className="mt-4 flex items-end gap-2 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
+                <input type="hidden" name="clientId" value={client.id} />
+                <div>
+                  <label htmlFor="language" className="block text-micro font-medium tracking-wide text-subtle uppercase">
+                    Language for messages
+                  </label>
+                  <select
+                    id="language" name="language" defaultValue={client.language}
+                    className="mt-1 rounded-[var(--radius)] border px-2 py-1 text-body"
+                    style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
+                  >
+                    {(['en', 'es'] as const).map((l) => (
+                      <option key={l} value={l}>{LANGUAGE_LABEL[l]}</option>
+                    ))}
+                  </select>
+                </div>
+                <button className="rounded-[var(--radius)] border px-2.5 py-1.5 text-caption font-medium" style={{ borderColor: 'var(--border-strong)' }}>
+                  Save language
                 </button>
               </form>
             )}

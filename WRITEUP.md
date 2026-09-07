@@ -991,6 +991,103 @@ to the day before, TC-056 confirms four times *and* chose the day of — same
 history, different cadence, and the second one is the row that would have gone
 silent under an intersection.
 
+## 16. A second language, and the control that quietly stops working
+
+The last open item on the confirmation PRD was "multi-language message bodies,"
+and it was on the list with a parenthesis attached: *the deny-list is
+English-only and would need one per language*. That parenthesis is the whole
+feature. Everything else here is six strings translated twice.
+
+`assertDiscreet` is the reason a reminder can go to a lock screen at all. It
+refuses any client-facing body containing `therapy`, `counseling`, `anxiety`,
+`intake` — thirty-odd stems that would tell a roommate what the appointment is
+for. Translate the templates and leave it alone, and `Recordatorio: su terapia
+es el martes` passes it. Not partially. Completely, and quietly: the send
+succeeds, the row is written, the message goes out, and the control that exists
+to prevent exactly that disclosure reports success while doing nothing.
+
+That is worse than having no gate. A missing check is visible in review; a check
+that passes everything looks like a check.
+
+### So a language is not a translation, it is a pair
+
+`Language` is one type used twice: `Record<Language, Record<TemplateKey, Build>>`
+for the bodies, `Record<Language, readonly string[]>` for the terms. Adding
+`pt` does not compile until it answers for all six templates, and does not pass
+its tests until `DENY_LISTS` answers for it too. The coupling is the design —
+there is no arrangement of this code where the templates ship and the terms are
+a follow-up ticket.
+
+The gate then reads **every language's list against every body**, not the
+client's own. Three reasons, and the third is the one that matters:
+
+- A body is routinely a mix — a Spanish template wrapped around an English
+  practice name, an English template with one Spanish word left in it.
+- The language a message is *read* in is not a fact this system holds. `Client.language`
+  is a preference about what the practice writes, not a property of the reader.
+- Checking all of them means **adding a language can never weaken the gate for
+  the ones already shipping**. A per-language check would make every new
+  language a chance to regress the old ones.
+
+It costs a few dozen `includes` calls per send.
+
+### The bug underneath both halves was the same three characters
+
+`'Depresión'.toLowerCase()` is `'depresión'`, which does not contain
+`'depresion'`. A case-folding gate passes the accented spelling of every term on
+the list — which is the only spelling anyone actually writes. So `fold()`
+normalises to NFD, drops the combining marks, and lowercases; terms are stored
+in that same folded form, and a test asserts it, because a term carrying an
+accent is a term that silently matches nothing.
+
+The inbound classifier had the mirror of it. `normalise` collapses everything
+outside `a-z`, so an unfolded `sí` arrives as `s` — not a phrase, therefore
+`unparsed`, therefore an alert to a clinician and a phone call, **every single
+time a Spanish-speaking client says yes**. Same three characters, opposite
+consequence: the outbound bug sends what it should have stopped, the inbound bug
+escalates what it should have understood. One `fold()`, exported from the
+messaging module and used by both.
+
+### The inbound table is language-blind on purpose
+
+There is one phrase table, the union of every language's, and no attempt to pick
+a table per sender. An inbound message does not arrive with a language on it;
+the client's stored preference is about what the practice writes; and a
+bilingual client answers in whichever one their thumb reaches first. Guessing
+here buys nothing and can only be wrong.
+
+The union is safe **only while no phrase means opposite things in two
+languages** — which is a property of the data, not of the code, so a test
+asserts it rather than a comment hoping for it. `no` is decline in both. `ok` is
+confirm in both. When a third language eventually breaks the invariant the build
+says so, and the fix is to delete the ambiguous phrase from both tables and let
+it fall to `unparsed` — which is a person ringing the client, the answer that
+file defaults to whenever it is unsure.
+
+### The crisis line, twice
+
+The English auto-reply names 988 as digits rather than as the Suicide & Crisis
+Lifeline, because both of those words are deny-listed — correctly — and the
+safest message the practice sends would otherwise fail its own send. The Spanish
+one is under the identical constraint, `crisis` being spelled the same in both
+lists, and takes the identical way out. `ayuda urgente` is the most either body
+will say about why somebody might dial it.
+
+### What it deliberately does not do
+
+- **The portal is not translated.** Scope was message bodies, and the portal is
+  a page behind a link with its own layout, fee disclosure and consent copy. Half
+  a translation is worse than none: a Spanish reminder landing on an English fee
+  disclosure is the one screen where comprehension is legally load-bearing.
+- **No language detection.** Not on inbound, not on intake. `Client.language` is
+  set by a person who asked the client, which is the only way it is ever right.
+- **No per-message override.** A client is written in one language.
+- **The deny-lists are not machine-translated.** They are stems chosen against
+  the English list's intent — `psicolog` covering `psicólogo`, `psicóloga`,
+  `psicológica` — and a machine translation of a word list produces plausible
+  entries nobody has checked, on the one control that has no second layer behind
+  it.
+
 ## Decisions log
 
 | Decision | Why |

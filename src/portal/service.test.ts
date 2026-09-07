@@ -7,7 +7,7 @@ import { bookAppointment } from '../scheduling/booking';
 import { bookGroupSession } from '../scheduling/groups';
 import { cancelAppointment, setStatus } from '../scheduling/lifecycle';
 import { runReminderHorizon } from '../scheduling/reminders';
-import { DENY_LIST } from '../messaging/outbox';
+import { indiscreetTerms } from '../messaging/outbox';
 import {
   confirmAppointment, declineAppointment, ensurePortalLink, isRescheduleReason,
   issuePortalLink, openPortal, openRescheduleRequests, requestReschedule,
@@ -42,8 +42,7 @@ describe('issuing the door', () => {
     await issuePortalLink(actor(desk), { clientId: client.id, clock });
 
     const message = await prisma.outboxMessage.findFirstOrThrow();
-    const text = `${message.subject} ${message.body}`.toLowerCase();
-    expect(DENY_LIST.some((term) => text.includes(term))).toBe(false);
+    expect(indiscreetTerms(`${message.subject} ${message.body}`)).toEqual([]);
     expect(message.body).toContain('/p/');
   });
 

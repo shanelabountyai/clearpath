@@ -37,7 +37,8 @@ const DEMOGRAPHICS = {
   id: true, code: true, firstName: true, lastName: true, dateOfBirth: true,
   email: true, phone: true,
   emergencyContactName: true, emergencyContactPhone: true, emergencyContactRelation: true,
-  treatingClinicianId: true, feeCents: true, reminderPreference: true, reminderStages: true, status: true,
+  treatingClinicianId: true, feeCents: true, reminderPreference: true, reminderStages: true,
+  language: true, status: true,
   createdAt: true,
 } as const;
 
@@ -125,6 +126,8 @@ type ClientEdit = Partial<{
   reminderPreference: 'email' | 'sms' | 'none';
   /// Empty means the practice cadence. See `cadenceStages`.
   reminderStages: ('d5' | 'd1' | 'd0')[];
+  /// Which set of message bodies — and which deny-list. See `DENY_LISTS`.
+  language: 'en' | 'es';
   status: 'active' | 'inactive';
   treatingClinicianId: string;
 }>;

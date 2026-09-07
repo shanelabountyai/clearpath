@@ -157,6 +157,15 @@ async function main() {
             // A third of the practice is on a sliding scale, which is normal.
             feeCents: chance(0.3) ? pick([6_000, 9_000, 12_000, 15_000]) : null,
             reminderPreference: chance(0.1) ? 'none' : chance(0.4) ? 'sms' : 'email',
+            // A share of the practice is written to in Spanish, so the horizon
+            // run renders Spanish bodies in bulk and every one of them passes
+            // the same deny-list gate rather than one hand-picked fixture.
+            //
+            // Counted, not drawn. Every `chance()` here pulls from the one
+            // seeded PRNG, so adding a draw to this loop reshuffles every
+            // decision made after it — the whole fixture set moves, and what
+            // fails is an unrelated spec three files away.
+            language: clientNo % 8 === 3 ? 'es' : 'en',
           },
         });
         clients.push({ id: client.id, code, clinicianId: clinician.id });
@@ -486,6 +495,26 @@ async function main() {
   }
   log('1 client on a day-of-only cadence they chose — the streak cap does not narrow it further');
 
+  // ── P2: the clients the practice writes in Spanish ─────────────────────
+  //
+  // Deterministic, because "some of the practice is Spanish-speaking" produced
+  // by chance is a demo that only probably shows the feature. One takes the
+  // ordinary cadence, so there are Spanish reminder bodies on the outbox to
+  // read; the other answers one in Spanish through the real inbound path,
+  // which is the half that would silently break — an unfolded `sí` normalises
+  // to `s`, classifies as unparsed, and turns every Spanish yes into an alert
+  // and a phone call.
+  const spanish = [clients[56]!, clients[57]!];
+  for (const c of spanish) {
+    await prisma.client.update({ where: { id: c.id }, data: { language: 'es', reminderPreference: 'sms' } });
+  }
+  const nextForSpanish = await prisma.appointment.findFirst({
+    where: { clientId: spanish[0]!.id, status: 'scheduled', startAt: { gte: now } },
+    orderBy: { startAt: 'asc' },
+  });
+  if (nextForSpanish) await asked(nextForSpanish, 'pending');
+  log('2 clients written to in Spanish — bodies and deny-list both');
+
   // ── P1-3: the clients who wrote back in words ──────────────────────────
   //
   // Through the real path, so the alert, the auto-reply and the audit row are
@@ -508,6 +537,9 @@ async function main() {
     body: 'no sorry, things have been really hard this week and I am not up to it',
   });
   await receiveInbound({ from: await numberOf(writers[3]!.id), body: 'who is this?' });
+  // The Spanish yes, through the same path. It is a `confirm` and not an
+  // alert, which is the whole of what folding the accent buys.
+  await receiveInbound({ from: await numberOf(spanish[1]!.id), body: 'Sí' });
 
   // One already dealt with, so the list has a cleared row in it as well as an
   // open one — a queue that is only ever empty or only ever full demos badly.
@@ -515,7 +547,7 @@ async function main() {
     where: { clientId: writers[3]!.id, classification: 'unparsed' },
   });
   if (handled) await resolveInboundReply(desk, handled.id);
-  log('4 inbound replies: 1 confirm, 1 decline that leaves the hour standing, 2 unparsed (1 already called back)');
+  log('5 inbound replies: 2 confirms (1 in Spanish), 1 decline that leaves the hour standing, 2 unparsed (1 already called back)');
 
   // ── notes ─────────────────────────────────────────────────────────────
   const byClinician = new Map<string, typeof past>();

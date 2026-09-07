@@ -59,6 +59,14 @@ enum ReminderPreference {
   none
 }
 
+/// Languages the practice can write a client in. Adding one is not a
+/// translation job: a language without its own deny-list would send bodies
+/// past the only control that stops a lock-screen disclosure.
+enum Language {
+  en
+  es
+}
+
 enum ClientStatus {
   active
   inactive
@@ -93,6 +101,10 @@ model Client {
   /// so the cap does not also apply — two reductions stacked would silence
   /// somebody who only asked for fewer.
   reminderStages     ReminderStage[]
+  /// The language this client is written to in. The deny-list that keeps a
+  /// body discreet is per-language, so a language exists here only once its
+  /// terms do — see `DENY_LISTS`.
+  language           Language           @default(en)
   status             ClientStatus       @default(active)
 
   appointments  Appointment[]
