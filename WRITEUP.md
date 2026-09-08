@@ -1578,6 +1578,102 @@ draw to it reshuffles every fixture downstream.
   lives behind a permission front desk does not have.
 
 
+## 21. Drawing what the server would allow, and counting the calls that failed
+
+*Phase 4 of `prd-intake-inquiry.md`: the enquiry desk gets a screen, the
+retention number gets a sentence, and the referral report gets built from the
+calls rather than from the clients.*
+
+### The control that is not drawn
+
+`/inquiries` shows a clinician the list and the create form and no Discard
+button. Not disabled, not greyed — absent. The two affordances come from
+`may()`:
+
+```ts
+const mayDiscard = may({ actor, action: 'discard', resource: 'inquiry' });
+const mayConvert = may({ actor, action: 'create', resource: 'client' });
+```
+
+The second line is the interesting one. Conversion needed no new matrix cell:
+it creates a client, so it is already governed by `create` on `client`, which
+only front desk holds. A `convert` action would have been a seventh column on
+every role in the matrix and a new set of denial cells to review — for a rule
+that already existed and was already tested. Deriving the affordance from the
+underlying write is what kept it out.
+
+Both are gated the same way the navigation is, and for the same reason: a
+button that is drawn and then refused teaches people that refusals are noise.
+`intake.spec.ts` asserts the absence, because `permissions.test.ts` proves the
+rule and nothing before this proved the page agreed with it.
+
+### The send is a second act, with its own ending
+
+`convertInquiry` does not send the intake packet, and the page does — as a
+separate call whose failure is a separate outcome. `issueForm` refuses a
+template the client cannot read in their language (§16), and folding it into
+the conversion transaction would have given that refusal two bad options:
+abort the conversion for a translation problem, or swallow it. Neither is
+what the front desk needs, which is a client record and a sentence saying the
+packet is still owed.
+
+So both endings return to the same page, and the failure one says what stands
+and what does not:
+
+> Client record created. The intake packet was not sent: … Nothing has gone
+> out — send it from the client's page once the template is fixed.
+
+### The referral mix is counted over calls
+
+The report reads `Inquiry`, not `Client`. Both carry `referralSource` — the
+same fact, copied at conversion, deliberately unreconciled (§20) — and it
+would have been easier to aggregate the client table, which already had the
+column and did not need the enquiry stage to exist at all.
+
+It would also have answered a different question. A mix built from clients
+shows which sources send people; it cannot show which sources send people who
+go elsewhere, because those people are not in it. "GPs are our biggest
+referrer" and "GPs are our biggest referrer and half of them go elsewhere"
+look identical from the client table and mean opposite things. The non-
+conversion only exists on the enquiry, and that is the whole reason a
+discarded row is retained rather than deleted at the moment it dies.
+
+The rate divides by every call taken, open ones included. Dividing by the ones
+that reached an ending would let a growing pile of unreturned callbacks read
+as a stable conversion rate — the same category error as `confirmed / booked`
+in §12, arrived at from the other direction.
+
+Time-to-conversion is a median. One caller who rang in March and booked in
+September is a true story about one person and a false one about the practice;
+the mean tells it and the median does not. An empty sample returns `null`
+rather than zero, because a practice that converted nobody this month has no
+conversion time, and rendering "0.0 days" would be the most flattering
+possible way to report the worst possible result.
+
+### The comment that failed the build
+
+The report first also answered "how long from the call to the first session".
+It does not now, and what stopped it was the P0-1 lint from §19 — the one that
+greps every source file for a query joining an inquiry to anything clinical.
+It failed on a *comment*: the words explaining why the appointment join was
+absent named the model, and the check reads source as text.
+
+The check is right and the comment was wrong. A lint that guards against code
+nobody has written yet cannot parse, and one that can be argued out of a match
+is one somebody will argue out of a match. The number was also the wrong one
+to want: it needs the clinical join the invariant exists to forbid, and the
+retained enquiry row can honestly answer how long a call took to become a
+client record without ever reaching for an hour that was booked.
+
+### The number nobody here can choose
+
+`inquiryRetentionDays` is on `/practice` with the sentence the PRD asks for:
+how long a discarded enquiry should survive is a jurisdictional legal question,
+not an engineering one. The default is a placeholder chosen so the sweep has
+something to run against. Same shape as the auto-no-show banner from §11 — the
+mechanism works, and a working mechanism is not a reason to ship a policy.
+
+
 ## Decisions log
 
 | Decision | Why |
@@ -1694,6 +1790,14 @@ draw to it reshuffles every fixture downstream.
 | Audit rows about an inquiry carry `clientId: null` and the inquiry id in `resourceId` | That column means *a client record*. Keeping inquiry ids out of it is what lets a purged row leave its trail standing with nothing dangling and nothing to cascade |
 | The audit trail is allowed to point at a row that no longer exists | The log records that a thing happened, not a joinable copy of the thing. Blocking the delete to keep the log joinable is how "deletable" quietly becomes "undeletable" |
 | The discard and the purge write two different reason codes | `discarded:no_answer` and `purged` are two events about one id, and the one role that may read the log and not the record should be able to tell them apart |
+| Conversion is gated by `create` on `client`, with no `convert` action added | The act creates a client, so the rule that governs creating clients already governs it. A seventh action would have been a new column on every role in the matrix and a fresh set of denial cells to review, for a decision that was already made and already tested |
+| The Discard control is absent for a clinician, not disabled | A drawn-then-refused control teaches people that refusals are noise. `may()` decides what is drawn and the same matrix decides what the server does, so the menu cannot drift from the answer |
+| Conversion does not send the intake packet; the page does, next | `issueForm` refuses a template the client cannot read in their language. Inside the transaction that refusal has two bad options — abort a conversion over a translation problem, or swallow it. Outside it, front desk gets a client record and a sentence saying the packet is still owed |
+| The referral report counts enquiries, not clients | Both rows carry the source. Only the enquiry carries the calls that did not convert, and "GPs are our biggest referrer" and "GPs are our biggest referrer and half go elsewhere" look identical from the client table |
+| The conversion rate divides by every call taken, open ones included | Dividing by the calls that reached an ending lets a growing pile of unreturned callbacks read as a stable rate — the same category error as `confirmed / booked`, from the other direction |
+| Time-to-conversion is a median, and `null` on an empty sample | One caller who rang in March and booked in September is a true story about a person and a false one about a practice. And a practice that converted nobody has no conversion time; "0.0 days" would be the most flattering way to report the worst result |
+| The report does not answer "call to first session", and a *comment* is what stopped it | The P0-1 lint greps source as text and matched the words explaining why the join was absent. The check is right: one that can be argued out of a match is one somebody will argue out of a match — and the number needed the clinical join the invariant exists to forbid |
+| `inquiryRetentionDays` ships with the sentence saying nobody here can choose it | How long a discarded enquiry survives is a jurisdictional legal question. The default is a placeholder so the sweep has something to run against, and a working mechanism is not a reason to ship a policy |
 
 ## What this project deliberately is not
 

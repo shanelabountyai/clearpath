@@ -680,6 +680,81 @@ async function main() {
   }
   log('8 clients on the waitlist');
 
+  // ── enquiries ─────────────────────────────────────────────────────────
+  //
+  // Counted, not drawn — same rule as the client loop above, and here it also
+  // buys reproducibility for the referral report: a mix that shifts between
+  // seeds is a report nobody can eyeball for correctness.
+  //
+  // Twenty converted, fifteen dead, five still open. The dead ones are the
+  // point: a referral mix built only from clients would show which sources
+  // send people and hide which sources send people who go elsewhere, and
+  // those are the two halves of the same decision.
+  const DISCARD_CODES = [
+    'no_answer', 'not_a_fit', 'referred_out',
+    'no_capacity', 'chose_elsewhere', 'duplicate', 'spam',
+  ] as const;
+  const nowMs = systemClock.now().getTime();
+  const daysAgo = (d: number) => new Date(nowMs - d * 86_400_000);
+
+  // The twenty who became clients, pointed at real records. `createdAt` sits a
+  // few days before the client row, so "days from call to a client record" is
+  // a spread rather than a column of zeroes.
+  for (const [i, client] of clients.slice(40, 60).entries()) {
+    const no = Number(client.code.slice(3));
+    await prisma.inquiry.create({
+      data: {
+        firstName: 'Test',
+        lastName: `Enquiry ${client.code}`,
+        phone: `555-03${String(no).padStart(2, '0')}`,
+        referralSource: REFERRAL_MIX[no % REFERRAL_MIX.length]!,
+        // The same fact the client carries, because conversion copies it. A
+        // mismatch here would be a broken fixture, not the deliberate
+        // non-reconciliation with the *intake form's* answer (D-04).
+        status: 'converted',
+        clientId: client.id,
+        takenById: frontDesk.id,
+        createdAt: daysAgo(2 + (i % 12)),
+      },
+    });
+  }
+
+  // The fifteen that ended, across the whole vocabulary so the report has
+  // every bar it can ever draw.
+  for (let i = 0; i < 15; i++) {
+    const called = 8 + i * 5;
+    await prisma.inquiry.create({
+      data: {
+        firstName: 'Test',
+        lastName: `Enquiry D${String(i + 1).padStart(2, '0')}`,
+        phone: `555-04${String(i).padStart(2, '0')}`,
+        referralSource: REFERRAL_MIX[(i * 3) % REFERRAL_MIX.length]!,
+        status: 'discarded',
+        discardReason: DISCARD_CODES[i % DISCARD_CODES.length]!,
+        discardedAt: daysAgo(called - 3),
+        takenById: frontDesk.id,
+        createdAt: daysAgo(called),
+      },
+    });
+  }
+
+  // Five nobody has rung back yet — which is why the conversion rate divides
+  // by everything and not just by the calls that reached an ending.
+  for (let i = 0; i < 5; i++) {
+    await prisma.inquiry.create({
+      data: {
+        firstName: 'Test',
+        lastName: `Enquiry O${i + 1}`,
+        phone: `555-05${String(i).padStart(2, '0')}`,
+        referralSource: REFERRAL_MIX[(i * 2) % REFERRAL_MIX.length]!,
+        note: i % 2 === 0 ? 'Mornings only' : 'Cannot do Tuesdays',
+        takenById: frontDesk.id,
+        createdAt: daysAgo(1 + i * 2),
+      },
+    });
+  }
+  log('40 enquiries — 20 converted, 15 discarded across all seven reason codes, 5 open');
+
   // ── the demo, guaranteed ──────────────────────────────────────────────
   //
   // The 60-second story needs one client who has both: an associate's progress

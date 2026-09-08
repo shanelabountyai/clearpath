@@ -1,5 +1,6 @@
 import { requireSession } from '../../../src/session';
 import { confirmationReport, utilizationReport, weeklyVolume } from '../../../src/reports/utilization';
+import { referralReport } from '../../../src/reports/intake';
 import { addDays, localDateOf } from '../../../src/time';
 import { Card, money, PageHeader } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
@@ -15,10 +16,11 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
   const to = q.to ?? localDateOf(systemClock.now());
   const from = q.from ?? addDays(to, -90);
 
-  const [report, weeks, confirmations] = await Promise.all([
+  const [report, weeks, confirmations, referrals] = await Promise.all([
     utilizationReport(actor, { from, to }),
     weeklyVolume(actor, { from, to }),
     confirmationReport(actor, { from, to }),
+    referralReport(actor, { from, to }),
   ]);
 
   const maxWeekly = Math.max(1, ...weeks.map((w) => w.sessions));
@@ -178,6 +180,83 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
         </Card>
       </div>
 
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <Card>
+          <h2 className="mb-1 font-semibold">Where enquiries come from</h2>
+          <p className="mb-3 max-w-prose text-caption text-subtle">
+            Counted over calls, not over clients. A mix built from the client list shows
+            which sources send people and hides which sources send people who go
+            elsewhere &mdash; and those are the two halves of the same decision.
+          </p>
+          {referrals.totals.total === 0 ? (
+            <p className="text-body text-muted">No enquiries were taken in this period.</p>
+          ) : (
+            <table className="w-full border-collapse text-body">
+              <thead>
+                <tr className="text-left text-muted">
+                  <Th>Source</Th><Th right>Calls</Th><Th right>Converted</Th>
+                  <Th right>Open</Th><Th right>Rate</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {referrals.sources.map((s) => (
+                  <tr key={s.source}>
+                    <Td>{SOURCE_LABELS[s.source] ?? s.source}</Td>
+                    <Td right>{s.total}</Td>
+                    <Td right>{s.converted}</Td>
+                    <Td right>{s.open}</Td>
+                    <Td right>{pct(s.conversionRate)}</Td>
+                  </tr>
+                ))}
+                <tr>
+                  <Td><span className="font-medium">All sources</span></Td>
+                  <Td right>{referrals.totals.total}</Td>
+                  <Td right>{referrals.totals.converted}</Td>
+                  <Td right>{referrals.totals.open}</Td>
+                  <Td right>{pct(referrals.conversionRate)}</Td>
+                </tr>
+              </tbody>
+            </table>
+          )}
+          <p className="mt-3 text-caption text-subtle">
+            {referrals.daysToConversion === null
+              ? 'Nothing converted in this period, so there is no time to report.'
+              : `Median ${referrals.daysToConversion.toFixed(1)} days from the call to a client record.`}
+            {' '}The rate divides by every call taken, open ones included: a growing pile of
+            unreturned calls should move this number, not hide behind it.
+          </p>
+        </Card>
+
+        <Card>
+          <h2 className="mb-1 font-semibold">Why enquiries ended</h2>
+          <p className="mb-3 max-w-prose text-caption text-subtle">
+            A fixed vocabulary, never free text. &ldquo;No capacity&rdquo; is a hiring
+            question and &ldquo;went elsewhere&rdquo; is a waiting-time question; a
+            notes field would have made them the same row.
+          </p>
+          {referrals.reasons.length === 0 ? (
+            <p className="text-body text-muted">Nothing was discarded in this period.</p>
+          ) : (
+            <ul className="space-y-1.5 text-body">
+              {referrals.reasons.map((r) => (
+                <li key={r.reason} className="flex items-center gap-2">
+                  <span className="w-44 shrink-0 text-muted">{DISCARD_LABELS[r.reason] ?? r.reason}</span>
+                  <span
+                    className="h-2.5 rounded-full"
+                    style={{
+                      background: 'var(--accent)',
+                      width: `${(r.count / referrals.reasons[0]!.count) * 60}%`,
+                      minWidth: '4px',
+                    }}
+                  />
+                  <span className="font-mono text-caption">{r.count}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      </div>
+
       <p className="mt-4 text-caption text-subtle">
         Counts and rates only. No client is named on this screen and no session content is
         reachable from it.
@@ -185,6 +264,23 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
     </>
   );
 }
+
+const SOURCE_LABELS: Record<string, string> = {
+  gp: 'GP or another clinician',
+  friend: 'Friend or family',
+  search: 'Found us online',
+  other: 'Something else',
+};
+
+const DISCARD_LABELS: Record<string, string> = {
+  no_answer: 'Called back, no answer',
+  not_a_fit: 'Not a fit',
+  referred_out: 'Referred out',
+  no_capacity: 'No capacity',
+  chose_elsewhere: 'Went elsewhere',
+  duplicate: 'Duplicate call',
+  spam: 'Not a real enquiry',
+};
 
 const REASON_LABELS: Record<string, string> = {
   cannot_make_it: 'cannot make that time',

@@ -9,6 +9,7 @@ import { continuityQueue, unconfirmedSoon, vacationImpact, waitlistMatches, wait
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { queryAuditLog, toCsv } from './audit';
 import { confirmationReport, utilizationReport, weeklyVolume, weekStart } from './utilization';
+import { median, referralReport } from './intake';
 
 let desk: Awaited<ReturnType<typeof makeUser>>;
 let therapist: Awaited<ReturnType<typeof makeUser>>;
@@ -539,3 +540,83 @@ describe('the confirmation report', () => {
 });
 
 const round4 = (n: number) => Math.round(n * 10_000) / 10_000;
+
+describe('the referral report', () => {
+  const RANGE = { from: '2026-08-01', to: '2026-09-30' };
+
+  /** An enquiry, placed on a date, with an ending. */
+  const call = (over: Record<string, unknown>) =>
+    prisma.inquiry.create({
+      data: {
+        firstName: 'Test', lastName: 'Caller', referralSource: 'gp',
+        takenById: desk.id, createdAt: new Date('2026-09-01T10:00:00Z'), ...over,
+      },
+    });
+
+  it('counts calls, not clients — a source that never converts still appears', async () => {
+    await call({ referralSource: 'gp', status: 'open' });
+    await call({ referralSource: 'gp', status: 'discarded', discardReason: 'no_answer', discardedAt: new Date('2026-09-02T10:00:00Z') });
+    // Every one of these went elsewhere. Built from the client table this
+    // source would not exist; it is the most useful row on the report.
+    for (const r of ['chose_elsewhere', 'chose_elsewhere', 'no_capacity'] as const) {
+      await call({ referralSource: 'search', status: 'discarded', discardReason: r, discardedAt: new Date('2026-09-02T10:00:00Z') });
+    }
+
+    const rep = await referralReport(actor(admin), RANGE);
+    const search = rep.sources.find((s) => s.source === 'search')!;
+    expect(search.total).toBe(3);
+    expect(search.converted).toBe(0);
+    expect(search.conversionRate).toBe(0);
+    // Sorted by volume, so the biggest source is the first row.
+    expect(rep.sources[0]!.source).toBe('search');
+    expect(rep.reasons[0]).toEqual({ reason: 'chose_elsewhere', count: 2 });
+  });
+
+  it('divides by every call taken, so unreturned ones cannot hide', async () => {
+    const c = await makeClient(therapist.id);
+    await call({ status: 'converted', clientId: c.id });
+    await call({ status: 'open' });
+    await call({ status: 'open' });
+    await call({ status: 'open' });
+
+    // 1/4, not 1/1. Counting only the calls that reached an ending would let a
+    // growing pile of callbacks nobody made read as a 100% conversion rate.
+    const rep = await referralReport(actor(admin), RANGE);
+    expect(rep.conversionRate).toBe(0.25);
+    expect(rep.totals.open).toBe(3);
+  });
+
+  it('reports the median days to a client record, and null when nothing converted', async () => {
+    const empty = await referralReport(actor(admin), RANGE);
+    expect(empty.daysToConversion).toBeNull();
+
+    // The client row is created now; the calls are backdated, so each gap is
+    // known exactly.
+    const now = Date.now();
+    for (const days of [2, 4, 30]) {
+      const c = await makeClient(therapist.id);
+      await call({ status: 'converted', clientId: c.id, createdAt: new Date(now - days * DAY) });
+    }
+    const rep = await referralReport(actor(admin), { from: '2026-01-01', to: '2099-01-01' });
+    // The median, not the mean: the 30-day outlier is one person's story and
+    // the mean (12) would report it as the practice's.
+    expect(Math.round(rep.daysToConversion!)).toBe(4);
+  });
+
+  it('excludes calls outside the range', async () => {
+    await call({ createdAt: new Date('2026-07-01T10:00:00Z') });
+    await call({ createdAt: new Date('2026-09-15T10:00:00Z') });
+    const rep = await referralReport(actor(admin), RANGE);
+    expect(rep.totals.total).toBe(1);
+  });
+
+  it('refuses the roles the matrix refuses, like every other report here', async () => {
+    await expect(referralReport(actor(desk), RANGE)).rejects.toThrow(Forbidden);
+  });
+
+  it('a median of nothing is null, not zero', () => {
+    expect(median([])).toBeNull();
+    expect(median([3, 1, 2])).toBe(2);
+    expect(median([4, 1, 3, 2])).toBe(2.5);
+  });
+});

@@ -122,8 +122,8 @@ async function InquiriesPage({
               <p className="mt-1 mb-3 max-w-prose text-body text-muted">
                 What a first phone call cannot capture: a date of birth, a treating
                 clinician, and a code to file them under. Everything they already told
-                us is carried across — the enquiry itself is kept, because it is what
-                makes &ldquo;how long from call to first session&rdquo; answerable.
+                us is carried across — and the enquiry itself is kept, which is what lets
+                the practice report say how long a call takes to become a client.
               </p>
               <form action={convert} className="grid gap-3 sm:grid-cols-2">
                 <input type="hidden" name="id" value={converting.id} />
