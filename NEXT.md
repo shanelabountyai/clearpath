@@ -1,83 +1,59 @@
 # Next
 
-**Item:** Phase 4 of `prd-intake-inquiry.md` — the UI. `/inquiries` (record a
-call, discard with a reason code), the convert form, and the
-`inquiryRetentionDays` field on the settings page. Then P1-1, the referral
-report.
-
-Phase 3 landed the waitlist XOR, `convertInquiry` and `Client.referralSource`.
-The worklist already renders an inquiry entry; nothing else has a screen.
+**Item:** Phase 4 of `prd-intake-inquiry.md` is done, including P1-1. Pick the
+next item off the PRD backlog — or, if the intake PRD is finished, the next
+PRD. Check `prd-intake-inquiry.md` for what is left below P1-1.
 
 ## Model
 
-**Sonnet** (`opusplan` if you want the plan on Opus). Phase 4 is forms, server
-actions and rendering against an API whose correctness decisions are already
-made and tested — the permission cells, the state machine, the XOR and the
-trigger all refuse from underneath. Nothing here has a wrong answer that passes
-a green run.
+Depends on the item. Rule of thumb from the last two sessions held: **Sonnet**
+for anything that is forms, actions and rendering over an API whose correctness
+decisions are already tested; **Opus** the moment a new permission cell, a new
+state transition, or a new database constraint is on the table.
 
-Switch with:
+## What Phase 4 landed
 
-/model sonnet
+- `/inquiries` — list with a status filter, a create form, discard with a
+  reason-code select, and the convert form. Both controls come from `may()`;
+  conversion is gated by `create` on `client` and added **no new matrix cell**.
+- The convert form sends the intake packet as a second, visible act. Both
+  outcomes come back to `/inquiries` — `issueForm`'s language refusal reaches
+  the person who clicked, saying the client exists and the packet is still owed.
+- `inquiryRetentionDays` on `/practice`, with the jurisdictional-question note.
+- `referralReport` in `src/reports/intake.ts`, on the reports page as two cards.
+- 40 seeded enquiries: 20 converted onto TC-041..TC-060, 15 discarded across all
+  seven reason codes, 5 open.
+- `e2e/intake.spec.ts` (2 specs), WRITEUP §21 and 8 decisions-log rows.
 
-## Phase 4, concretely
+## Traps this session hit
 
-1. **`/inquiries`** — the list (`listInquiries`), a create form
-   (`createInquiry`), and discard with a reason-code select
-   (`discardInquiry`). Clinicians see the list and the create form and *not*
-   the discard control: `may({ action: 'discard', resource: 'inquiry' })`
-   decides that, never a role comparison.
-2. **The convert form** — `convertInquiry(actor, id, { code, dateOfBirth,
-   treatingClinicianId, ... })`. Only front desk can reach it, and that falls
-   out of `create` on `client` with no new matrix cell. After it returns,
-   **the caller sends the intake packet** with `issueForm` as a separate,
-   visible step — `issueForm` refuses a template the client cannot read in
-   their language, and that refusal must land in front of the person who
-   clicked.
-3. **`inquiryRetentionDays` on `/practice`** — with the sentence saying the
-   number is a jurisdictional legal question, not an engineering one. The PRD's
-   Scope Honesty section is the wording to borrow.
-4. **Then P1-1**: referral mix and time-to-conversion on the reports page, and
-   the ~40 seeded inquiries (~20 converted, ~15 discarded across the reason
-   codes, ~5 open) it is measured against.
-
-## Traps
-
-- **`e2e/denials.spec.ts` exists because these pages returned 500s to the wrong
-  role.** Add `/inquiries` to it in the same commit that creates the page, not
-  after.
-- **Nothing is ever sent to an inquiry (D-05).** No portal link, no form
-  request, no outbox row, no "we'll text you the intake form". The absence is
-  structural — there is no column — and `inquiry.test.ts` fails the build if a
-  relation appears.
-- **`Inquiry.note` is front-desk tier free text** and is the design's honest
-  weak point. Label the field for scheduling preferences; do not widen it.
-- **The seed's client loop PRNG is load-bearing.** `referralSource` is indexed
-  by `clientNo`, not drawn — adding a `chance()` there reshuffles every fixture
-  downstream and breaks unrelated specs.
-- **Dev's database has null `referralSource` on all 97 clients** until someone
-  runs `npm run db:seed`. e2e reseeds itself; the referral report will look
-  empty on `npm run dev` until you do.
+- **The P0-1 lint in `inquiry.test.ts` greps source as text, comments included.**
+  A comment in `src/reports/intake.ts` explaining why an appointment join was
+  absent failed the build by naming the model. The check is right; do not soften
+  it. Write around it.
+- **`referralReport` guards on `attendance_history`, not `read: inquiry`** —
+  same as every other aggregate on that page. What leaves it is counts.
+- **The seed's inquiry block uses no `rand()` at all**, index arithmetic only.
+  Adding a `chance()` there reshuffles nothing today but breaks the report's
+  reproducibility, which is what makes it eyeballable.
+- **`daysToConversion` works because clients are seeded at `now()`** and the
+  enquiries are backdated. If client `createdAt` ever gets backdated too, that
+  number needs revisiting.
 
 ## Gate at this commit
 
-Unit **1935/1935** (was 1922 — +13: conversion, the XOR, the cascade, the
-enum/fixture equality, two waitlist worklist rows), typecheck clean.
-`scheduling.spec.ts` 8/8 against a fresh production build, because the worklist
-page gained a render branch. The new migration is applied to dev, test and e2e.
+Unit **1941/1941** (was 1935 — +6 referral report), typecheck clean, e2e
+**28/28** against a fresh production build with a reseeded fixture. Pushed.
 
-Migrations **still not on production** — five now, the fifth being
-`20260909104500_inquiry_waitlist_and_conversion`. `npm run db:migrate:prod`
-when that matters. Production also has no `referralSource` values until it is
-reseeded.
+Migrations **still not on production** — five, unchanged this session; Phase 4
+added no migration. `npm run db:migrate:prod` when that matters. Production also
+still has no `referralSource` values and no enquiries until it is reseeded, so
+the referral report is empty there.
 
 ## Already answered, do not re-litigate
 
-- `discard` not `delete`; clinicians create but do not discard — WRITEUP §18.
-- `Inquiry` separate from `Client`; the trigger over an application check; the
-  audit trail pointing at a destroyed row — WRITEUP §19.
-- The XOR over two application checks; the one cascade; the pre-generated
-  client id; conversion adding no matrix cell; `referralSource` duplicated and
-  deliberately unreconciled with the form answer — WRITEUP §20.
-- The purge has no scheduler and does not need one. Wire it to the existing
-  scheduled path when there is one.
+- Everything in WRITEUP §18–§20, plus §21: conversion adding no `convert`
+  action; the control absent rather than disabled; the send being a second act;
+  the report counting calls not clients; the rate dividing by open calls; the
+  median over the mean; `null` over zero; why "call to first session" is not
+  answered; the retention number being a legal question.
