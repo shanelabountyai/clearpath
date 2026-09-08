@@ -48,6 +48,10 @@ export function navFor(actor: Actor): NavItem[] {
       { href: '/worklists', label: 'Work lists', glyph: '☰' },
     ],
     [
+      may({ actor, action: 'read', resource: 'inquiry' }),
+      { href: '/inquiries', label: 'Enquiries', glyph: '☎' },
+    ],
+    [
       may({ actor, action: 'update', resource: 'form_template' }),
       { href: '/forms', label: 'Forms', glyph: '▤' },
     ],

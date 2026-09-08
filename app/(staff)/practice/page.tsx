@@ -131,7 +131,20 @@ async function PracticePage() {
                 <Field label="Booking horizon">{data.settings.recurrenceHorizonDays} days</Field>
                 <Field label="Continuity gap">{data.settings.continuityGapDays} days</Field>
                 <Field label="Name used in messages">{data.settings.messagingName}</Field>
+                <Field label="Enquiry retention">
+                  {data.settings.inquiryRetentionDays} days after an enquiry is discarded
+                </Field>
               </dl>
+              {/* The number is the setting; what it should be is not something
+                  this software can tell anybody. */}
+              <p className="mt-3 text-caption text-subtle">
+                A discarded enquiry is destroyed {data.settings.inquiryRetentionDays} days later
+                &mdash; the record goes, the audit trail of what happened to it stays.{' '}
+                <strong>How long that number should be is a jurisdictional legal question,
+                not an engineering one.</strong> The default here is a placeholder chosen so
+                the sweep has something to run against; a real practice sets it from its own
+                retention obligations, and this software cannot give it that advice.
+              </p>
               {data.settings.autoNoShowOnNoResponse && (
                 /* The honesty note the PRD asks for, on the page where the switch
                    lives. A practice cannot ship an auto-charge policy on the
