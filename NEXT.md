@@ -1,80 +1,78 @@
 # Next
 
-**Item:** P2-4 (multi-language message bodies) is done, committed and pushed.
-**The confirmation PRD is now fully closed — every P0, P1 and P2 is shipped.**
-So the next session starts something, rather than continuing something:
+**Item:** the portal translation is done, committed and pushed. Both PRDs —
+the main one and the confirmation one — are fully closed, every P0/P1/P2.
 
-1. **A new PRD.** The obvious remaining surfaces are billing/superbill depth,
-   the group-session workflow, or an intake pipeline. Architecture-shaped —
-   Opus for the PRD itself, then `opusplan` for the build.
-2. **`referralSource` at intake** (small, already reasoned through — see below).
+**Read this before trusting the old NEXT.md's suggestions:** it listed group
+sessions and superbill depth as remaining surfaces. Both are already shipped
+(`src/scheduling/groups.ts`, `/book/group`, WRITEUP §7; `src/billing/superbill.ts`,
+WRITEUP §5). Check the PRD checkboxes and WRITEUP headings before picking an item.
+
+## The real remaining gap, and the next item
+
+**An intake / inquiry pipeline.** `WaitlistEntry.clientId` is required, and so is
+`FormRequest.clientId` — a person who phones the practice must already be a full
+`Client` row, treating clinician assigned and DOB on file, before they can be
+waitlisted or sent an intake form. There is no inquiry stage.
+
+Architecture-shaped, so **Opus** for the PRD then `opusplan` for the build. It
+absorbs the `referralSource` field that has been sitting in this file, and it
+forces the question this codebase has never answered: an inquiry that goes
+nowhere must be *deletable*, in a system built end to end on append-only audit
+and immutable notes.
+
+The smaller alternative is `referralSource` alone (Sonnet, one session) — but it
+is a slice of that PRD, so doing it first means designing the field twice.
 
 ## What landed this session
 
-**P2-4 — a second language, and the control that quietly stops working.**
-The item on the PRD was "multi-language message bodies," and the parenthesis
-next to it was the whole feature: *the deny-list is English-only*. Translate the
-templates alone and `Recordatorio: su terapia es el martes` passes
-`assertDiscreet` completely — the send succeeds, the row is written, and the one
-control standing between a client and a lock-screen disclosure reports success
-while doing nothing.
+**§17 in WRITEUP.md.** P2-4 translated what the practice *sends*; what it sends
+is a link, and the page behind it was English — including the fee disclosure.
 
-- **A language is a pair, enforced by the type.** `Record<Language, ...>` over
-  both `CLIENT_TEMPLATES` and `DENY_LISTS`: a new language does not compile
-  until it answers for all six bodies and does not pass its tests until the
-  terms answer for it too. There is no arrangement where the templates ship and
-  the deny-list is a follow-up ticket.
-- **The gate reads every language's list, not the client's own.** Bodies are
-  routinely a mix, the language a message is *read* in is not a fact this system
-  holds, and checking all of them means adding a language can never weaken the
-  gate for the ones already shipping.
-- **Both halves were the same three characters.** `'Depresión'.toLowerCase()`
-  does not contain `'depresion'`; and inbound's `[^a-z]` strip turned `sí` into
-  `s`, which is `unparsed` — an alert to a clinician and a phone call, every
-  time a Spanish-speaking client said yes. One exported `fold()` serves both.
-- **The inbound phrase table is the union, read language-blind.** A message does
-  not arrive with a language on it, and `Client.language` is about what the
-  practice *writes*. Safe only while no phrase means opposite things in two
-  languages — asserted by a test, not hoped for in a comment. A future collision
-  falls to `unparsed`, which is a person ringing the client.
-- **988 twice.** The Spanish auto-reply is under the identical constraint
-  (`crisis` is spelled the same in both lists) and takes the identical way out:
-  digits, never the name of the line.
+- **Three layers, one compiler.** Page copy is code (`src/strings.ts`,
+  `Record<Language, Strings>` — a missing key is a build failure). Form question
+  text is *data*, so `missingLanguages` gates at **send** time in `issueForm`,
+  not render time. Same reasoning as `assertDiscreet`.
+- **A copied string typechecks.** `src/strings.test.ts` asserts no key holds the
+  same text in both languages; found one true collision (`No`), listed by name.
+- **One template version, two languages.** Labels are `Record<Language, string>`
+  inside the schema JSON. A submission stores *values*, so `3` reads as "Casi
+  todos los días" to the client and "Nearly every day" to staff off the same row
+  — score history never forks when a client switches language.
+- **Migration `20260908103000_localized_form_labels`** rewrites old template
+  versions in place. A reseed would have blanked labels on every historical
+  submission. Spanish written empty on purpose → those versions are honestly
+  unsendable to a Spanish client.
 
-## The trap this session actually cost time on
+## Two traps worth carrying forward
 
-**Every `chance()` in `prisma/seed.ts` pulls from one seeded PRNG.** Adding a
-`chance(0.12)` for language inside the client-creation loop reshuffled every
-decision made after it — and what failed was `confidentiality.spec.ts`, three
-files away, on a co-signature count. Seed attributes that are not themselves
-random must be *counted*, not drawn: `clientNo % 8 === 3`. Worth remembering the
-next time a seed gains a field.
+- **`src/strings.ts` must stay dependency-light.** `FormRunner` is `'use client'`
+  and imports `UI` from it. Anything that transitively pulls in `src/db.ts`
+  breaks the client bundle — which is why `Language` lives there and
+  `messaging/outbox.ts` re-exports it, rather than the other way round.
+- **`openPortal`'s return shape has a test that inventories it**
+  (`portal/service.test.ts`, "cannot be used to submit anything clinical").
+  Adding a field there is meant to fail; the fix is to justify the field in the
+  assertion's comment, not to loosen the assertion.
 
 ## Gate at this commit
 
-Unit **1603/1603** (was 1589), typecheck clean, e2e **24 passed + 1 skipped**
-against the production build. Migration `20260907194526_client_language` applied
-to dev, test and e2e — **it is not yet on production**, and neither is
-`20260907191212_client_reminder_stages` from the previous session.
-`npm run db:migrate:prod` when that matters.
+Unit **1616/1616** (was 1603; +13), typecheck clean, e2e **26 passed + 1 skipped**
+against the production build.
 
-No new e2e spec: `denials.spec.ts` already crawls `/clients/[id]` as every
-seeded role, so the language select and its permission gate are exercised. The
-rules are unit-tested in `outbox.test.ts` and `inbound.test.ts`.
+Migrations **not yet on production** — three of them now:
+`20260907191212_client_reminder_stages`, `20260907194526_client_language`, and
+`20260908103000_localized_form_labels`. `npm run db:migrate:prod` when that
+matters. The last one is a data migration over `FormTemplate.schema`; it is
+idempotent (it only rewrites `jsonb_typeof(...) = 'string'`), but it is the
+first migration in this repo that rewrites existing rows rather than adding
+structure.
 
 ## Deliberately not done
 
-- **The portal is not translated.** Scope was message bodies. Half a translation
-  is worse than none: a Spanish reminder landing on an English fee disclosure is
-  the one screen where comprehension is legally load-bearing. That is the
-  natural follow-up if Spanish is taken further.
-- **No language detection**, on inbound or at intake. Set by a person who asked.
-- **No per-message override**, and no machine-translated deny-list.
-
-## Still open, answered but not actioned
-
-The "refer a friend" growth motion is off — anti-kickback, state
-patient-brokering, ethics codes, and a referral program cannot be built without
-linking two clients' records. The defensible version is a fixed-list
-`referralSource` field at intake: attribution only, no credit, no link between
-client records.
+- **Staff pages are not translated.** `STAFF_LANGUAGE` is a constant naming that
+  assumption rather than hiding it.
+- **No language switcher on the door** — a shared phone's previous reader could
+  change it, and the sent message and the opened page would then disagree.
+- **No `Intl.DateTimeFormat`.** The weekday is translated; the time stays
+  `HH:MM`, matching the practice's own clock everywhere else.
