@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { intakeForm, wellbeingCheckIn } from './fixtures';
-import { renderSubmission, validateSubmission, visibleFields } from './schema';
+import { consentToTreat, intakeForm, TEMPLATES, wellbeingCheckIn } from './fixtures';
+import { missingLanguages, renderSubmission, validateSubmission, visibleFields, type LocalizedText } from './schema';
+import { LANGUAGES } from '../strings';
 import { scoreSubmission, type ScoringRules } from './scoring';
 
 const { schema, scoring } = wellbeingCheckIn;
+
+/**
+ * Scoring never reads a label — it reads keys and values — so the fixtures
+ * below say the same thing in both languages on purpose. A test that had to
+ * invent Spanish to exercise a total would be testing the wrong thing.
+ */
+const anyLanguage = (text: string): LocalizedText => ({ en: text, es: text });
 
 /** Nine items, in order. Hand-calculated totals below refer to these. */
 const answers = (...items: number[]) =>
@@ -78,9 +86,9 @@ describe('critical items', () => {
     const rules: ScoringRules = {
       criticalItems: [{ id: 'housing', field: 'living', in: ['unhoused', 'unsafe'] }],
     };
-    const s = { fields: [{ key: 'living', label: 'Where are you staying?', type: 'single_select' as const, options: [
-      { value: 'stable', label: 'Somewhere stable' }, { value: 'unhoused', label: 'I do not have housing' },
-      { value: 'unsafe', label: 'Somewhere I do not feel safe' }] }] };
+    const s = { fields: [{ key: 'living', label: anyLanguage('Where are you staying?'), type: 'single_select' as const, options: [
+      { value: 'stable', label: anyLanguage('Somewhere stable') }, { value: 'unhoused', label: anyLanguage('I do not have housing') },
+      { value: 'unsafe', label: anyLanguage('Somewhere I do not feel safe') }] }] };
     expect(scoreSubmission(s, rules, { living: 'stable' }).reasons).toEqual([]);
     expect(scoreSubmission(s, rules, { living: 'unsafe' }).reasons).toEqual(['critical:housing']);
   });
@@ -121,16 +129,16 @@ describe('conditional fields', () => {
       preferred_name: 'Sam', prior_therapy: false, goals: 'x', emergency_contact: 'y',
       prior_therapy_when: 'smuggled in',
     });
-    expect(errors).toEqual([{ field: 'prior_therapy_when', message: 'Not a question on this form' }]);
+    expect(errors).toEqual([{ field: 'prior_therapy_when', code: 'unknown_field' }]);
   });
 
   it('does not score a hidden branch', () => {
     const rules: ScoringRules = { numericFields: ['always', 'sometimes'] };
     const sch = {
       fields: [
-        { key: 'gate', label: 'Gate', type: 'boolean' as const },
-        { key: 'always', label: 'A', type: 'scale' as const },
-        { key: 'sometimes', label: 'B', type: 'scale' as const, showIf: { field: 'gate', equals: true } },
+        { key: 'gate', label: anyLanguage('Gate'), type: 'boolean' as const },
+        { key: 'always', label: anyLanguage('A'), type: 'scale' as const },
+        { key: 'sometimes', label: anyLanguage('B'), type: 'scale' as const, showIf: { field: 'gate', equals: true } },
       ],
     };
     expect(scoreSubmission(sch, rules, { gate: false, always: 2, sometimes: 3 }).total).toBe(2);
@@ -140,9 +148,9 @@ describe('conditional fields', () => {
   it('closes a nested branch when its grandparent closes', () => {
     const sch = {
       fields: [
-        { key: 'a', label: 'A', type: 'boolean' as const },
-        { key: 'b', label: 'B', type: 'boolean' as const, showIf: { field: 'a', equals: true } },
-        { key: 'c', label: 'C', type: 'short_text' as const, showIf: { field: 'b', equals: true } },
+        { key: 'a', label: anyLanguage('A'), type: 'boolean' as const },
+        { key: 'b', label: anyLanguage('B'), type: 'boolean' as const, showIf: { field: 'a', equals: true } },
+        { key: 'c', label: anyLanguage('C'), type: 'short_text' as const, showIf: { field: 'b', equals: true } },
       ],
     };
     expect(visibleFields(sch, { a: true, b: true }).map((f) => f.key)).toEqual(['a', 'b', 'c']);
@@ -158,24 +166,24 @@ describe('validation', () => {
 
   it('holds a scale to its bounds', () => {
     expect(validateSubmission(schema, { ...answers(0,0,0,0,0,0,0,0,0), item_1: 7 }))
-      .toContainEqual({ field: 'item_1', message: 'Above 3' });
+      .toContainEqual({ field: 'item_1', code: 'above_max' });
     expect(validateSubmission(schema, { ...answers(0,0,0,0,0,0,0,0,0), item_1: -1 }))
-      .toContainEqual({ field: 'item_1', message: 'Below 0' });
+      .toContainEqual({ field: 'item_1', code: 'below_min' });
   });
 
   it('rejects a choice that is not on the list', () => {
     expect(validateSubmission(schema, { ...answers(0,0,0,0,0,0,0,0,0), difficulty: 'catastrophic' }))
-      .toContainEqual({ field: 'difficulty', message: 'Not one of the choices' });
+      .toContainEqual({ field: 'difficulty', code: 'not_an_option' });
   });
 });
 
 describe('a submission renders against the version it was answered on', () => {
   it('keeps answers to questions a later version dropped', () => {
     const v1 = { fields: [
-      { key: 'kept', label: 'Still asked', type: 'short_text' as const },
-      { key: 'retired', label: 'No longer asked', type: 'short_text' as const },
+      { key: 'kept', label: anyLanguage('Still asked'), type: 'short_text' as const },
+      { key: 'retired', label: anyLanguage('No longer asked'), type: 'short_text' as const },
     ] };
-    const v2 = { fields: [{ key: 'kept', label: 'Still asked', type: 'short_text' as const }] };
+    const v2 = { fields: [{ key: 'kept', label: anyLanguage('Still asked'), type: 'short_text' as const }] };
     const submitted = { kept: 'yes', retired: 'an answer that still happened' };
 
     const asV1 = renderSubmission(v1, submitted);
@@ -191,10 +199,42 @@ describe('a submission renders against the version it was answered on', () => {
 
   it('shows no phantom field for a question added after the fact', () => {
     const v2 = { fields: [
-      { key: 'old', label: 'Old', type: 'short_text' as const },
-      { key: 'new', label: 'Added in v2', type: 'short_text' as const },
+      { key: 'old', label: anyLanguage('Old'), type: 'short_text' as const },
+      { key: 'new', label: anyLanguage('Added in v2'), type: 'short_text' as const },
     ] };
     const rendered = renderSubmission(v2, { old: 'answered' });
     expect(rendered.fields.find((f) => f.field.key === 'new')?.value).toBeNull();
+  });
+});
+
+
+/**
+ * The instruments the practice actually ships. `missingLanguages` is what the
+ * send gate consults, so pointing it at the fixtures is the same check the
+ * practice's own forms have to pass before anyone can be sent one.
+ */
+describe('the shipped instruments are written in every language', () => {
+  it.each(TEMPLATES.map((t) => [t.key, t.schema] as const))('%s', (_key, schema) => {
+    for (const l of LANGUAGES) {
+      expect(missingLanguages(schema)[l]).toEqual([]);
+    }
+  });
+
+  it('scores identically whichever language the client answered in', () => {
+    // The point of one template version serving both: the answer is a value.
+    const { schema: s, scoring: rules } = wellbeingCheckIn;
+    expect(scoreSubmission(s, rules, answers(3, 3, 3, 0, 0, 0, 0, 0, 0)).total).toBe(9);
+    // A Spanish client picking "Casi todos los días" stores 3, exactly as an
+    // English client picking "Nearly every day" does — so there is nothing
+    // language-shaped left for scoring to get wrong.
+    const es = s.fields[0]?.options?.find((o) => o.value === 3);
+    expect(es?.label.es).toBe('Casi todos los días');
+    expect(es?.label.en).toBe('Nearly every day');
+  });
+
+  it('says the cancellation policy in both, because that is the one being signed', () => {
+    const field = consentToTreat.schema.fields.find((f) => f.key === 'cancellation_policy');
+    expect(field?.label.en).toContain('24-hour');
+    expect(field?.label.es).toContain('24 horas');
   });
 });

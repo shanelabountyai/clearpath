@@ -3,6 +3,7 @@ import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
 import type { TemplateSchema } from '../../../src/forms/schema';
 import type { ScoringRules } from '../../../src/forms/scoring';
+import { LANGUAGES } from '../../../src/strings';
 import { Badge, Card, PageHeader } from '../../../src/ui/primitives';
 import { publishRevision } from './actions';
 
@@ -92,15 +93,33 @@ export default async function FormsPage({ searchParams }: { searchParams: Promis
                   <Badge tone="info">version {selected.version} · {selected._count.submissions} submissions</Badge>
                 </div>
 
+                {/*
+                  Every question is edited as the pair. A blank box is not a
+                  convenience left for later — `issueForm` refuses to send a
+                  template to a client whose language is missing, so an empty
+                  field here is a form that will not go out rather than one that
+                  goes out half-readable.
+                */}
                 <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
                   {schema.fields.map((f) => (
                     <li key={f.key} className="flex flex-wrap items-center gap-3 py-2">
                       <span className="w-40 shrink-0 font-mono text-micro text-subtle">{f.key}</span>
-                      <input
-                        name={`label:${f.key}`} defaultValue={f.label}
-                        className="min-w-[220px] flex-1 rounded-[var(--radius)] border px-2 py-1 text-body"
-                        style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
-                      />
+                      <div className="flex min-w-[220px] flex-1 flex-col gap-1">
+                        {LANGUAGES.map((l) => (
+                          <label key={l} className="flex items-center gap-2">
+                            <span className="w-6 font-mono text-micro text-subtle uppercase">{l}</span>
+                            <input
+                              name={`label:${f.key}:${l}`} defaultValue={f.label?.[l] ?? ''}
+                              aria-invalid={!f.label?.[l]?.trim() || undefined}
+                              className="w-full rounded-[var(--radius)] border px-2 py-1 text-body"
+                              style={{
+                                borderColor: f.label?.[l]?.trim() ? 'var(--border)' : 'var(--danger)',
+                                background: 'var(--surface)',
+                              }}
+                            />
+                          </label>
+                        ))}
+                      </div>
                       <span className="w-24 text-caption text-subtle">{f.type}</span>
                       <label className="flex items-center gap-1 text-caption">
                         <input type="checkbox" name={`required:${f.key}`} defaultChecked={f.required} /> required
@@ -116,7 +135,15 @@ export default async function FormsPage({ searchParams }: { searchParams: Promis
                   <legend className="px-1 text-caption font-medium text-muted">Add a question</legend>
                   <div className="flex flex-wrap items-end gap-2">
                     <input name="newFieldKey" placeholder="key" className="w-32 rounded-[var(--radius)] border px-2 py-1 text-body" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }} />
-                    <input name="newFieldLabel" placeholder="Question text" className="min-w-[240px] flex-1 rounded-[var(--radius)] border px-2 py-1 text-body" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }} />
+                    <div className="flex min-w-[240px] flex-1 flex-col gap-1">
+                      {LANGUAGES.map((l) => (
+                        <input
+                          key={l} name={`newFieldLabel:${l}`} placeholder={`Question text (${l})`}
+                          className="w-full rounded-[var(--radius)] border px-2 py-1 text-body"
+                          style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
+                        />
+                      ))}
+                    </div>
                     <select name="newFieldType" className="rounded-[var(--radius)] border px-2 py-1 text-body" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
                       {['short_text', 'long_text', 'boolean', 'date'].map((t) => <option key={t} value={t}>{t}</option>)}
                     </select>

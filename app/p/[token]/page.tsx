@@ -1,22 +1,24 @@
-import { openPortal, type RescheduleReason } from '../../../src/portal/service';
+import { openPortal, RESCHEDULE_REASONS } from '../../../src/portal/service';
 import { prisma } from '../../../src/db';
-import { Conflict, NotFound } from '../../../src/errors';
-import { minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
-import { money } from '../../../src/ui/primitives';
+import { NotFound } from '../../../src/errors';
+import { LANGUAGES, moneyIn, UI, whenLong, type Language } from '../../../src/strings';
 import { askToReschedule, sayNo, sayYes } from './actions';
 
 export const dynamic = 'force-dynamic';
 
-// The tab title says nothing. This page is opened on a shared phone.
-export const metadata = { title: 'Your appointments' };
+// The tab title says nothing. This page is opened on a shared phone, and it is
+// English because a tab title is rendered before the token resolves anybody.
+export const metadata = { title: UI.en.portalTitle };
 
-const REASONS: { value: RescheduleReason; label: string }[] = [
-  { value: 'cannot_make_it', label: 'I cannot make this time' },
-  { value: 'need_a_different_time', label: 'I need a different time' },
-  { value: 'prefer_earlier', label: 'I would prefer something earlier' },
-  { value: 'prefer_later', label: 'I would prefer something later' },
-];
-
+/**
+ * The order is the service's, the words are the dictionary's.
+ *
+ * The list is iterated straight off `RESCHEDULE_REASONS` rather than a copy
+ * kept next to the translations, so `ui.reasons[r]` is what type-checks the
+ * pair: a fifth reason added to the enum fails to compile here until both
+ * languages answer for it. That is the nearest a page gets to the guarantee
+ * `CLIENT_TEMPLATES` takes from `Record<Language, ...>`.
+ */
 /**
  * The same four codes wherever the client is asked, and still no text box.
  *
@@ -27,10 +29,11 @@ const REASONS: { value: RescheduleReason; label: string }[] = [
  * toll on giving it back. Left blank, the column stays null, which reads the
  * same as the keyword decline that can never carry one.
  */
-function ReasonSelect({ id, blank }: { id: string; blank?: string }) {
+function ReasonSelect({ id, language, blank }: { id: string; language: Language; blank?: string }) {
+  const ui = UI[language];
   return (
     <>
-      <label className="sr-only" htmlFor={id}>Reason</label>
+      <label className="sr-only" htmlFor={id}>{ui.reasonLabel}</label>
       <select
         id={id}
         name="reason"
@@ -38,7 +41,7 @@ function ReasonSelect({ id, blank }: { id: string; blank?: string }) {
         style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
       >
         {blank && <option value="">{blank}</option>}
-        {REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+        {RESCHEDULE_REASONS.map((r) => <option key={r} value={r}>{ui.reasons[r]}</option>)}
       </select>
     </>
   );
@@ -59,57 +62,42 @@ export default async function ClientPortalPage({
   });
   const practice = settings?.messagingName ?? 'Stillwater';
   const windowHours = settings?.lateCancelWindowHours ?? 24;
-  const lateFee = money(settings?.lateCancelFeeCents ?? 9000);
+  const feeCents = settings?.lateCancelFeeCents ?? 9000;
 
   let view;
   try {
     view = await openPortal(token);
   } catch (e) {
-    return (
-      <Shell practice={practice}>
-        <h1 className="text-xl font-semibold">
-          {e instanceof NotFound ? 'This link is not valid' : 'This link has expired'}
-        </h1>
-        <p className="mt-2 text-subhead text-muted">
-          Reply to the message you received and someone will send you a new one.
-        </p>
-        {e instanceof Conflict ? null : null}
-      </Shell>
-    );
+    return <BrokenLink practice={practice} kind={e instanceof NotFound ? 'invalid' : 'expired'} />;
   }
 
-  return (
-    <Shell practice={practice}>
-      <h1 className="text-xl font-semibold">Hello {view.firstName}</h1>
-      <p className="mt-2 text-subhead text-muted">
-        Your upcoming appointments. To change one, choose a reason and someone will
-        call you — nothing moves until you have spoken to them.
-      </p>
+  const language = view.language;
+  const ui = UI[language];
+  const lateFee = moneyIn(language, feeCents);
 
-      {q.asked && <Notice>Thank you — someone will be in touch about that appointment.</Notice>}
-      {q.confirmed && <Notice>Thank you — we have you down for that one.</Notice>}
-      {q.declined && <Notice>That is cancelled. Reply to the message you received to rebook.</Notice>}
+  return (
+    <Shell practice={practice} language={language}>
+      <h1 className="text-xl font-semibold">{ui.greeting(view.firstName)}</h1>
+      <p className="mt-2 text-subhead text-muted">{ui.portalIntro}</p>
+
+      {q.asked && <Notice>{ui.noticeAsked}</Notice>}
+      {q.confirmed && <Notice>{ui.noticeConfirmed}</Notice>}
+      {q.declined && <Notice>{ui.noticeDeclined}</Notice>}
 
       <hr className="my-6" style={{ borderColor: 'var(--border)' }} />
 
       {view.appointments.length === 0 ? (
-        <p className="text-subhead text-muted">
-          You have nothing booked at the moment. Reply to the message you received to
-          arrange something.
-        </p>
+        <p className="text-subhead text-muted">{ui.nothingBooked}</p>
       ) : (
         <ul className="space-y-5">
           {view.appointments.map((a) => {
-            const when = utcToZoned(a.startAt);
             const pending = a.rescheduleRequests.length > 0;
             return (
               <li key={a.id} className="border-t pt-4 first:border-t-0 first:pt-0" style={{ borderColor: 'var(--border)' }}>
-                <p className="text-subhead font-medium">
-                  {WEEKDAYS[when.weekday]} {when.date}, {minutesToHHMM(when.minutes)}
-                </p>
+                <p className="text-subhead font-medium">{whenLong(language, a.startAt)}</p>
                 <p className="mt-1 text-body text-muted">
-                  With {a.clinician.name}
-                  {a.modality === 'telehealth' ? ' · by video' : a.room ? ` · ${a.room.name}` : ''}
+                  {ui.withClinician(a.clinician.name)}
+                  {a.modality === 'telehealth' ? ` · ${ui.byVideo}` : a.room ? ` · ${a.room.name}` : ''}
                 </p>
 
                 {/*
@@ -118,7 +106,7 @@ export default async function ClientPortalPage({
                   a client on `none` never sees a question they were never sent.
                 */}
                 {a.confirmation === 'confirmed' && (
-                  <p className="mt-3 text-body text-subtle">You have confirmed this one.</p>
+                  <p className="mt-3 text-body text-subtle">{ui.alreadyConfirmed}</p>
                 )}
 
                 {a.confirmation === 'pending' && q.fee === a.id && (
@@ -126,24 +114,27 @@ export default async function ClientPortalPage({
                     className="mt-3 rounded-[var(--radius)] border px-3 py-3"
                     style={{ borderColor: 'var(--danger)' }}
                   >
-                    <p className="text-body">
-                      Cancelling within {windowHours} hours of the appointment is
-                      charged at {lateFee}. Do you still want to cancel it?
-                    </p>
+                    {/*
+                      The fee disclosure. The number comes from settings and the
+                      sentence around it from the dictionary, so the amount and
+                      the language it is explained in can never drift apart —
+                      which is the whole reason this screen was translated first.
+                    */}
+                    <p className="text-body">{ui.feeWarning(windowHours, lateFee)}</p>
                     <div className="mt-3 flex flex-wrap items-center gap-2">
                       <form action={sayNo} className="flex flex-wrap items-center gap-2">
                         <input type="hidden" name="token" value={token} />
                         <input type="hidden" name="appointmentId" value={a.id} />
                         <input type="hidden" name="acknowledgeFee" value="1" />
-                        <ReasonSelect id={`fee-why-${a.id}`} blank="Reason (optional)" />
+                        <ReasonSelect id={`fee-why-${a.id}`} language={language} blank={ui.reasonBlank} />
                         <button
                           className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
                           style={{ background: 'var(--danger)', color: 'var(--on-solid)', borderColor: 'var(--danger)' }}
                         >
-                          Yes, cancel it
+                          {ui.cancelYes}
                         </button>
                       </form>
-                      <a href={`/p/${token}`} className="text-body underline">Keep the appointment</a>
+                      <a href={`/p/${token}`} className="text-body underline">{ui.cancelKeep}</a>
                     </div>
                   </div>
                 )}
@@ -157,37 +148,35 @@ export default async function ClientPortalPage({
                         className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
                         style={{ background: 'var(--accent)', color: 'var(--accent-contrast)', borderColor: 'var(--accent)' }}
                       >
-                        Yes, I will be there
+                        {ui.confirmYes}
                       </button>
                     </form>
                     <form action={sayNo} className="flex flex-wrap items-center gap-2">
                       <input type="hidden" name="token" value={token} />
                       <input type="hidden" name="appointmentId" value={a.id} />
-                      <ReasonSelect id={`why-${a.id}`} blank="Reason (optional)" />
+                      <ReasonSelect id={`why-${a.id}`} language={language} blank={ui.reasonBlank} />
                       <button
                         className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
                         style={{ borderColor: 'var(--border-strong)' }}
                       >
-                        I cannot make it
+                        {ui.confirmNo}
                       </button>
                     </form>
                   </div>
                 )}
 
                 {pending ? (
-                  <p className="mt-3 text-body text-subtle">
-                    You have asked to change this one. Someone will call you.
-                  </p>
+                  <p className="mt-3 text-body text-subtle">{ui.changePending}</p>
                 ) : (
                   <form action={askToReschedule} className="mt-3 flex flex-wrap items-center gap-2">
                     <input type="hidden" name="token" value={token} />
                     <input type="hidden" name="appointmentId" value={a.id} />
-                    <ReasonSelect id={`reason-${a.id}`} />
+                    <ReasonSelect id={`reason-${a.id}`} language={language} />
                     <button
                       className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
                       style={{ borderColor: 'var(--border-strong)' }}
                     >
-                      Ask to change this
+                      {ui.changeAsk}
                     </button>
                   </form>
                 )}
@@ -196,6 +185,30 @@ export default async function ClientPortalPage({
           })}
         </ul>
       )}
+    </Shell>
+  );
+}
+
+/**
+ * The one page whose reader is unknown, so it is written in every language.
+ *
+ * A dead token resolves nobody — that is what makes it dead — so there is no
+ * `Client.language` to read, and defaulting to English would put the practice's
+ * least helpful screen in front of exactly the client least able to act on it.
+ * Two short paragraphs is cheaper than the alternative, which is a query
+ * against an expired token purely to learn what language to apologise in.
+ */
+function BrokenLink({ practice, kind }: { practice: string; kind: 'invalid' | 'expired' }) {
+  return (
+    <Shell practice={practice} language="en">
+      {LANGUAGES.map((l, i) => (
+        <div key={l} className={i > 0 ? 'mt-8' : undefined} lang={l}>
+          <h1 className="text-xl font-semibold">
+            {kind === 'invalid' ? UI[l].linkInvalid : UI[l].linkExpired}
+          </h1>
+          <p className="mt-2 text-subhead text-muted">{UI[l].linkHelp}</p>
+        </div>
+      ))}
     </Shell>
   );
 }
@@ -211,13 +224,17 @@ function Notice({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Shell({ practice, children }: { practice: string; children: React.ReactNode }) {
+function Shell({
+  practice, language, children,
+}: {
+  practice: string; language: Language; children: React.ReactNode;
+}) {
   return (
-    <main className="mx-auto max-w-2xl px-5 py-10">
+    <main lang={language} className="mx-auto max-w-2xl px-5 py-10">
       <p className="mb-6 text-body tracking-wide text-subtle uppercase">{practice}</p>
       {children}
       <footer className="mt-12 border-t pt-4 text-caption text-subtle" style={{ borderColor: 'var(--border)' }}>
-        This link is personal to you. Please do not forward it.
+        {UI[language].footer}
       </footer>
     </main>
   );

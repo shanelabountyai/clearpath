@@ -133,7 +133,10 @@ export async function openPortal(token: string, opts: { clock?: Clock } = {}) {
   const { client, settings, appointments } = await prisma.$transaction(async (tx) => {
     const client = await tx.client.findUniqueOrThrow({
       where: { id: link.clientId },
-      select: { id: true, firstName: true },
+      // Language joins `firstName` here for the same reason it is safe to:
+      // the page is written in it either way, so returning it discloses
+      // nothing a reader of the page does not already have.
+      select: { id: true, firstName: true, language: true },
     });
     const settings = await tx.practiceSettings.findUnique({
       where: { id: 1 }, select: { messagingName: true },
@@ -175,6 +178,7 @@ export async function openPortal(token: string, opts: { clock?: Clock } = {}) {
 
   return {
     firstName: client.firstName,
+    language: client.language,
     practice: settings?.messagingName ?? 'Stillwater',
     appointments,
   };

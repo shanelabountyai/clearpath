@@ -2,7 +2,8 @@
 
 import { useState, useTransition } from 'react';
 import type { Answers, FieldDef, TemplateSchema } from '../../../src/forms/schema';
-import { visibleFields } from '../../../src/forms/schema';
+import { inLanguage, visibleFields } from '../../../src/forms/schema';
+import { UI, type Language } from '../../../src/strings';
 import { saveProgress, submit } from './actions';
 
 /**
@@ -12,14 +13,18 @@ import { saveProgress, submit } from './actions';
  * so the form cannot ask for something the server would then reject.
  */
 export function FormRunner({
-  token, schema, initialAnswers,
+  token, language, schema, initialAnswers,
 }: {
   token: string;
+  language: Language;
   schema: TemplateSchema;
   initialAnswers: Answers;
 }) {
+  const ui = UI[language];
   const [answers, setAnswers] = useState<Answers>(initialAnswers);
-  const [error, setError] = useState<string | null>(null);
+  // A code from the server, not a sentence. The words are picked here, in the
+  // client's language — a service message is written for a log, not a client.
+  const [error, setError] = useState<keyof typeof ui.errors | null>(null);
   const [saved, setSaved] = useState(false);
   const [pending, startTransition] = useTransition();
 
@@ -40,14 +45,14 @@ export function FormRunner({
         setError(null);
         startTransition(async () => {
           const result = await submit(token, payload());
-          if (result?.error) setError(result.error);
+          if (result?.code) setError(result.code);
         });
       }}
     >
       <ol className="space-y-6">
         {fields.map((f, i) => (
           <li key={f.key}>
-            <Question field={f} index={i + 1} value={answers[f.key]} onChange={(v) => set(f.key, v)} />
+            <Question field={f} index={i + 1} language={language} value={answers[f.key]} onChange={(v) => set(f.key, v)} />
           </li>
         ))}
       </ol>
@@ -58,7 +63,7 @@ export function FormRunner({
           className="mt-6 rounded-[var(--radius)] border px-3 py-2 text-lead"
           style={{ borderColor: 'var(--danger)', background: 'var(--danger-soft)' }}
         >
-          {error}
+          {ui.errors[error]}
         </p>
       )}
 
@@ -69,7 +74,7 @@ export function FormRunner({
           className="rounded-[var(--radius)] px-5 py-2.5 text-subhead font-medium disabled:opacity-60"
           style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}
         >
-          {pending ? 'Sending…' : 'Send to the practice'}
+          {pending ? ui.formSubmitting : ui.formSubmit}
         </button>
         <button
           type="button"
@@ -78,24 +83,26 @@ export function FormRunner({
           className="rounded-[var(--radius)] border px-4 py-2.5 text-subhead"
           style={{ borderColor: 'var(--border-strong)' }}
         >
-          Save and finish later
+          {ui.formSaveLater}
         </button>
-        {saved && <span className="text-body" style={{ color: 'var(--success)' }}>Saved. Your link will bring you back here.</span>}
+        {saved && <span className="text-body" style={{ color: 'var(--success)' }}>{ui.formSaved}</span>}
       </div>
     </form>
   );
 }
 
 function Question({
-  field, index, value, onChange,
+  field, index, language, value, onChange,
 }: {
-  field: FieldDef; index: number; value: unknown; onChange: (v: unknown) => void;
+  field: FieldDef; index: number; language: Language; value: unknown; onChange: (v: unknown) => void;
 }) {
+  const ui = UI[language];
   const id = `q-${field.key}`;
+  const text = inLanguage(field.label, language);
   const label = (
     <label htmlFor={id} className="block text-subhead leading-snug">
       <span className="mr-1.5 font-mono text-caption text-subtle">{index}</span>
-      {field.label}
+      {text}
       {field.required && <span aria-hidden className="ml-1" style={{ color: 'var(--danger)' }}>*</span>}
     </label>
   );
@@ -110,7 +117,7 @@ function Question({
       <fieldset>
         <legend className="mb-2 text-subhead leading-snug">
           <span className="mr-1.5 font-mono text-caption text-subtle">{index}</span>
-          {field.label}
+          {text}
         </legend>
         <div className="flex flex-wrap gap-2">
           {field.options.map((o) => {
@@ -131,7 +138,7 @@ function Question({
                 <span aria-hidden style={{ color: active ? 'var(--accent)' : 'var(--text-subtle)' }}>
                   {active ? '◉' : '○'}
                 </span>
-                {o.label}
+                {inLanguage(o.label, language)}
               </label>
             );
           })}
@@ -148,8 +155,8 @@ function Question({
           id={id} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)}
           className="mt-2 w-full rounded-[var(--radius)] border px-3 py-2 text-subhead" style={inputStyle}
         >
-          <option value="">Choose one…</option>
-          {field.options.map((o) => <option key={String(o.value)} value={String(o.value)}>{o.label}</option>)}
+          <option value="">{ui.chooseOne}</option>
+          {field.options.map((o) => <option key={String(o.value)} value={String(o.value)}>{inLanguage(o.label, language)}</option>)}
         </select>
       </>
     );
@@ -160,10 +167,10 @@ function Question({
       <fieldset>
         <legend className="mb-2 text-subhead leading-snug">
           <span className="mr-1.5 font-mono text-caption text-subtle">{index}</span>
-          {field.label}
+          {text}
         </legend>
         <div className="flex gap-2">
-          {[['Yes', true], ['No', false]].map(([text, v]) => (
+          {([[ui.yes, true], [ui.no, false]] as const).map(([choice, v]) => (
             <label
               key={String(v)}
               className="flex cursor-pointer items-center gap-2 rounded-[var(--radius)] border px-4 py-2 text-lead"
@@ -174,7 +181,7 @@ function Question({
             >
               <input type="radio" name={field.key} checked={value === v} onChange={() => onChange(v)} className="sr-only" />
               <span aria-hidden>{value === v ? '◉' : '○'}</span>
-              {text as string}
+              {choice}
             </label>
           ))}
         </div>

@@ -6,7 +6,7 @@ import { clientTarget } from '../clients/repository';
 import { prisma, type Tx } from '../db';
 import { Conflict, NotFound } from '../errors';
 import { queueToClient, queueToClinician } from '../messaging/outbox';
-import { renderSubmission, validateSubmission, type Answers, type TemplateSchema } from './schema';
+import { missingLanguages, renderSubmission, validateSubmission, type Answers, type TemplateSchema } from './schema';
 import { scoreSubmission, type ScoringRules } from './scoring';
 
 /**
@@ -73,6 +73,31 @@ export async function issueForm(
   const template = await latestTemplate(input.templateKey);
   if (!template) throw new NotFound('FormTemplate');
 
+  const client = await prisma.client.findUnique({
+    where: { id: input.clientId },
+    select: { language: true },
+  });
+  if (!client) throw new NotFound('Client');
+
+  /**
+   * Refuse to send a form the client cannot read.
+   *
+   * Templates are data, so no compiler stops a practice manager adding an
+   * English-only question — which is the right trade for letting them revise
+   * an intake without a deploy, and the wrong thing to discover at render
+   * time. A blank question on a client's screen is a form they will answer
+   * anyway, or abandon silently; a refusal here is a practice manager with a
+   * list of field keys to translate. Named `Conflict`, not `NotFound`,
+   * because the template exists and the practice can fix it.
+   */
+  const untranslated = missingLanguages(asSchema(template.schema))[client.language];
+  if (untranslated.length) {
+    throw new Conflict(
+      `Template ${template.key} v${template.version} has no ${client.language} for: ${untranslated.join(', ')}`,
+      'template_not_translated',
+    );
+  }
+
   const token = newToken();
   const expiresAt = new Date(clock.now().getTime() + (input.expiresInDays ?? 30) * DAY);
 
@@ -110,7 +135,10 @@ export async function openForm(token: string, opts: { clock?: Clock } = {}) {
   const clock = opts.clock ?? systemClock;
   const request = await prisma.formRequest.findUnique({
     where: { token },
-    include: { template: true },
+    // The client's language and nothing else about them. The page is rendered
+    // in Spanish or it is not, so a leaked link discloses that either way —
+    // this adds no surface, where a name would.
+    include: { template: true, client: { select: { language: true } } },
   });
   if (!request) throw new NotFound('FormRequest');
   if (request.status === 'submitted') throw new Conflict('This form has already been submitted', 'already_submitted');
@@ -126,6 +154,7 @@ export async function openForm(token: string, opts: { clock?: Clock } = {}) {
   return {
     name: request.template.name,
     kind: request.template.kind,
+    language: request.client.language,
     schema: asSchema(request.template.schema),
     answers: (request.draftAnswers ?? {}) as Answers,
   };

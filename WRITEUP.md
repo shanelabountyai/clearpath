@@ -23,6 +23,8 @@ Kept as the work happens, not reconstructed afterwards.
    things that stop it reaching somebody who does not deserve it.
 11. **The three P1s** — the phone call the fee depends on, the message volume
    the loop creates, and an inbound channel designed around forgetting.
+12. **The second language** — a control that reports success while doing
+   nothing, and the door behind the message it was sent in.
 
 ---
 
@@ -1075,10 +1077,11 @@ will say about why somebody might dial it.
 
 ### What it deliberately does not do
 
-- **The portal is not translated.** Scope was message bodies, and the portal is
-  a page behind a link with its own layout, fee disclosure and consent copy. Half
-  a translation is worse than none: a Spanish reminder landing on an English fee
-  disclosure is the one screen where comprehension is legally load-bearing.
+- ~~**The portal is not translated.**~~ Scope was message bodies, and the portal
+  is a page behind a link with its own layout, fee disclosure and consent copy.
+  Half a translation is worse than none: a Spanish reminder landing on an English
+  fee disclosure is the one screen where comprehension is legally load-bearing.
+  *Done in §17, which is that sentence taken at its word.*
 - **No language detection.** Not on inbound, not on intake. `Client.language` is
   set by a person who asked the client, which is the only way it is ever right.
 - **No per-message override.** A client is written in one language.
@@ -1087,6 +1090,134 @@ will say about why somebody might dial it.
   `psicológica` — and a machine translation of a word list produces plausible
   entries nobody has checked, on the one control that has no second layer behind
   it.
+
+## 17. The door in the language the message was written in
+
+The previous item translated what the practice *sends*. What it sends is a link,
+and behind the link was a page written entirely in English: a greeting, a
+schedule, four reasons to change an appointment, three forms, and one sentence
+saying that cancelling now costs ninety dollars. So the feature as shipped was a
+Spanish reminder that opened an English document — which is not a partly-finished
+translation, it is a client agreeing to a fee they were never shown in a language
+they read.
+
+### The rule was already written; two of its three layers could not enforce it
+
+`Record<Language, ...>` over `CLIENT_TEMPLATES` and `DENY_LISTS` is the whole
+control from §16: a new language does not compile until it answers for every
+body, and does not pass its tests until the terms answer for it too. Extending
+that to the portal splits into three layers, and only the first gets the same
+guarantee.
+
+**Page copy is code, so the compiler still does it.** `src/strings.ts` is one
+`Record<Language, Strings>` holding every string on both tokenized doors —
+headings, buttons, notices, the fee sentence, and the error copy. A missing key
+is a build failure, exactly as before.
+
+What the compiler cannot see is a value that was *copied* rather than
+translated: `es: 'Keep the appointment'` typechecks perfectly and is the failure
+this whole item exists to prevent. So the test walks both trees and asserts no
+key holds the same string in both — which found precisely one true collision,
+`No`, and it is listed by name rather than waved through by a looser assertion.
+The same discipline `crisis` needed on the deny-list.
+
+**Form questions are data, so nothing can.** A form template is a database row,
+because the point is that a practice manager revises an intake without a deploy.
+`FieldDef.label` became `Record<Language, string>`, but that type only describes
+the shape a row *ought* to have — no compiler runs when somebody types a question
+into a form and hits publish.
+
+What replaces it is `missingLanguages`, consulted where the form is **sent**
+rather than where it is rendered:
+
+```ts
+const untranslated = missingLanguages(asSchema(template.schema))[client.language];
+if (untranslated.length) throw new Conflict(..., 'template_not_translated');
+```
+
+That is the same choice `assertDiscreet` makes, for the same reason. A gate at
+render time protects nobody, because by then the link has gone out and the client
+is looking at the blanks. A gate at send time is a practice manager holding a
+list of field keys. And the editor now shows both boxes per question with the
+empty one outlined in red — the missing half is visible before it is a refusal.
+
+The tempting shortcut here is the dangerous one: falling back to the English when
+the Spanish is empty. That produces a template that passes every gate, sends
+without complaint, and puts English questions in front of a Spanish-speaking
+client — the §16 failure exactly, one layer up. An empty string is kept as empty
+on purpose.
+
+### The migration is the reason it could not be a reseed
+
+Existing `FormTemplate` rows held bare strings. Reseeding would publish new
+versions and leave the old ones untouched — and a submission renders against the
+version it was answered on, so every historical submission would have lost its
+labels. That is precisely the failure template versioning exists to prevent, so
+the change is a data migration that rewrites old versions in place, converting
+`"label"` to `{"en": "label", "es": ""}`.
+
+The Spanish half is written **empty, not copied**. Nobody has translated those
+rows, so the honest state is the one where `issueForm` refuses to send them to a
+Spanish-speaking client. Copying the English across would have made every
+historical template silently sendable and wrong.
+
+### One instrument, two readings — which is what buys the whole design
+
+The alternative shape was a second `FormTemplate` per language. It fails in three
+places at once: a client who switches language forks their score history across
+two template keys, so `trends` draws a line through two different instruments;
+the scoring rules have to be kept identical by hand; and a clinician who does not
+read Spanish opens a Spanish submission.
+
+Keeping labels inside one version fixes all three by accident, because **a
+submission stores values, not labels**. A Spanish client picking *Casi todos los
+días* stores `3`. The therapist opens it and reads *Nearly every day*, against
+the same version, with no translation happening at read time and no second key
+to reconcile. `STAFF_LANGUAGE` is a constant, and it is allowed to be one.
+
+The exception is free text, which stays in the client's own words. Machine-
+translating what somebody wrote about their own life into the clinical record is
+a worse answer than a clinician knowing they need an interpreter.
+
+### Two things the second language turned from untidy into a bug
+
+**The service's error message was reaching the client.** `submit` returned
+`{ error: e.message }`, and `e.message` is written for a log — it names template
+keys and versions, and it is English whatever the client reads. It now returns
+the `Conflict`'s code, the words are chosen in the client's language, and any
+code the door was not designed to explain becomes `unknown` rather than leaking
+an internal name onto a client's screen.
+
+**Money had a locale in it.** `money()` is hardcoded to `en-US`. The naive fix is
+`es-ES`, which renders the late-cancel fee with a euro sign — a currency error
+wearing a translation's clothes. `es-US` is correct: a US practice bills a US
+client in dollars whichever language it explains them in. There is a test, because
+the failure is silent and the number is the one the client is agreeing to.
+
+### The screen whose reader is unknown
+
+A dead token resolves nobody — that is what makes it dead — so *"This link has
+expired"* has no `Client.language` to read. Defaulting to English would put the
+practice's least helpful screen in front of exactly the client least able to act
+on it. Both error pages render in every language, stacked, each in its own `lang`
+element. Two short paragraphs, and cheaper than querying an expired token purely
+to learn what language to apologise in.
+
+### What it deliberately does not do
+
+- **Staff pages are not translated.** The practice works in one language, and
+  `STAFF_LANGUAGE` is a constant naming that assumption rather than hiding it.
+  Translating them is a different feature with a different argument.
+- **No language switcher on the door.** `Client.language` is what the practice
+  recorded a person asking for; a toggle would let a shared phone's previous
+  reader change it, and would make the *sent* message and the *opened* page
+  disagree.
+- **The template `name` column stays English.** It is how staff pick a template
+  out of a list; the client-facing heading is `schema.title`, which is a pair.
+- **No `Intl.DateTimeFormat` for dates.** The weekday is translated and the time
+  stays `HH:MM`, which is what the practice's own clock says everywhere else.
+  Localizing the *format* is a separate decision from localizing the words.
+
 
 ## Decisions log
 
@@ -1105,6 +1236,14 @@ will say about why somebody might dial it.
 | Only a `no_response` no-show counts toward the policy's fee total | A late cancel is charged whether or not anyone was asked, so counting it would credit this feature with revenue it did not cause |
 | `declineReason` is nullable and usually null | The portal asks without requiring an answer and a keyword decline cannot carry one; a default value would turn every texted "no" into a preference the client never stated |
 | The decline reason reuses `RescheduleReason` rather than a new enum | A decline and a reschedule request ask the same four sentences; two lists would drift, and the PRD named reuse explicitly |
+| Form question text is a language pair enforced at send time, not by the type | `CLIENT_TEMPLATES` is code, so the compiler makes a missing translation a build failure. A `FormTemplate` is data — the point is revising one without a deploy — so nothing stops an English-only question being published. `missingLanguages` runs where the form is *sent*, which is a practice manager holding a list of field keys rather than a client staring at blanks |
+| An untranslated question is left empty, never filled from the English | A fallback produces a template that passes every gate, sends without complaint, and shows English to somebody who cannot read it — the exact failure the deny-list pairing exists to prevent, one layer up |
+| Localized labels live inside one template version, not in a second template per language | A per-language template forks a client's score history across two keys the moment they switch, duplicates the scoring rules by hand, and hands a Spanish submission to a clinician who does not read Spanish. One version works because a submission stores *values*: `3` renders as "Nearly every day" to staff and "Casi todos los días" to the client, off the same row |
+| A data migration rewrites old template versions rather than reseeding | A submission renders against the version it was answered on, so publishing new versions would have blanked the labels on every historical submission — the failure versioning exists to prevent. The Spanish half is written empty, so old rows are honestly unsendable to a Spanish client instead of silently wrong |
+| The form action returns a `Conflict` code, never the service's message | A service message is written for a log: it names template keys and versions and is English whatever the client reads. It was a small wrong shape with one language and a comprehension bug with two; unrecognised codes become `unknown` rather than leaking an internal name to a client |
+| The dead-link pages render in every language at once | A dead token resolves nobody, so there is no `Client.language` to read — and defaulting to English puts the least helpful screen in front of the client least able to act on it. Two paragraphs, versus querying an expired token to learn what language to apologise in |
+| Money is formatted `es-US`, not `es-ES` | `es-ES` renders the late-cancel fee with a euro sign: a currency error wearing a translation's clothes. A US practice bills a US client in dollars whichever language it explains them in, and the number is the one the client is agreeing to |
+| The translation test forbids identical strings, with collisions listed by name | A copied value typechecks perfectly, which is the whole failure mode a type cannot see. Asserting no shared wording found exactly one genuine collision — `No` — and naming it is the same discipline `crisis` needed on the deny-list, rather than a looser assertion that would also permit the next real one |
 | A tampered decline reason is dropped, not rejected | The reason annotates the decline, it does not authorize it — a bad form field must not stand between a client and giving the hour back |
 | `may()` is silent | Deciding which buttons to draw is not an access event, and logging it would drown the real ones |
 | A separate `messagingName` on practice settings | "Stillwater Counseling" on a lock screen tells a roommate what the appointment is for; the deny-list catches exactly that, so the practice needs a short name |

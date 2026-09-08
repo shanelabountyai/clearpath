@@ -1,5 +1,6 @@
 import { prisma } from '../db';
 import type { Actor, Role } from '../auth/permissions';
+import type { Language } from '../strings';
 
 /**
  * Empties every table. TRUNCATE is deliberately still permitted on the audit
@@ -30,7 +31,10 @@ export async function makeUser(role: Role, opts: { name?: string; supervisorId?:
   });
 }
 
-export async function makeClient(treatingClinicianId: string, opts: { feeCents?: number; code?: string } = {}) {
+export async function makeClient(
+  treatingClinicianId: string,
+  opts: { feeCents?: number; code?: string; language?: Language } = {},
+) {
   return prisma.client.create({
     data: {
       code: opts.code ?? `TC-${uniq()}`,
@@ -39,6 +43,7 @@ export async function makeClient(treatingClinicianId: string, opts: { feeCents?:
       dateOfBirth: new Date('1990-04-12'),
       treatingClinicianId,
       feeCents: opts.feeCents ?? null,
+      language: opts.language ?? 'en',
     },
   });
 }

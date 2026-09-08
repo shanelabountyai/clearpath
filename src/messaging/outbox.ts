@@ -1,6 +1,6 @@
 import { prisma, type Tx } from '../db';
 import { systemClock } from '../clock';
-import { minutesToHHMM, utcToZoned, WEEKDAYS } from '../time';
+import { LANGUAGES, whenLabel as localizedWhen, type Language } from '../strings';
 
 /**
  * Everything the practice sends a client, and the rule that governs it.
@@ -15,8 +15,9 @@ import { minutesToHHMM, utcToZoned, WEEKDAYS } from '../time';
  */
 
 /**
- * The languages the practice writes a client in — and the reason that is one
- * type rather than two features.
+ * The language type is shared with the portal (`src/strings.ts`), because the
+ * rule it encodes is not a messaging rule. Re-exported here so the deny-list
+ * and the templates below still read as one unit with it.
  *
  * A body is discreet because a deny-list says so, and a deny-list is a list of
  * words in a language. A Spanish reminder checked against the English list is
@@ -30,8 +31,8 @@ import { minutesToHHMM, utcToZoned, WEEKDAYS } from '../time';
  * on both is what makes the compiler refuse the half of it that ships bodies
  * without the half that reads them.
  */
-export type Language = 'en' | 'es';
-export const LANGUAGES = ['en', 'es'] as const;
+export type { Language } from '../strings';
+export { LANGUAGES } from '../strings';
 
 /**
  * Lowercase, and drop the accents.
@@ -138,17 +139,8 @@ export type TemplateKey =
 
 type Build = (c: ClientMessageContext) => { subject?: string; body: string };
 
-/** Weekday names in the language the body is written in, indexed the same way. */
-const WEEKDAY_NAMES: Record<Language, readonly string[]> = {
-  en: WEEKDAYS,
-  es: ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'],
-};
-
-const whenLabel = (language: Language, startAt: Date | undefined, fallback: string): string => {
-  if (!startAt) return fallback;
-  const when = utcToZoned(startAt);
-  return `${WEEKDAY_NAMES[language][when.weekday]} ${minutesToHHMM(when.minutes)}`;
-};
+const whenLabel = (language: Language, startAt: Date | undefined, fallback: string): string =>
+  startAt ? localizedWhen(language, startAt) : fallback;
 
 /**
  * Neutral by construction, in every language. Editable by the practice; still

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { expect, sql, test } from './fixtures';
-import { CLIENT, FAR, MID, NEAR, TOKEN } from './portal-fixture';
+import { CLIENT, ES_NEAR, ES_TOKEN, FAR, MID, NEAR, TOKEN } from './portal-fixture';
 
 /**
  * The client's door, driven as a client drives it: no login, no session, one
@@ -86,5 +86,47 @@ test.describe('the confirmation door', () => {
     // Two buttons and four reason codes. No text input, in either direction.
     await expect(page.locator('input[type="text"], textarea')).toHaveCount(0);
     await expect(page.getByText(/counsel|therap/i)).toHaveCount(0);
+  });
+});
+
+/**
+ * The same door, for a client the practice writes in Spanish.
+ *
+ * The one that matters is the fee disclosure. A reminder arriving in Spanish
+ * and a cancellation charge explained in English is not a partly-translated
+ * feature — it is a client agreeing to ninety dollars they were never told
+ * about in a language they read. So this spec ends where the money is: the
+ * sentence is Spanish, the amount is dollars, and the charge that lands is
+ * exactly the one the sentence named.
+ */
+test.describe('the door in Spanish', () => {
+  test('is written end to end in the language the client is written in', async ({ page }) => {
+    await page.goto(`/p/${ES_TOKEN}`);
+
+    await expect(page.getByRole('heading', { name: 'Hola Prueba' })).toBeVisible();
+    await expect(page.locator('main')).toHaveAttribute('lang', 'es');
+    await expect(page.getByRole('button', { name: 'Sí, allí estaré' })).toBeVisible();
+    await expect(page.getByText('Este enlace es personal')).toBeVisible();
+
+    // Not one English string left behind on the page the client actually reads.
+    await expect(page.getByText(/Yes, I will be there|Ask to change this|do not forward it/)).toHaveCount(0);
+    // And still nothing that says what kind of practice this is.
+    await expect(page.getByText(/counsel|therap|terapia|consejer/i)).toHaveCount(0);
+  });
+
+  test('names the fee in Spanish, in dollars, and charges exactly that', async ({ page }) => {
+    await page.goto(`/p/${ES_TOKEN}`);
+    await page.getByRole('button', { name: 'No puedo asistir' }).click();
+
+    await expect(page.getByText(/Cancelar dentro de las 24 horas/)).toBeVisible();
+    // es-US, not es-ES: a US practice bills a US client in dollars.
+    await expect(page.getByText(/\$90\.00/)).toBeVisible();
+    await expect(page.getByText('€')).toHaveCount(0);
+    expect(sql(`select status from "Appointment" where id = '${ES_NEAR}'`)).toBe('scheduled');
+
+    await page.getByRole('button', { name: 'Sí, cancelarla' }).click();
+    await expect(page.getByText('Esa cita queda cancelada')).toBeVisible();
+    expect(sql(`select status from "Appointment" where id = '${ES_NEAR}'`)).toBe('late_cancelled');
+    expect(sql(`select "chargeFeeCents" from "Appointment" where id = '${ES_NEAR}'`)).toBe('9000');
   });
 });

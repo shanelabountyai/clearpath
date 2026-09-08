@@ -263,8 +263,12 @@ describe('the door is narrow on purpose', () => {
   it('cannot be used to submit anything clinical', async () => {
     const token = (await issuePortalLink(actor(desk), { clientId: client.id, clock })).token;
     const view = await openPortal(token, { clock });
-    // The whole surface: a first name, a practice name, and appointment times.
-    expect(Object.keys(view).sort()).toEqual(['appointments', 'firstName', 'practice']);
+    // The whole surface: a first name, a practice name, appointment times, and
+    // the language to render them in. `language` is safe here for the reason
+    // the others are not a leak either — the page is written in it whatever
+    // this returns, so a forwarded link learns nothing from the field that it
+    // could not read off the screen.
+    expect(Object.keys(view).sort()).toEqual(['appointments', 'firstName', 'language', 'practice']);
   });
 });
 

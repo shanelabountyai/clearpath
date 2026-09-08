@@ -23,15 +23,26 @@ export const NEAR = 'e2e-appt-near';
 export const MID = 'e2e-appt-mid';
 export const FAR = 'e2e-appt-far';
 
+/**
+ * The same door, for a client the practice writes in Spanish. A clinician of
+ * its own so the exclusion constraint has nothing to say about two fixtures
+ * booking the same hour.
+ */
+export const ES_TOKEN = 'e2e-portal-token-es-000000';
+const ES_CLINICIAN = 'e2e-portal-clinician-es';
+export const ES_CLIENT = 'e2e-portal-client-es';
+export const ES_NEAR = 'e2e-appt-near-es';
+
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 
 async function teardown() {
-  await prisma.outboxMessage.deleteMany({ where: { clientId: CLIENT } });
-  await prisma.portalLink.deleteMany({ where: { clientId: CLIENT } });
-  await prisma.appointment.deleteMany({ where: { clientId: CLIENT } });
-  await prisma.client.deleteMany({ where: { id: CLIENT } });
-  await prisma.user.deleteMany({ where: { id: CLINICIAN } });
+  const clients = [CLIENT, ES_CLIENT];
+  await prisma.outboxMessage.deleteMany({ where: { clientId: { in: clients } } });
+  await prisma.portalLink.deleteMany({ where: { clientId: { in: clients } } });
+  await prisma.appointment.deleteMany({ where: { clientId: { in: clients } } });
+  await prisma.client.deleteMany({ where: { id: { in: clients } } });
+  await prisma.user.deleteMany({ where: { id: { in: [CLINICIAN, ES_CLINICIAN] } } });
 }
 
 async function setup() {
@@ -69,6 +80,33 @@ async function setup() {
   }
 }
 
-if (process.argv[2] === 'setup') await setup();
+async function setupSpanish() {
+  const now = Date.now();
+  await prisma.user.create({
+    data: { id: ES_CLINICIAN, name: 'Test Clinician ES', email: 'e2e-portal-es@example.test', role: 'therapist' },
+  });
+  await prisma.client.create({
+    data: {
+      id: ES_CLIENT, code: 'TC-E2E-ES', firstName: 'Prueba', lastName: 'Client ES',
+      dateOfBirth: new Date('1990-04-12'), treatingClinicianId: ES_CLINICIAN,
+      reminderPreference: 'email', language: 'es',
+    },
+  });
+  await prisma.portalLink.create({
+    data: { id: 'e2e-portal-link-es', clientId: ES_CLIENT, token: ES_TOKEN, expiresAt: new Date(now + 30 * DAY) },
+  });
+  // Four hours out: inside the late-cancel window, so declining reaches the
+  // fee disclosure — the screen this whole translation exists for.
+  await prisma.appointment.create({
+    data: {
+      id: ES_NEAR, clientId: ES_CLIENT, clinicianId: ES_CLINICIAN,
+      startAt: new Date(now + 4 * HOUR),
+      endAt: new Date(now + 4 * HOUR + 50 * 60_000),
+      modality: 'telehealth', confirmation: 'pending',
+    },
+  });
+}
+
+if (process.argv[2] === 'setup') { await setup(); await setupSpanish(); }
 else await teardown();
 await prisma.$disconnect();

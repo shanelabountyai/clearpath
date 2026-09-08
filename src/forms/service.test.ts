@@ -68,6 +68,54 @@ describe('template versioning', () => {
   });
 });
 
+/**
+ * A form template is data, so the compiler cannot make a question a pair the
+ * way it does a message template. The gate replaces it, and it fires where the
+ * form is *sent* — the practice gets a list of field keys, instead of a client
+ * getting a form with blanks where the questions should be.
+ */
+describe('a form is not sent in a language it is not written in', () => {
+  const halfTranslated = {
+    key: 'half', name: 'Half', kind: 'intake' as const,
+    schema: {
+      fields: [
+        { key: 'a', label: { en: 'Your name', es: 'Su nombre' }, type: 'short_text' as const },
+        { key: 'b', label: { en: 'Anything else?', es: '' }, type: 'long_text' as const },
+      ],
+    },
+  };
+
+  it('refuses, and names the field that is missing', async () => {
+    await publishTemplate(actor(admin), halfTranslated);
+    const spanish = await makeClient(therapist.id, { language: 'es' });
+
+    await expect(issueForm(actor(desk), { clientId: spanish.id, templateKey: 'half' }))
+      .rejects.toMatchObject({ code: 'template_not_translated' });
+
+    // and nothing was queued to a client who could not have read it
+    expect(await prisma.formRequest.count()).toBe(0);
+    expect(await prisma.outboxMessage.count()).toBe(0);
+  });
+
+  it('sends the same template to a client who reads the half that exists', async () => {
+    await publishTemplate(actor(admin), halfTranslated);
+    const request = await issueForm(actor(desk), { clientId: client.id, templateKey: 'half' });
+    expect(request.token).toBeTruthy();
+  });
+
+  it('lets the shipped templates through in both languages', async () => {
+    await publishTemplate(actor(admin), {
+      key: 'consent-to-treat', name: 'Consent to Treatment', kind: 'consent', ...consentToTreat,
+    });
+    const spanish = await makeClient(therapist.id, { language: 'es' });
+    const request = await issueForm(actor(desk), { clientId: spanish.id, templateKey: 'consent-to-treat' });
+
+    const opened = await openForm(request.token);
+    expect(opened.language).toBe('es');
+    expect(opened.schema.fields.map((f) => f.label.es)).not.toContain('');
+  });
+});
+
 describe('the tokenized link', () => {
   it('opens to the form and nothing about the client', async () => {
     const request = await issueScreener();

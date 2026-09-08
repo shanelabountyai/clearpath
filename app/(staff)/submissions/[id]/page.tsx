@@ -3,6 +3,8 @@ import { getSubmission } from '../../../../src/forms/service';
 import { Forbidden } from '../../../../src/errors';
 import { requireSession } from '../../../../src/session';
 import { localDateOf } from '../../../../src/time';
+import { inLanguage, type LocalizedText } from '../../../../src/forms/schema';
+import type { Language } from '../../../../src/strings';
 import { Badge, Card, LockedPanel, PageHeader, TierBanner } from '../../../../src/ui/primitives';
 
 export const dynamic = 'force-dynamic';
@@ -45,7 +47,7 @@ export default async function SubmissionPage({ params }: { params: Promise<{ id:
           <dl className="divide-y" style={{ borderColor: 'var(--border)' }}>
             {s.fields.map(({ field, value }) => (
               <div key={field.key} className="grid gap-1 py-2.5 sm:grid-cols-[1fr_auto] sm:items-baseline sm:gap-4">
-                <dt className="text-body">{field.label}</dt>
+                <dt className="text-body">{inLanguage(field.label, STAFF_LANGUAGE)}</dt>
                 <dd className="font-serif text-lead sm:text-right">
                   {formatAnswer(field, value)}
                 </dd>
@@ -102,10 +104,26 @@ export default async function SubmissionPage({ params }: { params: Promise<{ id:
   );
 }
 
-function formatAnswer(field: { type: string; options?: { value: string | number; label: string }[] }, value: unknown) {
+/**
+ * The record is read in the practice's working language, whatever the client
+ * answered in — and that costs nothing, because a submission stores *values*.
+ * A Spanish client picking "Varios días" stores `1`, and `1` renders here as
+ * "Several days" against the same template version they answered on. One
+ * instrument, two readings, no translation at read time and no second
+ * template key to fork a client's score history across.
+ *
+ * The exception is free text, which is the client's own words and stays in
+ * them. Machine-translating what somebody wrote about their own life into the
+ * clinical record would be a worse answer than a clinician who needs an
+ * interpreter knowing that they do.
+ */
+const STAFF_LANGUAGE: Language = 'en';
+
+function formatAnswer(field: { type: string; options?: { value: string | number; label: LocalizedText }[] }, value: unknown) {
   if (value === null || value === undefined || value === '') return <span className="text-subtle">—</span>;
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  const label = field.options?.find((o) => o.value === value)?.label;
+  const option = field.options?.find((o) => o.value === value)?.label;
+  const label = option && inLanguage(option, STAFF_LANGUAGE);
   if (label) return field.type === 'scale' ? `${label} (${String(value)})` : label;
   if (Array.isArray(value)) return value.join(', ');
   return String(value);
