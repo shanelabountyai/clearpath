@@ -1,64 +1,70 @@
 # Next
 
-**Item:** Phase 2 of `prd-intake-inquiry.md` — P0-1 (the `Inquiry` table),
-P0-3 (discard reason codes), P0-5 (the trigger and the purge sweep), P0-6
-(audit). This is where the deletion actually happens.
+**Item:** Phase 3 of `prd-intake-inquiry.md` — P0-7 (the waitlist accepts an
+inquiry), P0-8 (`convertInquiry`), P0-9 (`referralSource` on `Client` + the
+enum/fixture equality test).
 
-Phase 1 landed the verb and the state machine (`a2a6939`'s successor). Read
-D-01, D-03, D-05 and D-06 before deviating.
+Phase 2 landed the table, the trigger and the purge (`0891650`). Read D-04 and
+the P0-7/P0-8 bullets before deviating.
 
 ## Model
 
-**Opus.** Phase 1 was transcription; this is not. A migration that adds the
-codebase's first `DELETE` path, a trigger that has to refuse everything else,
-and an audit design that deliberately points at rows that no longer exist —
-each one is a correctness decision with a wrong answer that looks fine in a
-green test run.
+**Opus.** P0-7 puts the schema's only `ON DELETE CASCADE` next to the only
+`DELETE` path, and P0-8 is a multi-write transaction that has to repoint a
+waitlist entry without ever letting a purge and a conversion be true at once.
+Both are correctness decisions with a wrong answer that passes a green run.
 
-## Phase 2, concretely
+## Phase 3, concretely
 
-1. **`Inquiry` model.** Fields per P0-1. No `dateOfBirth`, no `code`, no
-   `treatingClinicianId` — those three are what conversion is for. No relation
-   to `ProgressNote`, `ProcessNote`, `FormRequest`, `FormSubmission`, `Alert`,
-   `Appointment`, `PortalLink`, `OutboxMessage`, and a grep test in the style
-   of `notes/service.test.ts` that fails the build if one appears.
-2. **`InquiryDiscardReason`**: `no_answer`, `not_a_fit`, `referred_out`,
-   `no_capacity`, `chose_elsewhere`, `duplicate`, `spam`. Codes, in the idiom
-   of `FeeWaiveReason` — this value reaches the audit log.
-3. **`inquiry_delete_only_discarded` trigger**, written in the migration
-   alongside `audit_append_only` and `progress_note_content_frozen`. **In the
-   migration, not in Prisma.**
-4. **The purge sweep**, clock-driven off `PracticeSettings.inquiryRetentionDays`
-   (default 90, new column). Idempotent. Actor `system`, action `discard`,
-   `reason: 'purged'`.
+1. **`WaitlistEntry.clientId` nullable, `inquiryId` added, `CHECK` requiring
+   exactly one.** `inquiryId` is `ON DELETE CASCADE` — the only cascade in the
+   schema, and it is what makes the purge safe. Verify the `CHECK` against
+   seeded data before the nullable column lands, in the style of the
+   localized-labels migration.
+2. **`ENTRY_SELECT` gains the inquiry branch** in `scheduling/worklists.ts`.
+   `fits()` is unchanged — it already reads only weekday and window.
+   `waitlistOpenings`' "never offer a client the hour they just gave back"
+   comparison skips inquiry entries, which by construction gave nothing back.
+   The worklist row says *inquiry*: no client code, no treating clinician.
+3. **`convertInquiry(actor, id, { code, dateOfBirth, treatingClinicianId, ... })`**
+   — one transaction via `guardedAll`: create the `Client`, set
+   `Inquiry.clientId` and `status = 'converted'` through `assertTransition`,
+   repoint the waitlist entry, copy `referralSource`/`referralNote`. Adds
+   `Inquiry.clientId` (the column deliberately left out of Phase 2). Sending the
+   intake packet is the caller's next step, never a hidden side effect.
+4. **`ReferralSource` on `Client`** (the enum already exists), plus the test
+   asserting its values equal `intakeForm`'s `referral` options exactly.
 
 ## Traps
 
-- **The trigger must be asserted against a real connection.** A mocked test
-  proves nothing. Assert it refuses `open` AND refuses `converted`.
-- **`AuditEvent.clientId` has no FK, and inquiry ids must never enter it.**
-  That column means *a client record*. Rows about an inquiry carry
-  `clientId: null` and `resourceId: <inquiry id>`. This is what lets a purged
-  inquiry leave its audit rows standing with nothing dangling — D-06.
-- **`Inquiry.inquiryId` on `WaitlistEntry` is `ON DELETE CASCADE`** — the only
-  cascade in the schema, deliberate, and it lands in Phase 3 with P0-7.
-- Discards carry `reason: 'discarded:<code>'`; the purge carries
-  `reason: 'purged'`. Two different rows, both readable by the auditor.
+- **The audit rows for a conversion carry the *client* id**, unlike every
+  inquiry row Phase 2 writes. `clientId: null` is the rule for rows *about an
+  inquiry*; once there is a client record, the column means what it says.
+- **A converted inquiry is already unpurgeable** — the Phase 2 trigger refuses
+  it. Do not add a second check for that in the sweep.
+- **`Inquiry.clientId` must not become a route from a client to a note.** The
+  Phase 2 structural tests (`inquiry.test.ts`, bottom of file) will fail the
+  build if a clinical relation appears; `Client` is not on that list, so the
+  conversion column is legal — check the test still says what you mean after.
+- **The seeded quarter is not written yet.** P0-1's ~40 inquiries (~20
+  converted, ~15 discarded, ~5 open) belong with P1-1's report, not before it.
 
 ## Gate at this commit
 
-Unit **1907/1907** (was 1616 — +280 matrix cells from one new action × one new
-resource, +11 explicit inquiry tests), typecheck clean. e2e not re-run: nothing
-in this commit touches a rendered page or the schema.
+Unit **1922/1922** (was 1907 — +15 inquiry record, trigger, purge and
+structural tests), typecheck clean. e2e not re-run: nothing in this commit
+renders a page. The new migration is applied to dev, test and e2e.
 
-Migrations **still not on production** — three:
+Migrations **still not on production** — four now:
 `20260907191212_client_reminder_stages`, `20260907194526_client_language`,
-`20260908103000_localized_form_labels`. `npm run db:migrate:prod` when that
-matters. Phase 2 adds a fourth.
+`20260908103000_localized_form_labels`, `20260908213312_inquiry_intake`.
+`npm run db:migrate:prod` when that matters.
 
 ## Already answered, do not re-litigate
 
-- `discard` not `delete`, and clinicians not discarding — settled, in the
-  matrix and in WRITEUP §18.
-- Break-glass has no `inquiry` cell, and a test asserts it stays that way.
-- Group sessions and superbill depth are shipped. Both parent PRDs are closed.
+- `discard` not `delete`; clinicians create but do not discard — WRITEUP §18.
+- `Inquiry` separate from `Client`; the trigger over an application check; the
+  audit trail pointing at a destroyed row — WRITEUP §19.
+- Nothing is ever sent to an inquiry (D-05). No outbox, no portal, no consent.
+- The purge has no scheduler and does not need one — same call shape as
+  `reminders:run`. Wire it to the existing scheduled path when there is one.
