@@ -1431,6 +1431,153 @@ access to anything else.
   and the trail are what Phase 2 is for; the screens are Phase 4.
 
 
+## 20. The nullable foreign key that earns it, and the id decided before the row
+
+*Phase 3 of `prd-intake-inquiry.md`: the waitlist accepts a caller, conversion
+happens in one transaction, and the same fact starts living at two sensitivity
+tiers.*
+
+### The one nullable FK, and why it is the only one
+
+`WaitlistEntry.clientId` was required. It is now optional, alongside a new
+optional `inquiryId`, with a `CHECK` requiring exactly one:
+
+```sql
+CHECK (("clientId" IS NULL) <> ("inquiryId" IS NULL))
+```
+
+This is the only place the inquiry stage gets a nullable foreign key, and the
+reason it earns one here is the reason the whole feature exists: "wants a slot
+we do not have" is what *keeps* most inquiries inquiries. A caller asking for
+Tuesday evenings is asking for the thing the practice has none of, and making
+them a client first — inventing a date of birth and assigning a clinician — in
+order to write that down is exactly the invention this stage removes.
+
+Two nullable columns invite two failures, and the constraint refuses both.
+Neither set is a row nobody can ring. Both set is worse: it is a row that would
+be offered the same hour twice, and that conversion would repoint into a
+contradiction. Writing it as an XOR rather than as two application checks is
+the same argument as `audit_append_only` and the delete trigger from §19 — an
+invariant that matters is enforced by the database.
+
+The constraint was verified against the data before the column that could
+violate it existed. Every existing entry belongs to a client, so it holds on day
+one — but "holds" is a claim about rows, and a migration that adds a constraint
+without looking is a deploy that fails somewhere less convenient than a laptop:
+
+```sql
+SELECT count(*) INTO orphans FROM "WaitlistEntry" WHERE "clientId" IS NULL;
+IF orphans > 0 THEN RAISE EXCEPTION ...
+```
+
+### The schema's only cascade, next to its only DELETE
+
+`WaitlistEntry.inquiryId` is `ON DELETE CASCADE`. It is the only cascade in the
+schema, and it sits deliberately next to the only `DELETE` path in it. A
+waitlist entry for a person who no longer exists is not a thing, and saying that
+in the foreign key is what keeps `runInquiryPurge` from having to know this
+table exists at all.
+
+The cascade is not a second delete path. An open inquiry with a waitlist entry
+is still refused by the §19 trigger — the cascade only ever fires *after* the
+trigger has already agreed the row may go. Both halves are asserted: the purge
+destroys the entry with the inquiry, and a raw delete of an open one takes
+neither.
+
+Every other relation to `Inquiry` is `RESTRICT`, spelled out rather than left to
+Prisma's default. An optional relation defaults to `SetNull`, which for
+`WaitlistEntry.client` would leave a row satisfying neither half of the XOR —
+the default quietly became wrong the moment the column became nullable.
+
+### Conversion, and the id that exists before the row
+
+`convertInquiry` is one transaction through `guardedAll`: create the `Client`,
+set `Inquiry.clientId` and `status = 'converted'` through the state machine,
+repoint the waitlist entry, copy `referralSource` and `referralNote` across.
+
+Two authorizations, and **no new matrix cell**. Conversion needs `create` on
+`client` and `update` on `inquiry`, and only front desk holds both — a clinician
+has neither, and the practice manager reaches a client record only through
+break-glass, which does not include creating one. Who may convert therefore
+falls out of the existing policy with nothing new to review. That is what a
+permission matrix is *for*: the interesting answer was already in the table.
+
+The odd-looking line is this one:
+
+```ts
+const clientId = randomUUID();
+```
+
+§19's rule was that an audit row about an inquiry carries `clientId: null`,
+because that column means *a client record* and an inquiry is not one.
+Conversion is the exact moment that stops being true, and both of its audit rows
+should name the client. But `guardedAll` authorizes every request before any
+work runs — which is the property that makes it worth using — so the requests
+are built while the client does not yet exist and cannot be named.
+
+Deciding the id in the application rather than taking the column default is what
+closes that. It is a real trade: one client row in this database has a UUID
+where the other ninety-seven have cuids. The alternative was to create the row
+first and authorize afterwards, which inverts the order the guard exists to
+enforce, for a cosmetic gain.
+
+The inquiry row is kept, pointing at the client. That is what makes "how long
+from call to first session" answerable, and it is why a converted inquiry is
+permanently unpurgeable: the §19 trigger refuses anything that is not
+`discarded`, and there is no branch in it about conversion. Both endings are
+terminal through the same `TRANSITIONS` table, so a second conversion and a
+discard-after-conversion are the same `Conflict`.
+
+Nothing is sent. `convertInquiry` writes no `OutboxMessage` and no
+`FormRequest`, and a test asserts both counts are zero. Sending the intake
+packet is the caller's next step: `issueForm` refuses a template the client
+cannot read in their language (§16), and that refusal has to surface to the
+person who clicked rather than get swallowed inside a conversion that already
+committed.
+
+### The same fact at two tiers, kept apart on purpose
+
+`Client` gains `referralSource` and `referralNote`. The intake form already asks
+"How did you hear about us?" — and that answer is a `FormSubmission`, guarded at
+`treatingOrSupervising`. The practice manager who runs the referral report may
+not read one.
+
+So the fact is stored twice, deliberately (D-04). Not synced, not reconciled,
+not surfaced from one to the other: "keeping them in sync" would mean showing
+front desk a clinical submission, which is the leak the whole codebase is built
+to avoid. Same fact, two sensitivity tiers, two readings — the same argument
+`clients/repository.ts` already makes about one client row read as demographics
+and as clinical record.
+
+The failure mode of storing it twice is drift, and it has a specific shape:
+options in a form template are *data* and change without a deploy, while the
+enum is *schema* and does not. A category the report can produce and the form
+cannot is invisible until somebody notices a bar that is always zero. So the
+lists are asserted equal:
+
+```ts
+expect(Object.values(PrismaReferralSource)).toEqual(referral.options.map((o) => o.value));
+```
+
+`Client.referralSource` is nullable rather than defaulted. Null means nobody
+asked, which is the honest state for clients created before the column existed;
+a default of `other` would enter an answer nobody gave. The seed fills the
+ninety-seven from a fixed 30/30/30/10 pattern indexed by client number rather
+than a random draw — that loop's PRNG sequence is load-bearing, and adding a
+draw to it reshuffles every fixture downstream.
+
+### What this phase deliberately does not do
+
+- **No `/inquiries` screens.** The worklist learned to render an inquiry entry —
+  a name, a number, an "inquiry" badge, and no client link, because there is no
+  record to open — but recording a call, converting one and the retention
+  setting are all Phase 4.
+- **No seeded quarter.** The ~40 inquiries the referral report is measured
+  against belong with the report (P1-1), not before it.
+- **No duplicate check.** "Have we met this person?" is P1-2, and the answer
+  lives behind a permission front desk does not have.
+
+
 ## Decisions log
 
 | Decision | Why |
@@ -1442,6 +1589,11 @@ access to anything else.
 | Denials logged outside the caller's transaction | A rolled-back request must still leave the attempt on the record |
 | List reads logged once, not once per row | Forty audit rows for one page view buries the individual record opens that matter |
 | The confirmation report reads under `attendance_history`, not `appointment` | A confirmation rate alone is operational, but a per-clinician silence breakdown carrying a fee total is not — the guard belongs on the strictest thing in the payload, never on the name of the feature |
+| `WaitlistEntry` holds a client XOR an inquiry, enforced by a `CHECK` | Two nullable FKs invite a row nobody can ring and a row offered the same hour twice; the invariant is a database rule for the same reason the append-only trigger is |
+| The one `ON DELETE CASCADE` in the schema points at the one deletable table | A waitlist entry for a person who no longer exists is not a thing — saying it in the FK is what keeps the purge ignorant of the table |
+| Conversion pre-generates the client id | `guardedAll` authorizes before it acts, so both audit rows must name a client that does not exist yet; creating first and authorizing after inverts the order the guard exists to enforce |
+| Conversion adds no matrix cell | It needs `create` on `client` and `update` on `inquiry`; only front desk holds both, so the answer was already in the table |
+| `Client.referralSource` duplicates the intake form's answer, unreconciled | They are the same fact at two sensitivity tiers; syncing them would show front desk a clinical submission, and an equality test against the template's options is what stops them drifting |
 | The confirmation rate divides by decided, not by booked | A `reminderPreference: 'none'` client would otherwise drag their clinician's number down for choosing a safety setting — the P0 category error, reappearing as a denominator |
 | A declined hour and a cancelled one are shown as separate kinds of opening | The declined one is still on the books; rendering both as "free" is how a client arrives to find their room taken |
 | The openings list never filters by how much notice an opening carries | The notice is shown and the list sorts by start; "too short to bother with" is a front-desk judgement, not a constant |

@@ -1,9 +1,11 @@
-import { guarded } from '../auth/guard';
+import { randomUUID } from 'node:crypto';
+import { guarded, guardedAll } from '../auth/guard';
 import type { Actor } from '../auth/permissions';
 import { DAY, systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
 import { Conflict, NotFound } from '../errors';
 import { SYSTEM_ACTOR } from '../scheduling/reminders';
+import type { ClientEdit } from './repository';
 
 /**
  * The inquiry lifecycle, in one place (hard rule 8).
@@ -148,6 +150,91 @@ export async function discardInquiry(
         data: { status: 'discarded', discardReason: reason, discardedAt: (opts.clock ?? systemClock).now() },
         select: SELECT,
       }),
+  );
+}
+
+/**
+ * Conversion (P0-8). The one explicit act that captures what a first phone
+ * call cannot: a date of birth, a treating clinician, and a code to file them
+ * under. Everything the caller already told us is carried across.
+ *
+ * One transaction, two authorizations. Only front desk holds both — clinicians
+ * and the practice manager have no `create` on `client` — so who may convert
+ * falls out of the existing matrix with no new cell to review.
+ *
+ * The inquiry row is kept, now pointing at the client. It is what makes "how
+ * long from call to first session" answerable, and it is why a converted
+ * inquiry is unpurgeable: it is part of a client's history.
+ *
+ * Sending the intake packet is the caller's next step, never a hidden side
+ * effect — `issueForm` refuses a template the client cannot read in their
+ * language, and that refusal has to surface to the person who clicked rather
+ * than get swallowed inside a conversion.
+ */
+export async function convertInquiry(
+  actor: Actor,
+  id: string,
+  data: { code: string; dateOfBirth: Date; treatingClinicianId: string } & ClientEdit,
+) {
+  const row = await prisma.inquiry.findUnique({
+    where: { id },
+    select: {
+      status: true, firstName: true, lastName: true, phone: true, email: true,
+      referralSource: true, referralNote: true,
+    },
+  });
+  if (!row) throw new NotFound('Inquiry');
+  assertTransition(row.status as InquiryStatus, 'converted');
+
+  // Decided here rather than by the column default, because both audit rows
+  // below name it and a row that does not exist yet cannot be named. This is
+  // the one place `clientId` on an inquiry-shaped audit row is not null: the
+  // column means *a client record*, and from this transaction on there is one.
+  const clientId = randomUUID();
+
+  return guardedAll(
+    [
+      { actor, action: 'create' as const, resource: 'client' as const, resourceId: clientId, clientId },
+      { actor, action: 'update' as const, resource: 'inquiry' as const, resourceId: id, clientId },
+    ],
+    async (tx) => {
+      const client = await tx.client.create({
+        data: {
+          id: clientId,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          phone: row.phone,
+          email: row.email,
+          // The same fact, copied to the tier the business report reads. Not
+          // synced with the intake form's answer, ever — that one is a
+          // submission front desk may not open (D-04).
+          referralSource: row.referralSource,
+          referralNote: row.referralNote,
+          ...data,
+        },
+        select: {
+          id: true, code: true, firstName: true, lastName: true, dateOfBirth: true,
+          phone: true, email: true, treatingClinicianId: true,
+          referralSource: true, referralNote: true,
+        },
+      });
+
+      await tx.inquiry.update({
+        where: { id },
+        data: { status: 'converted', clientId },
+        select: { id: true },
+      });
+
+      // Repointed, not recreated: what they wanted — an hour the practice does
+      // not have — did not change when they became a client. The XOR
+      // constraint is why both columns move in one write.
+      await tx.waitlistEntry.updateMany({
+        where: { inquiryId: id },
+        data: { clientId, inquiryId: null },
+      });
+
+      return client;
+    },
   );
 }
 

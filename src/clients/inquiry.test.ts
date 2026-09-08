@@ -2,11 +2,13 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { DAY, fixedClock } from '../clock';
 import { prisma } from '../db';
 import { Conflict, Forbidden } from '../errors';
+import { intakeForm } from '../forms/fixtures';
+import { ReferralSource as PrismaReferralSource } from '../generated/prisma/enums';
 import { actor, makeUser, resetDb, settings } from '../test/harness';
 import { callArgs, readSource, sourceFiles } from '../test/source';
 import {
-  assertTransition, canTransition, createInquiry, discardInquiry, listInquiries,
-  runInquiryPurge, TRANSITIONS, updateInquiry, type InquiryStatus,
+  assertTransition, canTransition, convertInquiry, createInquiry, discardInquiry, listInquiries,
+  runInquiryPurge, TRANSITIONS, updateInquiry, type InquiryStatus, type ReferralSource,
 } from './inquiry';
 
 const STATUSES: InquiryStatus[] = ['open', 'converted', 'discarded'];
@@ -238,6 +240,167 @@ describe('the purge', () => {
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.clientId === null)).toBe(true);
   });
+});
+
+describe('conversion', () => {
+  let admin: Awaited<ReturnType<typeof makeUser>>;
+
+  beforeEach(async () => {
+    await resetDb();
+    await settings();
+    desk = await makeUser('front_desk');
+    therapist = await makeUser('therapist');
+    admin = await makeUser('admin');
+  });
+
+  const convert = (
+    who: Awaited<ReturnType<typeof makeUser>>,
+    id: string,
+    over: Record<string, unknown> = {},
+  ) =>
+    convertInquiry(actor(who), id, {
+      code: 'TC-900', dateOfBirth: new Date('1988-03-02'),
+      treatingClinicianId: therapist.id, ...over,
+    });
+
+  it('captures the two facts a phone call cannot, and carries the rest across', async () => {
+    const inq = await anInquiry({ referralNote: 'Dr Okafor at the health centre' });
+    const client = await convert(desk, inq.id);
+
+    expect(client).toMatchObject({
+      code: 'TC-900',
+      firstName: 'A', lastName: 'Caller', phone: '(555) 010-0100',
+      treatingClinicianId: therapist.id,
+      // The same fact, now at the tier the business report reads (P0-9, D-04).
+      referralSource: 'gp', referralNote: 'Dr Okafor at the health centre',
+    });
+    expect(client.dateOfBirth).toEqual(new Date('1988-03-02'));
+  });
+
+  it('keeps the inquiry, pointing at the client it became', async () => {
+    const inq = await anInquiry();
+    const client = await convert(desk, inq.id);
+
+    const after = await prisma.inquiry.findUniqueOrThrow({ where: { id: inq.id } });
+    expect(after).toMatchObject({ status: 'converted', clientId: client.id, discardedAt: null });
+  });
+
+  it('is one transaction: a refusal leaves no half-made client', async () => {
+    const inq = await anInquiry();
+    // Neither a clinician nor the practice manager has `create` on `client`, so
+    // who may convert falls out of the existing matrix with no new cell.
+    for (const who of [therapist, admin]) {
+      await expect(convert(who, inq.id)).rejects.toThrow(Forbidden);
+    }
+    expect(await prisma.client.count()).toBe(0);
+    expect((await prisma.inquiry.findUniqueOrThrow({ where: { id: inq.id } })).status).toBe('open');
+  });
+
+  it('refuses a second ending, through the same state machine', async () => {
+    const inq = await anInquiry();
+    await convert(desk, inq.id);
+    await expect(convert(desk, inq.id, { code: 'TC-901' })).rejects.toThrow(Conflict);
+    await expect(discardInquiry(actor(desk), inq.id, 'duplicate')).rejects.toThrow(Conflict);
+  });
+
+  it('writes audit rows carrying the client id — the one inquiry row that does', async () => {
+    const inq = await anInquiry();
+    const client = await convert(desk, inq.id);
+
+    const rows = await prisma.auditEvent.findMany({
+      where: { OR: [{ resource: 'inquiry', action: 'update' }, { resource: 'client', action: 'create' }] },
+      select: { resource: true, action: true, resourceId: true, clientId: true },
+    });
+    expect(rows).toHaveLength(2);
+    // `clientId: null` is the rule for a row *about an inquiry*. From this
+    // transaction on there is a client record, and the column means what it says.
+    expect(rows.every((r) => r.clientId === client.id)).toBe(true);
+    expect(rows.map((r) => r.resourceId).sort()).toEqual([client.id, inq.id].sort());
+  });
+
+  it('repoints a waitlist entry rather than making a second one', async () => {
+    const inq = await anInquiry();
+    const entry = await prisma.waitlistEntry.create({
+      data: { inquiryId: inq.id, weekdays: [2], note: 'Tuesday evenings' },
+    });
+    const client = await convert(desk, inq.id);
+
+    const after = await prisma.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } });
+    // What they wanted did not change when they became a client.
+    expect(after).toMatchObject({ clientId: client.id, inquiryId: null, weekdays: [2] });
+    expect(await prisma.waitlistEntry.count()).toBe(1);
+  });
+
+  it('sends nothing — the intake packet is the caller\'s next step, not a side effect', async () => {
+    const inq = await anInquiry();
+    await convert(desk, inq.id);
+    expect(await prisma.outboxMessage.count()).toBe(0);
+    expect(await prisma.formRequest.count()).toBe(0);
+  });
+});
+
+describe('the waitlist accepts an inquiry (P0-7)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await settings();
+    desk = await makeUser('front_desk');
+    therapist = await makeUser('therapist');
+  });
+
+  it('refuses an entry that names both, and one that names neither', async () => {
+    const inq = await anInquiry();
+    const client = await prisma.client.create({
+      data: {
+        code: 'TC-500', firstName: 'A', lastName: 'Client',
+        dateOfBirth: new Date('1990-01-01'), treatingClinicianId: therapist.id,
+      },
+    });
+
+    await expect(
+      prisma.waitlistEntry.create({ data: { clientId: client.id, inquiryId: inq.id } }),
+    ).rejects.toThrow(/waitlist_entry_client_xor_inquiry/);
+    await expect(
+      prisma.waitlistEntry.create({ data: { weekdays: [2] } }),
+    ).rejects.toThrow(/waitlist_entry_client_xor_inquiry/);
+  });
+
+  /**
+   * The schema's only cascade, and the reason the purge does not have to know
+   * this table exists. A waitlist entry for a person who no longer exists is
+   * not a thing.
+   */
+  it('takes the entry with the inquiry when the purge destroys it', async () => {
+    const inq = await anInquiry();
+    await prisma.waitlistEntry.create({ data: { inquiryId: inq.id, weekdays: [2] } });
+    await discardInquiry(actor(desk), inq.id, 'no_capacity', { clock: fixedClock(T0) });
+
+    await runInquiryPurge(fixedClock(new Date(new Date(T0).getTime() + 91 * DAY)));
+    expect(await prisma.waitlistEntry.count()).toBe(0);
+  });
+
+  it('holds the entry while the inquiry is still open — the cascade is not a delete path', async () => {
+    const inq = await anInquiry();
+    await prisma.waitlistEntry.create({ data: { inquiryId: inq.id } });
+    await expect(rawDelete(inq.id)).rejects.toThrow(/only be deleted once discarded/);
+    expect(await prisma.waitlistEntry.count()).toBe(1);
+  });
+});
+
+/**
+ * P0-9. Options in a form template are data and change without a deploy; this
+ * enum is schema and does not. Without this test they drift, and the drift is
+ * invisible until a report has a category the form cannot produce.
+ */
+it('has a ReferralSource enum equal to the intake form\'s referral options', () => {
+  const referral = intakeForm.schema.fields.find((f) => f.key === 'referral');
+  expect(referral?.options).toBeDefined();
+  expect(Object.values(PrismaReferralSource)).toEqual(referral!.options!.map((o) => o.value));
+
+  // And the hand-written union in `inquiry.ts` says the same thing. This line
+  // is the assertion: it stops compiling the day the enum gains a value the
+  // union does not have.
+  const both: ReferralSource[] = Object.values(PrismaReferralSource);
+  expect(both).toHaveLength(4);
 });
 
 /**

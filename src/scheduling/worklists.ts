@@ -160,7 +160,10 @@ export async function continuityQueue(
   );
 }
 
-/** The entry shape both waitlist surfaces read. */
+/**
+ * The entry shape both waitlist surfaces read. Exactly one of the two branches
+ * is present on any row — the database enforces that, not this select.
+ */
 const ENTRY_SELECT = {
   id: true, weekdays: true, earliestMinute: true, latestMinute: true, note: true, createdAt: true,
   client: {
@@ -169,6 +172,15 @@ const ENTRY_SELECT = {
       treatingClinician: { select: { id: true, name: true } },
     },
   },
+  /**
+   * A caller who is not yet anybody (P0-7). No code and no treating clinician,
+   * because there is neither — front desk is ringing a stranger, and a screen
+   * that renders blanks where those go is a screen that hides which call this
+   * is. The number comes with the row for the same reason `unconfirmedSoon`
+   * carries one: a work list you have to click through twice is a work list
+   * nobody works.
+   */
+  inquiry: { select: { id: true, firstName: true, lastName: true, phone: true } },
 } as const;
 
 /** Does this entry's stated preference cover that hour? Pure, so both callers agree. */
@@ -278,8 +290,10 @@ export async function waitlistOpenings(
           freed: o.status !== 'scheduled',
           noticeHours: Math.floor((o.startAt.getTime() - now.getTime()) / HOUR),
           matches: entries.filter(
-            // Never offer a client the hour they just gave back.
-            (e) => e.client.id !== o.clientId && fits(e, when.weekday, when.minutes),
+            // Never offer a client the hour they just gave back. An inquiry
+            // entry is skipped by the same comparison rather than exempted
+            // from it: by construction it gave nothing back.
+            (e) => e.client?.id !== o.clientId && fits(e, when.weekday, when.minutes),
           ),
         };
       });

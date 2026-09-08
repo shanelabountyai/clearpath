@@ -109,6 +109,15 @@ model Client {
   language           Language           @default(en)
   status             ClientStatus       @default(active)
 
+  /// How they found the practice — the business-tier half of a fact the intake
+  /// form also asks (P0-9, D-04). The form's answer is a `FormSubmission`
+  /// guarded at `treatingOrSupervising`; this one is demographics, which is
+  /// what lets the practice manager run the referral report without reading a
+  /// clinical answer. The two are never reconciled. Null is honest: it means
+  /// nobody recorded it, not "other".
+  referralSource     ReferralSource?
+  referralNote       String?
+
   appointments  Appointment[]
   series        AppointmentSeries[]
   progressNotes ProgressNote[]
@@ -123,6 +132,8 @@ model Client {
   portalLinks        PortalLink[]
   rescheduleRequests RescheduleRequest[]
   inboundReplies     InboundReply[]
+  /// The call this client started as, where there was one.
+  inquiry            Inquiry?
 
   @@index([treatingClinicianId])
 }
@@ -676,9 +687,24 @@ model OutboxMessage {
 // ──────────────────────────────── waitlist ────────────────────────────────
 
 model WaitlistEntry {
-  id             String  @id @default(cuid())
-  clientId       String
-  client         Client  @relation(fields: [clientId], references: [id])
+  id String @id @default(cuid())
+
+  /// Exactly one of these, enforced by a CHECK constraint rather than by
+  /// whoever writes the next insert. This is the one place the inquiry stage
+  /// earns a nullable FK, and it earns it because "wants a slot we do not
+  /// have" is the reason most inquiries stay inquiries (P0-7).
+  clientId  String?
+  /// `Restrict`, spelled out: an optional relation defaults to `SetNull`, and
+  /// silently nulling this column would leave a row that satisfies neither
+  /// half of the check below. Nothing deletes a client anyway.
+  client    Client?  @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  /// The schema's only cascade, next to the schema's only DELETE path. A
+  /// waitlist entry for a person who no longer exists is not a thing, and
+  /// making the database say so is what keeps the purge from needing to know
+  /// about this table at all.
+  inquiryId String?
+  inquiry   Inquiry? @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+
   /// Preferred weekdays (0 = Sunday) and window, both optional.
   weekdays       Int[]   @default([])
   earliestMinute Int?
@@ -687,6 +713,8 @@ model WaitlistEntry {
   active         Boolean @default(true)
 
   createdAt DateTime @default(now())
+
+  @@index([inquiryId])
 }
 
 // ───────────────────────────── audit trail ─────────────────────────────
@@ -894,6 +922,14 @@ model Inquiry {
 
   takenById String
   takenBy   User   @relation("inquiryTakenBy", fields: [takenById], references: [id])
+
+  /// Set at conversion, and deliberately absent until then (P0-8). The row is
+  /// retained afterwards — it is what makes "how long from call to first
+  /// session" answerable — and the trigger already refuses to destroy it.
+  clientId String? @unique
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: Restrict)
+
+  waitlist WaitlistEntry[]
 
   createdAt DateTime @default(now())
 

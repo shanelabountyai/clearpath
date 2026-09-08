@@ -194,7 +194,7 @@ describe('the waitlist', () => {
     });
 
     const matches = await waitlistMatches(actor(desk), { date: '2026-09-01', startMinute: 900 });
-    expect(matches.map((m) => m.client.code).sort()).toEqual(['TC-ANY', 'TC-WANTS']);
+    expect(matches.map((m) => m.client!.code).sort()).toEqual(['TC-ANY', 'TC-WANTS']);
     expect(await prisma.appointment.count()).toBe(0);
   });
 
@@ -238,8 +238,46 @@ describe('the waitlist', () => {
     // seven hours, which is the `d5` reminder still ahead of it.
     expect(stillBooked!.noticeHours).toBe(5 * 24 + 7);
     // The Tuesday entries, minus the client whose hour it is.
-    expect(stillBooked!.matches.map((m) => m.client.code)).toEqual(['TC-WANTS']);
-    expect(free!.matches.map((m) => m.client.code)).toEqual(['TC-WANTS', 'TC-SAIDNO']);
+    expect(stillBooked!.matches.map((m) => m.client!.code)).toEqual(['TC-WANTS']);
+    expect(free!.matches.map((m) => m.client!.code)).toEqual(['TC-WANTS', 'TC-SAIDNO']);
+  });
+
+  /**
+   * P0-7. The list is a list of phone calls, and one of them is to a stranger.
+   */
+  it('matches a caller who is not yet anybody, and carries no code or clinician for them', async () => {
+    const wants = await makeClient(therapist.id, { code: 'TC-WANTS' });
+    const caller = await prisma.inquiry.create({
+      data: {
+        firstName: 'A', lastName: 'Caller', phone: '555-0180',
+        referralSource: 'search', takenById: desk.id,
+      },
+    });
+    await prisma.waitlistEntry.createMany({
+      data: [{ clientId: wants.id, weekdays: [2] }, { inquiryId: caller.id, weekdays: [2] }],
+    });
+
+    const matches = await waitlistMatches(actor(desk), { date: '2026-09-01', startMinute: 900 });
+    expect(matches).toHaveLength(2);
+    const entry = matches.find((m) => m.inquiry)!;
+    expect(entry.client).toBeNull();
+    expect(entry.inquiry).toMatchObject({ firstName: 'A', lastName: 'Caller', phone: '555-0180' });
+    expect(entry.inquiry).not.toHaveProperty('code');
+  });
+
+  it('offers a freed hour to an inquiry, which by construction gave nothing back', async () => {
+    const clock = fixedClock('2026-08-27T12:00:00Z');
+    const gaveItBack = await makeClient(therapist.id, { code: 'TC-CANCELLED' });
+    const cancelled = await book(gaveItBack.id, 600);
+    await cancelAppointment(actor(desk), cancelled.id, { clock });
+
+    const caller = await prisma.inquiry.create({
+      data: { firstName: 'A', lastName: 'Caller', referralSource: 'friend', takenById: desk.id },
+    });
+    await prisma.waitlistEntry.create({ data: { inquiryId: caller.id, weekdays: [2] } });
+
+    const [opening] = await waitlistOpenings(actor(desk), { clock });
+    expect(opening!.matches.map((m) => m.inquiry?.lastName)).toEqual(['Caller']);
   });
 
   it('offers nothing from an hour still standing and answered', async () => {

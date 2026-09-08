@@ -119,6 +119,10 @@ async function main() {
     'Gallagher', 'Halvorsen', 'Ibarra', 'Jorgensen', 'Kowalczyk', 'Lindqvist', 'Mbeki',
     'Nakamura', 'Okafor', 'Pemberton', 'Quesada', 'Rasmussen', 'Sandoval', 'Thibodeaux'];
 
+  const REFERRAL_MIX = [
+    'gp', 'gp', 'gp', 'friend', 'friend', 'friend', 'search', 'search', 'search', 'other',
+  ] as const;
+
   let clientNo = 0;
   const clients: { id: string; code: string; clinicianId: string }[] = [];
   const seriesIds: string[] = [];
@@ -166,6 +170,12 @@ async function main() {
             // decision made after it — the whole fixture set moves, and what
             // fails is an unrelated spec three files away.
             language: clientNo % 8 === 3 ? 'es' : 'en',
+            // Counted, not drawn, for the reason above: this loop's PRNG
+            // sequence is load-bearing. The mix is roughly 30/30/30/10 so the
+            // referral report has a shape rather than four equal bars, and the
+            // ninety-seven who were here before this column existed are not a
+            // hole in the practice's own history (P0-9).
+            referralSource: REFERRAL_MIX[clientNo % REFERRAL_MIX.length]!,
           },
         });
         clients.push({ id: client.id, code, clinicianId: clinician.id });

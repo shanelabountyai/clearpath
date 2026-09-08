@@ -321,14 +321,25 @@ async function WorkListsPage() {
                       <ul className="mt-2 divide-y" style={{ borderColor: 'var(--border)' }}>
                         {o.matches.map((w) => (
                           <li key={w.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-body">
-                            <Link href={`/clients/${w.client.id}`} className="font-medium text-accent hover:underline">
-                              {w.client.lastName}, {w.client.firstName}
-                            </Link>
+                            {w.client ? (
+                              <Link href={`/clients/${w.client.id}`} className="font-medium text-accent hover:underline">
+                                {w.client.lastName}, {w.client.firstName}
+                              </Link>
+                            ) : w.inquiry ? (
+                              // Not a link: there is no record to open, which is
+                              // the whole point of the stage. A name and a number
+                              // is what front desk needs to ring a stranger.
+                              <span className="flex items-center gap-2 font-medium">
+                                {w.inquiry.lastName}, {w.inquiry.firstName}
+                                <Badge tone="neutral">inquiry</Badge>
+                              </span>
+                            ) : null}
                             <span className="flex items-center gap-2 text-muted">
                               {w.weekdays.length ? w.weekdays.map((d) => WEEKDAYS[d]).join(', ') : 'any day'}
                               {w.earliestMinute !== null ? ` · from ${minutesToHHMM(w.earliestMinute)}` : ''}
-                              {' · '}{w.client.treatingClinician.name}
-                              {w.client.reminderPreference === 'none' && <Badge tone="warning">call only</Badge>}
+                              {w.client && <>{' · '}{w.client.treatingClinician.name}</>}
+                              {w.inquiry?.phone && <span className="font-mono">{w.inquiry.phone}</span>}
+                              {w.client?.reminderPreference === 'none' && <Badge tone="warning">call only</Badge>}
                             </span>
                           </li>
                         ))}

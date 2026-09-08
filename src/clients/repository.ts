@@ -39,6 +39,7 @@ const DEMOGRAPHICS = {
   emergencyContactName: true, emergencyContactPhone: true, emergencyContactRelation: true,
   treatingClinicianId: true, feeCents: true, reminderPreference: true, reminderStages: true,
   language: true, status: true,
+  referralSource: true, referralNote: true,
   createdAt: true,
 } as const;
 
@@ -119,7 +120,7 @@ export async function listClients(actor: Actor, opts: { search?: string } = {}) 
   );
 }
 
-type ClientEdit = Partial<{
+export type ClientEdit = Partial<{
   firstName: string; lastName: string; email: string | null; phone: string | null;
   emergencyContactName: string | null; emergencyContactPhone: string | null;
   emergencyContactRelation: string | null;
@@ -130,6 +131,9 @@ type ClientEdit = Partial<{
   language: 'en' | 'es';
   status: 'active' | 'inactive';
   treatingClinicianId: string;
+  /// How they found us. Demographics, not a clinical answer — see D-04.
+  referralSource: 'gp' | 'friend' | 'search' | 'other' | null;
+  referralNote: string | null;
 }>;
 
 export async function updateClient(actor: Actor, clientId: string, data: ClientEdit) {
