@@ -27,6 +27,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     appointment: 'read create update',
     form_request: 'read create',
     portal_link: 'read create',
+    inquiry: 'read create update discard',
   }),
   therapist: spec({
     client: 'read update',
@@ -40,6 +41,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     form_submission: 'read',
     alert: 'read update',
     portal_link: 'read create',
+    inquiry: 'read create',
   }),
   associate: spec({
     client: 'read update',
@@ -53,6 +55,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     form_submission: 'read',
     alert: 'read update',
     portal_link: 'read create',
+    inquiry: 'read create',
   }),
   supervisor: spec({
     client: 'read update',
@@ -66,6 +69,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     form_submission: 'read',
     alert: 'read update',
     portal_link: 'read create',
+    inquiry: 'read create',
   }),
   admin: spec({
     client: 'read update', // break-glass only
@@ -77,6 +81,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     form_request: 'read',
     portal_link: 'read create',
     user: 'read create update',
+    inquiry: 'read create update discard',
   }),
   auditor: spec({ audit_log: 'read' }),
   // The tokenized door, and nothing else in the matrix. `update` is confirm and
@@ -92,16 +97,19 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
     appointment: 'read create update',
     form_template: 'read',
     form_request: 'read create',
+    inquiry: 'read create',
   }),
   associate: spec({
     appointment: 'read create update',
     form_template: 'read',
     form_request: 'read create',
+    inquiry: 'read create',
   }),
   supervisor: spec({
     appointment: 'read create update',
     form_template: 'read',
     form_request: 'read create',
+    inquiry: 'read create',
   }),
   admin: spec({
     fee: 'read update waive',
@@ -111,6 +119,7 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
     form_request: 'read',
     portal_link: 'read create',
     user: 'read create update',
+    inquiry: 'read create update discard',
   }),
   auditor: ALLOWED.auditor,
   // Never unconditional: without a row that is theirs, a token decides `never`.
@@ -415,6 +424,47 @@ describe('the second-factor seam', () => {
   it('decides it from the role alone, so an identity provider reads it rather than restating it', () => {
     for (const role of ROLES) {
       expect(typeof requiresSecondFactor(role)).toBe('boolean');
+    }
+  });
+});
+
+describe('the inquiry stage', () => {
+  it('lets front desk and the practice manager declare a call dead', () => {
+    for (const role of ['front_desk', 'admin'] as Role[]) {
+      expect(can({ id: ME, role }, 'discard', 'inquiry').allowed, role).toBe(true);
+    }
+  });
+
+  it('denies discard to everybody else, relationship or not', () => {
+    for (const role of ['therapist', 'associate', 'supervisor', 'auditor', 'client'] as Role[]) {
+      const [actor, target] = insider(role);
+      expect(can(actor, 'discard', 'inquiry', target).allowed, role).toBe(false);
+    }
+  });
+
+  it('lets a clinician write down a call they took themselves', () => {
+    const [actor, target] = stranger('therapist');
+    expect(can(actor, 'read', 'inquiry', target).allowed).toBe(true);
+    expect(can(actor, 'create', 'inquiry', target).allowed).toBe(true);
+    // Editing somebody else's record of a call is front desk's job, not theirs.
+    expect(can(actor, 'update', 'inquiry', target).allowed).toBe(false);
+  });
+
+  it('offers break-glass nothing, because there is nothing clinical to reach', () => {
+    // Every admin cell here is `always`, so break-glass must not be what decides
+    // any of them — otherwise the row would imply an inquiry holds clinical data.
+    for (const action of ACTIONS) {
+      const d = can({ id: ME, role: 'admin' }, action, 'inquiry');
+      expect(d.rule, action).not.toBe('breakGlass');
+    }
+  });
+
+  it('is the only resource `discard` reaches', () => {
+    for (const role of ROLES) {
+      const [actor, target] = insider(role);
+      for (const resource of RESOURCES.filter((r) => r !== 'inquiry')) {
+        expect(can(actor, 'discard', resource, target).allowed, `${role}/${resource}`).toBe(false);
+      }
     }
   });
 });

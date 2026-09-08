@@ -28,15 +28,20 @@ export type Resource =
   | 'alert' // private risk notifications, addressed to one clinician
   | 'portal_link' // a client's own tokenized door into their schedule
   | 'audit_log'
-  | 'user'; // accounts, roles, supervision relationships
+  | 'user' // accounts, roles, supervision relationships
+  | 'inquiry'; // a caller, before there is a client record to put them in
 
 /**
  * `waive` is its own action rather than an `update` on `fee`, because reversing
  * money the practice already decided to charge is a different power from
  * setting a sliding-scale rate — and the whole argument of this file is that a
  * power nobody named is a power nobody reviewed.
+ *
+ * `discard` follows it, and is deliberately not `delete`. It applies to exactly
+ * one resource and reads wrong anywhere else — whereas a generic `delete` is a
+ * verb a later reviewer would reach for on a table that must never lose a row.
  */
-export type Action = 'read' | 'create' | 'update' | 'sign' | 'cosign' | 'waive';
+export type Action = 'read' | 'create' | 'update' | 'sign' | 'cosign' | 'waive' | 'discard';
 
 export const ROLES: readonly Role[] = [
   'front_desk', 'therapist', 'associate', 'supervisor', 'admin', 'auditor', 'client',
@@ -44,9 +49,11 @@ export const ROLES: readonly Role[] = [
 export const RESOURCES: readonly Resource[] = [
   'client', 'fee', 'appointment', 'attendance_history', 'progress_note',
   'process_note', 'form_template', 'form_request', 'form_submission',
-  'alert', 'portal_link', 'audit_log', 'user',
+  'alert', 'portal_link', 'audit_log', 'user', 'inquiry',
 ];
-export const ACTIONS: readonly Action[] = ['read', 'create', 'update', 'sign', 'cosign', 'waive'];
+export const ACTIONS: readonly Action[] = [
+  'read', 'create', 'update', 'sign', 'cosign', 'waive', 'discard',
+];
 
 export interface Actor {
   id: string;
@@ -157,6 +164,10 @@ const CLINICIAN: RoleMatrix = {
   // for a client they treat. It grants nothing the client does not already
   // know: when they are coming in, and with whom.
   portal_link: { read: 'treatingOrSupervising', create: 'treating' },
+  // A clinician who takes their own call should be able to write it down, and
+  // an inquiry asking for them by name is a capacity question they answer. No
+  // `discard`: recording a call is clerical, declaring one dead is operations.
+  inquiry: { read: 'always', create: 'always' },
 };
 
 /**
@@ -170,6 +181,9 @@ const MATRIX: Record<Role, RoleMatrix> = {
     appointment: { read: 'always', create: 'always', update: 'always' },
     form_request: { read: 'always', create: 'always' },
     portal_link: { read: 'always', create: 'always' },
+    // Owns the phone, so owns the caller who is not yet anybody — including
+    // declaring one dead. There is no clinical content here to withhold.
+    inquiry: { read: 'always', create: 'always', update: 'always', discard: 'always' },
   },
 
   therapist: CLINICIAN,
@@ -197,6 +211,9 @@ const MATRIX: Record<Role, RoleMatrix> = {
     form_request: { read: 'always' },
     portal_link: { read: 'always', create: 'always' },
     user: { read: 'always', create: 'always', update: 'always' },
+    // Unconditional, and no break-glass entry anywhere in this row: an inquiry
+    // holds no clinical content, so there is nothing here to break glass for.
+    inquiry: { read: 'always', create: 'always', update: 'always', discard: 'always' },
   },
 
   auditor: {

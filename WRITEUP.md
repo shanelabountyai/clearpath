@@ -25,6 +25,8 @@ Kept as the work happens, not reconstructed afterwards.
    the loop creates, and an inbound channel designed around forgetting.
 12. **The second language** — a control that reports success while doing
    nothing, and the door behind the message it was sent in.
+13. **The inquiry stage** — a verb narrow enough to be safe, in a codebase
+   where nothing had ever been deletable.
 
 ---
 
@@ -1219,6 +1221,87 @@ to learn what language to apologise in.
   Localizing the *format* is a separate decision from localizing the words.
 
 
+## 18. Naming the power before building it
+
+*Phase 1 of `prd-intake-inquiry.md`. Pure logic only: the permission cells and
+the state machine. The table, the trigger and the purge are Phase 2.*
+
+Clearpath had no shape for a person who rang once. `Client.dateOfBirth`,
+`Client.treatingClinicianId` and `Client.code` are all required, so the first
+row the practice can create about a caller already asserts three things nobody
+knows on a first phone call. And roughly half of inquiries go nowhere — which,
+in a system where audit rows are append-only by trigger and notes are frozen by
+trigger, turns every unanswered voicemail into a permanent record of somebody
+who never consented to being a client.
+
+So this feature needs something nothing else in the codebase has: a delete.
+
+### The verb comes before the mechanism
+
+The instinct was to build the table first and decide the permission afterwards.
+Doing it the other way round is what the TDD ordering in `CLAUDE.md` is for, and
+here it changed the design rather than just the sequence.
+
+`Action` gains `discard`, not `delete`. `permissions.ts` already makes this
+argument once — `waive` is its own action rather than an `update` on `fee`,
+because *a power nobody named is a power nobody reviewed*. `delete` would have
+been the generic version of that mistake: a verb sitting in `ACTIONS` that a
+later reviewer, adding a resource, would reach for on a table that must never
+lose a row. `discard` applies to exactly one resource and reads wrong anywhere
+else, which is a design constraint the type system enforces for free.
+
+`Resource` gains `inquiry`. Twenty-eight new cells across seven roles, and the
+interesting ones are the denials:
+
+- **Clinicians read and create, and do not discard.** A therapist who takes
+  their own call should be able to write it down, and an inquiry naming a
+  requested clinician is a capacity question that clinician answers. But
+  recording a call is clerical; declaring one dead is an operations decision,
+  and it is the one that destroys a row ninety days later.
+- **Break-glass does not appear in the row at all.** Every admin cell is
+  `always`. That is not laziness — a `breakGlass` rule anywhere in this row
+  would imply an inquiry holds something clinical worth breaking glass *for*,
+  and the whole reason this row is deletable is that it does not. A test asserts
+  no admin `inquiry` cell resolves to `breakGlass`, so the absence is a
+  statement rather than an omission.
+- **Auditor and client get nothing**, which the matrix's existing sweeps already
+  enforce: the auditor test walks every resource but `audit_log`, and the client
+  test walks every cell but its one.
+
+The coverage assertion is what makes this hold. `permissions.test.ts` probes
+every role × resource × action against a policy written from the PRD rather than
+read back off the matrix, three times each — as an insider holding every
+relationship, as a supervisor, and as a stranger. Adding one action and one
+resource took the suite from 1616 tests to 1907 without a line of new
+scaffolding, because the denials were never optional.
+
+### Two endings, both terminal
+
+`src/clients/inquiry.ts` is `open → converted | discarded`, in the shape of
+`scheduling/lifecycle.ts` per hard rule 8. Nothing returns to `open`, and the
+two endings do not connect.
+
+They are terminal for different reasons, which is worth saying out loud. A
+converted inquiry has produced a `Client` with its own history hanging off it.
+A discarded one is counting down a retention window towards being destroyed —
+so `discarded → converted` is not merely a wrong status, it is a row the purge
+sweep is still aiming at while the practice believes it has a client. An illegal
+move raises `Conflict`, never a silent no-op, for exactly that reason.
+
+### What this phase deliberately does not do
+
+- **No table.** The schema is untouched. `AuditEvent.action` and `.resource` are
+  already `String` columns, so `discard` and `inquiry` needed no migration —
+  which is the first hint that the audit trail was built to outlive the rows it
+  describes.
+- **No discard reason codes yet.** They land with the write path in Phase 2,
+  where there is something to write them onto.
+- **The trigger is not asserted here, because it cannot be.** The database rule
+  refusing a `DELETE` of a non-`discarded` inquiry is the actual safety property,
+  and a mocked test of it proves nothing. It is asserted against a real
+  connection in Phase 2 or it is not asserted.
+
+
 ## Decisions log
 
 | Decision | Why |
@@ -1237,6 +1320,10 @@ to learn what language to apologise in.
 | `declineReason` is nullable and usually null | The portal asks without requiring an answer and a keyword decline cannot carry one; a default value would turn every texted "no" into a preference the client never stated |
 | The decline reason reuses `RescheduleReason` rather than a new enum | A decline and a reschedule request ask the same four sentences; two lists would drift, and the PRD named reuse explicitly |
 | Form question text is a language pair enforced at send time, not by the type | `CLIENT_TEMPLATES` is code, so the compiler makes a missing translation a build failure. A `FormTemplate` is data — the point is revising one without a deploy — so nothing stops an English-only question being published. `missingLanguages` runs where the form is *sent*, which is a practice manager holding a list of field keys rather than a client staring at blanks |
+| `discard` as its own action, not `delete` | One resource, one verb; a generic `delete` in `ACTIONS` is a verb a later reviewer reaches for on a table that must never lose a row |
+| Clinicians create inquiries but cannot discard them | Writing down a call you took is clerical; declaring one dead is the decision that destroys a row ninety days later |
+| No break-glass cell anywhere in the admin `inquiry` row | A break-glass rule would imply there is something clinical here to reach — and the absence of clinical content is what makes the row deletable at all |
+| Both inquiry endings terminal, including `discarded` | `discarded → converted` is not a wrong status, it is a row the purge is still aiming at while the practice believes it has a client |
 | An untranslated question is left empty, never filled from the English | A fallback produces a template that passes every gate, sends without complaint, and shows English to somebody who cannot read it — the exact failure the deny-list pairing exists to prevent, one layer up |
 | Localized labels live inside one template version, not in a second template per language | A per-language template forks a client's score history across two keys the moment they switch, duplicates the scoring rules by hand, and hands a Spanish submission to a clinician who does not read Spanish. One version works because a submission stores *values*: `3` renders as "Nearly every day" to staff and "Casi todos los días" to the client, off the same row |
 | A data migration rewrites old template versions rather than reseeding | A submission renders against the version it was answered on, so publishing new versions would have blanked the labels on every historical submission — the failure versioning exists to prevent. The Spanish half is written empty, so old rows are honestly unsendable to a Spanish client instead of silently wrong |
