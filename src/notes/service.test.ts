@@ -1,6 +1,6 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../db';
+import { callArgs, readSource, sourceFiles } from '../test/source';
 import { Conflict, Forbidden } from '../errors';
 import { fixedClock, DAY } from '../clock';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
@@ -312,36 +312,10 @@ describe('progress note reads', () => {
  * on the shape of the call — `authorId` must appear inside the query itself,
  * which is the difference between filtering in SQL and filtering in JS.
  */
-function sourceFiles() {
-  const out: string[] = [];
-  for (const dir of ['src', 'app']) {
-    for (const f of readdirSync(dir, { recursive: true, encoding: 'utf8' })) {
-      const path = `${dir}/${f}`;
-      if (!/\.tsx?$/.test(f) || f.endsWith('.test.ts')) continue;
-      if (path.startsWith('src/generated/')) continue;
-      if (!statSync(path).isFile()) continue;
-      out.push(path);
-    }
-  }
-  return out;
-}
-
-/** The argument text of the call starting at `from`, parens balanced. */
-function callArgs(src: string, from: number): string {
-  const open = src.indexOf('(', from);
-  if (open === -1) return '';
-  let depth = 0;
-  for (let i = open; i < src.length; i++) {
-    if (src[i] === '(') depth++;
-    else if (src[i] === ')' && --depth === 0) return src.slice(open, i + 1);
-  }
-  return src.slice(open);
-}
-
 function unauthoredProcessNoteQueries(): string[] {
   const offenders: string[] = [];
   for (const path of sourceFiles()) {
-    const src = readFileSync(path, 'utf8');
+    const src = readSource(path);
     for (const m of src.matchAll(/\bprocessNote\.\w+/g)) {
       const args = callArgs(src, (m.index ?? 0) + m[0].length);
       if (!args.includes('authorId')) offenders.push(`${path}: ${m[0]}`);

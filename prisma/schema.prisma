@@ -51,6 +51,8 @@ model User {
   createdAt                 DateTime            @default(now())
   rescheduleRequestsHandled RescheduleRequest[]
   inboundRepliesHandled     InboundReply[]
+  inquiriesTaken            Inquiry[]           @relation("inquiryTakenBy")
+  inquiriesRequested        Inquiry[]           @relation("inquiryRequested")
 }
 
 enum ReminderPreference {
@@ -162,6 +164,11 @@ model PracticeSettings {
   /// A weekly client otherwise receives three messages a week, indefinitely,
   /// and the failure mode is not cost — it is the reminder stopping being read.
   confirmationStreakCap  Int     @default(4)
+  /// How long a discarded inquiry survives before the purge destroys it. The
+  /// window is application policy and lives here; the invariant that only a
+  /// discarded row may be destroyed at all is a database trigger. 90 days is a
+  /// legal question with a placeholder answer.
+  inquiryRetentionDays   Int     @default(90)
 }
 
 model Room {
@@ -807,4 +814,89 @@ model InboundReply {
 
   @@index([classification, handledAt])
   @@index([clientId])
+}
+
+// ──────────────────────────────── intake ────────────────────────────────
+
+/// How somebody found the practice, at the front-desk tier.
+///
+/// The values are exactly the `referral` options in `intakeForm`, and a test
+/// asserts it. The same fact exists twice on purpose (D-04): the form answer is
+/// a `FormSubmission` a practice manager may not read, and this one is a
+/// category the referral report is built on.
+enum ReferralSource {
+  gp
+  friend
+  search
+  other
+}
+
+/// Why an inquiry ended without a client, as a code (P0-3).
+///
+/// Free text here would be the one field on this table that reaches the audit
+/// log, read by the one role that may not open a record — the same argument
+/// `FeeWaiveReason` makes about a money reversal.
+enum InquiryDiscardReason {
+  no_answer
+  not_a_fit
+  referred_out
+  no_capacity
+  chose_elsewhere
+  duplicate
+  spam
+}
+
+/// Both endings are terminal. See `src/clients/inquiry.ts`.
+enum InquiryStatus {
+  open
+  converted
+  discarded
+}
+
+/// Somebody rang. That is all this is, and it is the only table in the schema
+/// a row can ever leave (P0-1, D-01).
+///
+/// Deliberately not a `Client` with nulls: `Client` is the foreign-key root of
+/// every clinical table here, and pointing a `DELETE` at it would put the whole
+/// record within reach of a retention sweep. A separate model keeps deletion
+/// aimed at a table that by construction holds no clinical content, and lets
+/// `inquiry_delete_only_discarded` say so in the database.
+///
+/// **No `dateOfBirth`, no `code`, no `treatingClinicianId`** — those three are
+/// what conversion is for. **No relation to `ProgressNote`, `ProcessNote`,
+/// `FormRequest`, `FormSubmission`, `Alert`, `Appointment`, `PortalLink` or
+/// `OutboxMessage`**, and nothing is ever sent to an inquiry (D-05). Both are
+/// enforced by there being no column, and asserted by `inquiry.test.ts`.
+model Inquiry {
+  id String @id @default(cuid())
+
+  firstName String
+  lastName  String
+  phone     String?
+  email     String?
+
+  /// Who they asked for, where they asked for anybody. Not a treating
+  /// relationship: nobody is treating a caller.
+  requestedClinicianId String?
+  requestedClinician   User?   @relation("inquiryRequested", fields: [requestedClinicianId], references: [id])
+
+  referralSource ReferralSource
+  referralNote   String?
+  /// Operational free text at the front-desk tier — the same tier as
+  /// `WaitlistEntry.note`, and the honest weak point of this design. The purge
+  /// is what bounds how long whatever ends up here survives.
+  note           String?
+
+  status        InquiryStatus         @default(open)
+  discardReason InquiryDiscardReason?
+  /// What the retention window counts from.
+  discardedAt   DateTime?
+
+  takenById String
+  takenBy   User   @relation("inquiryTakenBy", fields: [takenById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([status, discardedAt])
+  @@index([requestedClinicianId])
 }

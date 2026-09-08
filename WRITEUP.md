@@ -1302,6 +1302,135 @@ move raises `Conflict`, never a silent no-op, for exactly that reason.
   connection in Phase 2 or it is not asserted.
 
 
+## 19. The first row that can be destroyed
+
+*Phase 2 of `prd-intake-inquiry.md`: the table, the reason codes, the database
+rule, and the sweep. The verb was named in §18; this is the mechanism under it.*
+
+### What makes a row deletable
+
+`Inquiry` is its own model. The cheaper answer was a `Client` with nullable
+`dateOfBirth` and `treatingClinicianId` plus a `ClientStatus.inquiry`, and it
+would have inherited the waitlist, the forms, the outbox and the portal for
+nothing. It was rejected on one point: it requires pointing a `DELETE` at the
+foreign-key root of every clinical table in the schema. A retention sweep aimed
+at `Client` is a sweep that can reach a progress note, and no amount of `WHERE
+status = 'inquiry'` makes that a comfortable thing to have written.
+
+So the deletable table is a separate one, and it is deletable *because* of what
+it does not have. No `dateOfBirth`, no `code`, no `treatingClinicianId` —
+conversion is what those are for. No relation, in either direction, to
+`ProgressNote`, `ProcessNote`, `FormRequest`, `FormSubmission`, `Alert`,
+`Appointment`, `PortalLink` or `OutboxMessage`. Nothing is ever sent to an
+inquiry, which is D-05 and also why there is no outbox relation to argue about:
+a message to a number somebody left on a voicemail is a disclosure to whoever
+else holds that phone.
+
+"There is no column" is only true until somebody adds one, so it is a test
+rather than a comment. One assertion reads the model blocks out of
+`schema.prisma` and fails if `Inquiry` names any of those eight, or if any of
+them names `Inquiry`. A second scans `src/` and `app/` for a query on an
+inquiry that mentions a clinical delegate, or a clinical query that mentions an
+inquiry — the same structural technique as the author-only rule in
+`notes/service.test.ts`, whose helpers it now shares. Both are cheap and neither
+can be satisfied by a behavioural test, because the code that would break them
+has not been written yet.
+
+### What the database refuses
+
+The window is policy: `PracticeSettings.inquiryRetentionDays`, ninety days,
+changeable by the practice because the right number is a legal question. The
+invariant is not policy, so it is not in the application:
+
+```sql
+CREATE TRIGGER "inquiry_no_delete_unless_discarded" BEFORE DELETE ON "Inquiry"
+  FOR EACH ROW EXECUTE FUNCTION "inquiry_delete_only_discarded"();
+```
+
+It lives in the migration beside `audit_append_only` and
+`progress_note_content_frozen`, and it is deliberately written in their register,
+because hard rule 5's principle generalises: an invariant that matters is
+enforced by the database, not by convention. The sweep is careful today. The
+question a trigger answers is what happens when the next thing to call
+`inquiry.delete()` is not.
+
+A converted inquiry is refused by the same rule with no branch of its own — it
+is part of a client's history now, and `status <> 'discarded'` already says so.
+The tests assert both refusals against a real connection, which is the only way
+this property can be asserted at all: a mocked `delete` proves the application
+does not delete an open inquiry, and the application was never the threat.
+
+One more thing the database holds, which the state machine also holds and which
+only the database holds *permanently*:
+
+```sql
+CHECK (("status" = 'discarded') = ("discardedAt" IS NOT NULL AND "discardReason" IS NOT NULL))
+```
+
+A discarded row with no `discardedAt` is invisible to the sweep, which counts
+from it. It is a row that is deletable in principle and immortal in practice —
+the exact failure this feature exists to refuse, arrived at from the opposite
+direction and much harder to notice, because nothing errors and the row simply
+stays. The reason code rides the same constraint: a discard the audit log cannot
+describe is a discard that did not really happen.
+
+### The two-step, and why it is two
+
+Discard sets a status, a reason code and a timestamp. The purge, ninety days
+later, deletes. An immediate hard delete makes a mis-click at 9am unrecoverable
+when they ring back at 2pm; a soft delete that never completes is the thing the
+whole PRD exists to refuse. The gap between the two is also what makes the
+destruction clock-driven, and therefore testable at all — the injected clock
+already existed for the late-cancellation window, and a hundred and twenty days
+of retention pass in a millisecond.
+
+The sweep is idempotent by construction rather than by a guard: a purged row is
+not in the next run's candidate set because it is not anywhere. That is the one
+pleasant thing about deletion as an operation.
+
+### What the audit log gives up on purpose
+
+Every inquiry row written here carries `clientId: null`. That column means *a
+client record*, and an inquiry is not one — it is `resourceId` that names the
+inquiry. The distinction looks pedantic until the purge runs, at which point it
+is the whole design: `AuditEvent.clientId` has no foreign key, inquiry ids never
+enter it, and so a destroyed inquiry leaves its audit rows standing with nothing
+dangling and nothing to cascade.
+
+What an auditor is left with, for a caller who rang once and never came back:
+
+| action | actor | reason | resourceId |
+|---|---|---|---|
+| `discard` | front desk | `discarded:no_answer` | `cl…` |
+| `discard` | `system` | `purged` | `cl…` |
+
+Two rows about a row that no longer exists. The log says an inquiry was created,
+was handled, and was destroyed. It never said who it was — no name has ever been
+in it, and now there is nothing left to join to. That is not a gap in the trail;
+that is what purging is *for*, and it is D-06 written out: the alternative —
+blocking the delete to keep the log joinable — is how "deletable" quietly
+becomes "undeletable".
+
+The two reasons are two codes rather than one, so a discard and the purge that
+eventually follows it are distinguishable to someone reading the log with no
+access to anything else.
+
+### What this phase deliberately does not do
+
+- **No conversion.** `Inquiry.clientId` does not exist yet; it lands in Phase 3
+  with `convertInquiry`, and adding the column early would have meant a relation
+  to `Client` sitting in the schema with nothing writing it.
+- **No waitlist.** `WaitlistEntry.inquiryId` and the one deliberate
+  `ON DELETE CASCADE` in the schema are Phase 3. A waitlist entry for a person
+  who no longer exists is not a thing, but it is not a thing that exists yet
+  either.
+- **No scheduler.** `runInquiryPurge` takes a clock and returns the ids it
+  destroyed. Nothing calls it on a timer, for the same reason nothing sends: the
+  scheduled path is a deployment concern this project does not claim.
+- **No UI.** Front desk cannot yet record a call. The write path, the refusals
+  and the trail are what Phase 2 is for; the screens are Phase 4.
+
+
 ## Decisions log
 
 | Decision | Why |
@@ -1406,6 +1535,13 @@ move raises `Conflict`, never a silent no-op, for exactly that reason.
 | Empty means "the practice cadence", with no second flag beside it | Same argument as a streak cap of zero being the off switch. A `useCustomCadence` boolean next to a list is two fields that can disagree, and somebody will eventually update one of them |
 | The selection is *which* stages, never *whether* | `reminderPreference: 'none'` is still checked first and the checkboxes do not render for a client on it. A cadence preference must not become a second, quieter way to turn messaging back on for somebody who asked for silence |
 | The carrier stub always succeeds, and the failure is a seeded fixture | Random failures would make the hand-tallied fee totals unreproducible, and a fixture that only probably exists is a spec that only probably means anything. One client, three `failed` receipts, no charge — the one row in the quarter where `no_response`, `no_show` and no fee sit together |
+| `Inquiry` is its own model, not a `Client` with nulls | The nullable-Client version inherits the waitlist, forms, outbox and portal for free, and requires a `DELETE` aimed at the foreign-key root of every clinical table. A separate model keeps deletion pointed at a table that by construction holds no clinical content |
+| The deletion rule is a database trigger, not a check in the sweep | The sweep is careful today. `inquiry_delete_only_discarded` answers what happens when the next caller of `inquiry.delete()` is not — the same argument `audit_append_only` makes, and hard rule 5's principle generalised from immutability to deletion |
+| A `CHECK` requires `discardedAt` and a reason on every discarded row | The sweep counts from `discardedAt`, so a discarded row without one is deletable in principle and immortal in practice — a failure that errors nowhere and simply leaves the row |
+| Discard then purge, rather than an immediate hard delete | A mis-click at 9am has to survive until they ring back at 2pm, and a two-step makes the destruction clock-driven and therefore testable — which is what the injected clock already existed for |
+| Audit rows about an inquiry carry `clientId: null` and the inquiry id in `resourceId` | That column means *a client record*. Keeping inquiry ids out of it is what lets a purged row leave its trail standing with nothing dangling and nothing to cascade |
+| The audit trail is allowed to point at a row that no longer exists | The log records that a thing happened, not a joinable copy of the thing. Blocking the delete to keep the log joinable is how "deletable" quietly becomes "undeletable" |
+| The discard and the purge write two different reason codes | `discarded:no_answer` and `purged` are two events about one id, and the one role that may read the log and not the record should be able to tell them apart |
 
 ## What this project deliberately is not
 
