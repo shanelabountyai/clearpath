@@ -35,8 +35,8 @@ new read path rather than the purge's own candidate query.
 ## Gate at this commit
 
 Unit **1949/1949** (was 1941, +8), typecheck clean, e2e **29/29** against a
-fresh production build with a reseeded fixture. Committed as `7386b38`.
-**Not yet pushed** — `git push` is the first thing the next session should do.
+fresh production build with a reseeded fixture. Committed as `7386b38` and
+pushed.
 
 Migrations **still not on production** — five, unchanged; P1-2 added none.
 Production still has no enquiries until reseeded.
