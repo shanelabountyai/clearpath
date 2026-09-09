@@ -134,6 +134,12 @@ async function PracticePage() {
                 <Field label="Enquiry retention">
                   {data.settings.inquiryRetentionDays} days after an enquiry is discarded
                 </Field>
+                <Field label="Spam retention">
+                  {data.settings.spamRetentionDays} days &mdash; never a real caller
+                </Field>
+                <Field label="Referred-out retention">
+                  {data.settings.referredOutRetentionDays} days &mdash; a record the practice acted, not a dead lead
+                </Field>
               </dl>
               {/* The number is the setting; what it should be is not something
                   this software can tell anybody. */}

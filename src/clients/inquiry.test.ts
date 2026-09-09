@@ -209,6 +209,39 @@ describe('the purge', () => {
     expect((await runInquiryPurge(fixedClock(past))).sort()).toEqual([dead.id, recent.id].sort());
   });
 
+  describe('per-reason windows (P2)', () => {
+    const at = (days: number) => fixedClock(new Date(new Date(T0).getTime() + days * DAY));
+
+    it('purges spam on its own 7-day window, well inside the 90-day general one', async () => {
+      const clock = fixedClock(T0);
+      const spam = await anInquiry({ firstName: 'Spam' });
+      await discardInquiry(actor(desk), spam.id, 'spam', { clock });
+      const generic = await anInquiry({ firstName: 'Generic' });
+      await discardInquiry(actor(desk), generic.id, 'no_answer', { clock });
+
+      expect(await runInquiryPurge(at(10))).toEqual([spam.id]);
+    });
+
+    it('keeps referred_out past the general window until its own 365 days pass', async () => {
+      const clock = fixedClock(T0);
+      const referred = await anInquiry({ firstName: 'Referred' });
+      await discardInquiry(actor(desk), referred.id, 'referred_out', { clock });
+
+      expect(await runInquiryPurge(at(100))).toEqual([]);
+      expect(await runInquiryPurge(at(366))).toEqual([referred.id]);
+    });
+
+    it('honors a settings override on a per-reason window, same as the general one', async () => {
+      const clock = fixedClock(T0);
+      const spam = await anInquiry({ firstName: 'Spam' });
+      await discardInquiry(actor(desk), spam.id, 'spam', { clock });
+      await settings({ spamRetentionDays: 30 });
+
+      expect(await runInquiryPurge(at(10))).toEqual([]);
+      expect(await runInquiryPurge(at(40))).toEqual([spam.id]);
+    });
+  });
+
   /**
    * D-06. The trail outlives the row it points at, and that is the end state
    * this feature is for: an auditor sees that somebody was handled, and cannot

@@ -147,7 +147,7 @@ The real cost is not the missing row. It is that **roughly half of inquiries go 
 - [ ] A public inquiry form that writes an `Inquiry` directly (needs rate limiting and spam handling before it is anything but a liability)
 - [ ] Inquiry assignment to a clinician's own queue, with capacity signalling
 - [ ] Referral-source detail for `gp` and `referred_out` — which practice, which doctor — which turns a code into an entity and wants its own model
-- [ ] Retention windows per discard reason (`spam` at 7 days, `referred_out` at 365)
+- [x] Retention windows per discard reason (`spam` at 7 days, `referred_out` at 365) — `spamRetentionDays`/`referredOutRetentionDays` on `PracticeSettings`, same override pattern as `inquiryRetentionDays`; every other reason still ages out on the general window.
 
 ## Success Metrics (evaluated against synthetic seeded data)
 

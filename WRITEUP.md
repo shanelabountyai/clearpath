@@ -1953,6 +1953,8 @@ by their exact age, only by the fifteen-strong set and its referral mix.
 | The stale-inquiry window is a function default, not a `PracticeSettings` column | `continuityGapDays` exists because the gap defines a *clinical* lapse a practice tunes; how long an unreturned call sits before front desk sees it is an operational default nobody has asked to configure yet |
 | The purge preview shares its cutoff with the purge, not its own copy | Two candidate-set computations that are supposed to always agree are one of them one edit away from silently not; `purgeCutoff` is read by both, so they cannot drift |
 | The preview reads under `inquiry: { read: 'always' }`, with no new cell | Naming what the next sweep will destroy is not a new power over the row — it is the same read `listInquiries` already grants, pointed at a narrower `where` |
+| `spam` and `referred_out` get their own retention column, the other five reasons do not | Both are `PracticeSettings` fields with their own default, same pattern as `inquiryRetentionDays` — not a per-reason table, because five of the seven reasons have never asked for a different clock than the general one and a column nobody reads is the thing this project's own ladder argues against |
+| The purge's candidate query is one `OR` of per-reason cutoffs, not five separate queries | `purgeWhere` still runs once, for the same reason `purgeCutoff` used to be shared between the purge and its preview: two computations that must always agree are one of them one edit away from silently not |
 
 ## What this project deliberately is not
 

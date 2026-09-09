@@ -238,11 +238,34 @@ export async function convertInquiry(
   );
 }
 
-/** The cutoff both the purge and its preview delete-or-read against (P1-4). */
-async function purgeCutoff(clock: Clock): Promise<Date> {
+/**
+ * Every reason ages out on the general window (P1-4) except the two with
+ * their own clock (P2): `spam` was never a real caller, and `referred_out` is
+ * a record of the practice having acted, not just a dead lead.
+ */
+const RETENTION_DAYS_FIELD: Partial<Record<DiscardReason, 'spamRetentionDays' | 'referredOutRetentionDays'>> = {
+  spam: 'spamRetentionDays',
+  referred_out: 'referredOutRetentionDays',
+};
+
+/** The candidate filter both the purge and its preview delete-or-read against. */
+async function purgeWhere(clock: Clock) {
   const settings = await prisma.practiceSettings.findUnique({ where: { id: 1 } });
-  const days = settings?.inquiryRetentionDays ?? 90;
-  return new Date(clock.now().getTime() - days * DAY);
+  const general = settings?.inquiryRetentionDays ?? 90;
+  const cutoff = (days: number) => new Date(clock.now().getTime() - days * DAY);
+
+  const reasons = Object.keys(RETENTION_DAYS_FIELD) as DiscardReason[];
+  return {
+    status: 'discarded' as const,
+    OR: [
+      // Everything but the two reasons below, on the general window.
+      { discardReason: { notIn: reasons }, discardedAt: { lte: cutoff(general) } },
+      ...reasons.map((reason) => ({
+        discardReason: reason,
+        discardedAt: { lte: cutoff(settings?.[RETENTION_DAYS_FIELD[reason]!] ?? general) },
+      })),
+    ],
+  };
 }
 
 /**
@@ -259,10 +282,8 @@ async function purgeCutoff(clock: Clock): Promise<Date> {
  * said who it was.
  */
 export async function runInquiryPurge(clock: Clock = systemClock): Promise<string[]> {
-  const cutoff = await purgeCutoff(clock);
-
   const due = await prisma.inquiry.findMany({
-    where: { status: 'discarded', discardedAt: { lte: cutoff } },
+    where: await purgeWhere(clock),
     select: { id: true },
   });
 
@@ -285,13 +306,13 @@ export async function runInquiryPurge(clock: Clock = systemClock): Promise<strin
  * front desk and every clinician can already see.
  */
 export async function previewInquiryPurge(actor: Actor, opts: { clock?: Clock } = {}) {
-  const cutoff = await purgeCutoff(opts.clock ?? systemClock);
+  const where = await purgeWhere(opts.clock ?? systemClock);
 
   return guarded(
     { actor, action: 'read', resource: 'inquiry' },
     (tx) =>
       tx.inquiry.findMany({
-        where: { status: 'discarded', discardedAt: { lte: cutoff } },
+        where,
         select: { id: true, firstName: true, lastName: true, discardReason: true, discardedAt: true },
         orderBy: { discardedAt: 'asc' },
       }),

@@ -178,8 +178,16 @@ model PracticeSettings {
   /// How long a discarded inquiry survives before the purge destroys it. The
   /// window is application policy and lives here; the invariant that only a
   /// discarded row may be destroyed at all is a database trigger. 90 days is a
-  /// legal question with a placeholder answer.
+  /// legal question with a placeholder answer. The window for every discard
+  /// reason but the two below, which want their own clock.
   inquiryRetentionDays   Int     @default(90)
+  /// `spam` never had a real caller behind it; there is nothing worth even 90
+  /// days of holding.
+  spamRetentionDays      Int     @default(7)
+  /// `referred_out` is the one discard that becomes a business record — proof
+  /// the practice acted on a call it could not take — so it outlives the
+  /// general window by an order of magnitude.
+  referredOutRetentionDays Int   @default(365)
 }
 
 model Room {

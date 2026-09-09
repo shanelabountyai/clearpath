@@ -1,25 +1,32 @@
 # Next
 
-**Item:** Both housekeeping items from the last handoff are closed.
+**Item:** P2 — retention windows per discard reason, done.
 
-- `prd-clearpath-counseling-ops.md`'s P1 list (no-future-appointment queue,
-  co-sign aging, auditor query UI, waitlist, utilization report) — confirmed
-  all 5 already built and tested, no code changed.
-- `prd-appointment-confirmation.md`'s P0 checkboxes were stale (all
-  unchecked) against a feature that's actually fully built — verified all 45
-  boxes against the real code (schema, `src/scheduling/confirmation.ts` /
-  `reminders.ts` / `nonresponse.ts`, portal actions, waiver) and their tests
-  (83 passing across the three core spec files + `portal.spec.ts`), then
-  ticked every box and added a status note like the parent PRD has.
+- `PracticeSettings` gains `spamRetentionDays` (default 7) and
+  `referredOutRetentionDays` (default 365), same override pattern as the
+  existing `inquiryRetentionDays`. Every other discard reason still ages out
+  on the general window.
+- `purgeCutoff` became `purgeWhere` in `src/clients/inquiry.ts` — one shared
+  `OR` of per-reason cutoffs, read by both `runInquiryPurge` and
+  `previewInquiryPurge` so the two candidate sets cannot drift.
+- Migration `20260909183340_inquiry_retention_by_reason` applied to both
+  `clearpath_dev` and `clearpath_test`.
+- Practice settings page (`app/(staff)/practice/page.tsx`) shows the two new
+  fields alongside the existing retention line — read-only, same as the rest
+  of that page.
+- 3 new tests in `src/clients/inquiry.test.ts` (per-reason window, general
+  window unaffected, settings override on a per-reason field).
+- PRD checkbox ticked in `prd-intake-inquiry.md`; `WRITEUP.md` has two new
+  learning-artifact rows.
 
 ## Gate at this commit
 
-Unit **1956/1956** (unchanged), the three confirmation-feature spec files
-(83 tests) reconfirmed green in isolation. Not re-run: full e2e (last known
-31/31 from the P1-4 session).
+Unit **1959/1959** (was 1956, +3 new). Typecheck clean. Not re-run: full e2e.
 
 ## What's actually next
 
-Not decided. No PRD in the repo currently has open, unverified work — both
-candidates from the last session turned out to be already-done. Ask the user
-what to build next before picking anything.
+The other three P2 items in `prd-intake-inquiry.md` are still open and
+undecided: public inquiry form, clinician queue assignment with capacity
+signalling, referral-source detail (`gp`/`referred_out` → practice/doctor
+entity). Ask the user which, if any, to pick up next — no PRD has other
+open, verified-missing work.
