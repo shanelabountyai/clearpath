@@ -1,32 +1,44 @@
 # Next
 
-**Item:** P2 — retention windows per discard reason, done.
+**Item:** P2 — public enquiry form, done. Committed `d6d4870`.
 
-- `PracticeSettings` gains `spamRetentionDays` (default 7) and
-  `referredOutRetentionDays` (default 365), same override pattern as the
-  existing `inquiryRetentionDays`. Every other discard reason still ages out
-  on the general window.
-- `purgeCutoff` became `purgeWhere` in `src/clients/inquiry.ts` — one shared
-  `OR` of per-reason cutoffs, read by both `runInquiryPurge` and
-  `previewInquiryPurge` so the two candidate sets cannot drift.
-- Migration `20260909183340_inquiry_retention_by_reason` applied to both
-  `clearpath_dev` and `clearpath_test`.
-- Practice settings page (`app/(staff)/practice/page.tsx`) shows the two new
-  fields alongside the existing retention line — read-only, same as the rest
-  of that page.
-- 3 new tests in `src/clients/inquiry.test.ts` (per-reason window, general
-  window unaffected, settings override on a per-reason field).
-- PRD checkbox ticked in `prd-intake-inquiry.md`; `WRITEUP.md` has two new
-  learning-artifact rows.
+- `/enquire` — bilingual (en/es via `?lang=`), structured fields only, no
+  free-text box anywhere. `app/enquire/{page,actions,shell}.tsx` + `done/`.
+- New `public` role in `src/auth/permissions.ts`, one cell:
+  `inquiry: { create: 'unconditional' }`. `unconditional` is a new rule name,
+  deliberately not `always`. Also new: `actingStaffId(actor)`, which is what
+  keeps the null-taker decision out of the repository.
+- `src/clients/public-inquiry.ts` — kill switch, hourly per-submitter ceiling
+  (HMAC key, never the address), honeypot, validation. Order of checks is
+  load-bearing and commented.
+- Schema: `Inquiry.takenById` nullable + `onDelete: Restrict`; new
+  `InquiryThrottle`; `PracticeSettings.publicInquiryEnabled` (default **false**)
+  and `publicInquiryPerHour` (default 3). Prisma `Role` enum gains `public`.
+  Migrations `20260909190153_public_inquiry_form` and
+  `20260909190305_public_actor_role`, applied to dev, test and e2e.
+- `CLEARPATH_THROTTLE_SECRET` documented in `.env.example`. Optional; unset
+  falls back to a per-process random (fails safe, not weak).
+- 33 new unit tests + 7 e2e specs. PRD checkbox ticked, D-07/D-08 added,
+  `WRITEUP.md` §25 and 8 decision-log rows.
 
 ## Gate at this commit
 
-Unit **1959/1959** (was 1956, +3 new). Typecheck clean. Not re-run: full e2e.
+Unit **2193/2193** (27 files). e2e **38 passed, 1 skipped** (the skipped one is
+`screenshots.spec.ts`, gated on `SHOTS=1` — pre-existing). Typecheck clean.
+Dev, test and e2e databases all migrated and reseeded.
 
 ## What's actually next
 
-The other three P2 items in `prd-intake-inquiry.md` are still open and
-undecided: public inquiry form, clinician queue assignment with capacity
-signalling, referral-source detail (`gp`/`referred_out` → practice/doctor
-entity). Ask the user which, if any, to pick up next — no PRD has other
-open, verified-missing work.
+Two P2 items left in `prd-intake-inquiry.md`, both still open and undecided:
+
+1. **Clinician queue assignment with capacity signalling** — mid-size; touches
+   the state machine and the worklist, no new external surface.
+2. **Referral-source detail for `gp` / `referred_out`** — smallest and most
+   contained; turns a code into a practice/doctor entity with its own model.
+
+Ask which, if either. No other PRD has open, verified-missing work.
+
+One loose thread worth naming, not urgent: the throttle's read-then-write can
+let one extra submission through under a genuine race. It carries a `ponytail:`
+comment saying so and naming the fix (atomic increment with the window reset in
+SQL). At a limit of three an hour it is not worth a lock.
