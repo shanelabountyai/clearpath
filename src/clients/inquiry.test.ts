@@ -8,7 +8,7 @@ import { actor, makeUser, resetDb, settings } from '../test/harness';
 import { callArgs, readSource, sourceFiles } from '../test/source';
 import {
   assertTransition, canTransition, convertInquiry, createInquiry, discardInquiry, listInquiries,
-  runInquiryPurge, TRANSITIONS, updateInquiry, type InquiryStatus, type ReferralSource,
+  previewInquiryPurge, runInquiryPurge, TRANSITIONS, updateInquiry, type InquiryStatus, type ReferralSource,
 } from './inquiry';
 
 const STATUSES: InquiryStatus[] = ['open', 'converted', 'discarded'];
@@ -239,6 +239,32 @@ describe('the purge', () => {
     const rows = await prisma.auditEvent.findMany({ where: { resource: 'inquiry' } });
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.clientId === null)).toBe(true);
+  });
+
+  describe('the preview (P1-4)', () => {
+    it('names exactly what the next sweep would destroy, and destroys nothing', async () => {
+      const { dead } = await seedQuarter();
+
+      const preview = await previewInquiryPurge(actor(desk), { clock: fixedClock(past) });
+      expect(preview.map((r) => r.id)).toEqual([dead.id]);
+      expect(await prisma.inquiry.count()).toBe(4);
+    });
+
+    it('agrees with the purge it previews, run for run', async () => {
+      const { dead, recent } = await seedQuarter();
+      await settings({ inquiryRetentionDays: 1 });
+
+      const preview = (await previewInquiryPurge(actor(desk), { clock: fixedClock(past) })).map((r) => r.id).sort();
+      const purged = (await runInquiryPurge(fixedClock(past))).sort();
+      expect(preview).toEqual([dead.id, recent.id].sort());
+      expect(preview).toEqual(purged);
+    });
+
+    it('reads under the same cell listInquiries does — no caseload scoping, no new authorization', async () => {
+      const clinician = await makeUser('therapist');
+      await seedQuarter();
+      await expect(previewInquiryPurge(actor(clinician), { clock: fixedClock(past) })).resolves.not.toThrow();
+    });
   });
 });
 

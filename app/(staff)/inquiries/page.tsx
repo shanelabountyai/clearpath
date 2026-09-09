@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
 import { may } from '../../../src/auth/guard';
-import { listInquiries, type InquiryStatus } from '../../../src/clients/inquiry';
+import { listInquiries, previewInquiryPurge, type InquiryStatus } from '../../../src/clients/inquiry';
 import { possibleDuplicates } from '../../../src/clients/repository';
 import { Badge, Card, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { withDenial } from '@/src/ui/denied';
@@ -40,6 +40,11 @@ async function InquiriesPage({
   const status = (q.status as InquiryStatus | undefined) || undefined;
 
   const inquiries = await listInquiries(actor, { status });
+  // P1-4: what the next sweep would destroy, so the window is visible before
+  // it fires — only worth asking when discarded rows are actually on screen.
+  const dueForPurge = status === 'discarded'
+    ? new Set((await previewInquiryPurge(actor)).map((r) => r.id))
+    : new Set<string>();
   const clinicians = await prisma.user.findMany({
     where: { active: true, role: { in: ['therapist', 'associate', 'supervisor'] } },
     select: { id: true, name: true },
@@ -189,6 +194,7 @@ async function InquiriesPage({
                     {i.status === 'discarded' && i.discardReason && (
                       <Badge>{DISCARD_LABEL[i.discardReason] ?? i.discardReason}</Badge>
                     )}
+                    {dueForPurge.has(i.id) && <Badge tone="warning">Due in next purge</Badge>}
                   </div>
                   <p className="mt-1 text-caption text-muted">
                     <span className="font-mono">{i.phone ?? i.email ?? 'no contact given'}</span>

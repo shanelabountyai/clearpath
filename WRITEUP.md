@@ -1793,6 +1793,36 @@ phone call sits before front desk sees it on a work list is an operational
 default nobody has asked to move yet, and the column is one settings
 migration away the day someone does.
 
+## 24. The window, made visible before it fires
+
+*P1-4 of `prd-intake-inquiry.md`, and the last item on it: a preview of what
+the next purge sweep would destroy.*
+
+`runInquiryPurge` decides its candidate set once — discarded, and past
+`inquiryRetentionDays` — and then deletes it. Nothing before this let a person
+ask that same question without triggering the answer. `previewInquiryPurge`
+is that question: the identical cutoff, computed by a `purgeCutoff` helper
+the two now share, with the delete swapped for a `findMany` that names the
+rows instead of removing them.
+
+It reads under the cell `listInquiries` already reads under — `inquiry: {
+read: 'always' }` — for the same reason P1-3's did: a preview is a different
+render of a row front desk and every clinician can already open, not a new
+power over it. No permission cell was added, and none needed reviewing.
+
+The enquiries page asks the question only when it already has discarded rows
+on screen — the `status=discarded` filter — and marks the ones due with a
+badge next to the discard reason. Everywhere else the page does the one query
+it always did; a preview nobody is looking at is a query nobody needed to
+run.
+
+The seed's fifteen discarded calls used to span 8–78 days back, all inside the
+90-day default — a page that always said "nothing is due" would have proven
+nothing about the badge existing versus the badge working. Widening the
+spread (called ×7 instead of ×5) puts the oldest past the window without
+moving anything else a test depends on; nothing in the suite reads these rows
+by their exact age, only by the fifteen-strong set and its referral mix.
+
 ## Decisions log
 
 | Decision | Why |
@@ -1921,6 +1951,8 @@ migration away the day someone does.
 | A match answers with a client code and nothing else, and nothing is written down | A name or a status would disclose the record the matrix was refusing. Storing the matched id would put a client id on a row built to be destroyed, which is the whole of P0-1 |
 | The match is scoped by the caseload rule, and gated by `may()` rather than `guarded` | A clinician must not learn from a grey warning line that a client exists outside their caseload. And the practice manager, whose client read is break-glass, gets silence rather than a denial row per recorded call and a break-glass prompt over a phone number |
 | The stale-inquiry window is a function default, not a `PracticeSettings` column | `continuityGapDays` exists because the gap defines a *clinical* lapse a practice tunes; how long an unreturned call sits before front desk sees it is an operational default nobody has asked to configure yet |
+| The purge preview shares its cutoff with the purge, not its own copy | Two candidate-set computations that are supposed to always agree are one of them one edit away from silently not; `purgeCutoff` is read by both, so they cannot drift |
+| The preview reads under `inquiry: { read: 'always' }`, with no new cell | Naming what the next sweep will destroy is not a new power over the row — it is the same read `listInquiries` already grants, pointed at a narrower `where` |
 
 ## What this project deliberately is not
 

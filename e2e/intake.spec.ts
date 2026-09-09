@@ -81,4 +81,20 @@ test.describe('the intake desk', () => {
     // Terminal: there is no way back to a client from here.
     await expect(ended.getByRole('link', { name: 'Convert to client' })).toHaveCount(0);
   });
+
+  /**
+   * P1-4. The seed's oldest discarded call clears the 90-day retention
+   * default; the rest do not — so the badge has to pick out that one row,
+   * not just appear because the filter is on discarded.
+   */
+  test('flags the discarded calls the next purge would destroy, and only those', async ({ page }) => {
+    await actAs(page, USERS.frontDesk);
+    await page.goto('/inquiries?status=discarded');
+
+    const due = page.locator('li', { hasText: 'Enquiry D15' });
+    await expect(due.getByText('Due in next purge')).toBeVisible();
+
+    const notDue = page.locator('li', { hasText: 'Enquiry D01' });
+    await expect(notDue.getByText('Due in next purge')).toHaveCount(0);
+  });
 });

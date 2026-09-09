@@ -720,9 +720,11 @@ async function main() {
   }
 
   // The fifteen that ended, across the whole vocabulary so the report has
-  // every bar it can ever draw.
+  // every bar it can ever draw. Spread wide enough (×7, not ×5) that the
+  // oldest clears the 90-day retention default — one seeded row the purge
+  // preview has something to show (P1-4).
   for (let i = 0; i < 15; i++) {
-    const called = 8 + i * 5;
+    const called = 8 + i * 7;
     await prisma.inquiry.create({
       data: {
         firstName: 'Test',

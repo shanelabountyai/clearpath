@@ -238,6 +238,13 @@ export async function convertInquiry(
   );
 }
 
+/** The cutoff both the purge and its preview delete-or-read against (P1-4). */
+async function purgeCutoff(clock: Clock): Promise<Date> {
+  const settings = await prisma.practiceSettings.findUnique({ where: { id: 1 } });
+  const days = settings?.inquiryRetentionDays ?? 90;
+  return new Date(clock.now().getTime() - days * DAY);
+}
+
 /**
  * The purge (P0-5). Destroys discarded inquiries past the retention window.
  *
@@ -252,9 +259,7 @@ export async function convertInquiry(
  * said who it was.
  */
 export async function runInquiryPurge(clock: Clock = systemClock): Promise<string[]> {
-  const settings = await prisma.practiceSettings.findUnique({ where: { id: 1 } });
-  const days = settings?.inquiryRetentionDays ?? 90;
-  const cutoff = new Date(clock.now().getTime() - days * DAY);
+  const cutoff = await purgeCutoff(clock);
 
   const due = await prisma.inquiry.findMany({
     where: { status: 'discarded', discardedAt: { lte: cutoff } },
@@ -268,4 +273,27 @@ export async function runInquiryPurge(clock: Clock = systemClock): Promise<strin
     );
   }
   return due.map((d) => d.id);
+}
+
+/**
+ * P1-4: what the next sweep would destroy, if it ran right now. Same candidate
+ * query as `runInquiryPurge` with the delete swapped for a read, so the window
+ * is visible before it fires rather than after.
+ *
+ * `read: always` on `inquiry` — the same cell `listInquiries` reads under.
+ * A preview is not a new power over the row, only a different render of one
+ * front desk and every clinician can already see.
+ */
+export async function previewInquiryPurge(actor: Actor, opts: { clock?: Clock } = {}) {
+  const cutoff = await purgeCutoff(opts.clock ?? systemClock);
+
+  return guarded(
+    { actor, action: 'read', resource: 'inquiry' },
+    (tx) =>
+      tx.inquiry.findMany({
+        where: { status: 'discarded', discardedAt: { lte: cutoff } },
+        select: { id: true, firstName: true, lastName: true, discardReason: true, discardedAt: true },
+        orderBy: { discardedAt: 'asc' },
+      }),
+  );
 }
