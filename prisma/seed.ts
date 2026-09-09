@@ -65,6 +65,12 @@ async function main() {
       // says out loud needs a clinical and legal review before it is real.
       noShowFeeCents: 9_000, dayOfLeadHours: 3, graceMinutes: 20,
       autoNoShowOnNoResponse: true,
+      // The public enquiry form, open in the demo so the route is walkable.
+      // It ships off by default in the schema on purpose — the route existing
+      // is not consent to run an unauthenticated write endpoint — so this is
+      // the practice opening it deliberately, which is the whole shape of the
+      // setting.
+      publicInquiryEnabled: true, publicInquiryPerHour: 3,
     },
   });
 
@@ -742,20 +748,28 @@ async function main() {
 
   // Five nobody has rung back yet — which is why the conversion rate divides
   // by everything and not just by the calls that reached an ending.
+  //
+  // The last two arrived through the public form (P2), and the fixture is what
+  // that looks like in the data: no `takenById`, because nobody took them, and
+  // no `note`, because there is nowhere on that form to write one. On the
+  // worklist they are the rows badged "From the website" — an enquiry that has
+  // reached the practice without anybody yet having spoken to the person.
   for (let i = 0; i < 5; i++) {
+    const fromWeb = i >= 3;
     await prisma.inquiry.create({
       data: {
         firstName: 'Test',
         lastName: `Enquiry O${i + 1}`,
-        phone: `555-05${String(i).padStart(2, '0')}`,
+        phone: fromWeb ? null : `555-05${String(i).padStart(2, '0')}`,
+        email: fromWeb ? `test.enquiry.o${i + 1}@example.test` : null,
         referralSource: REFERRAL_MIX[(i * 2) % REFERRAL_MIX.length]!,
-        note: i % 2 === 0 ? 'Mornings only' : 'Cannot do Tuesdays',
-        takenById: frontDesk.id,
+        note: fromWeb ? null : i % 2 === 0 ? 'Mornings only' : 'Cannot do Tuesdays',
+        takenById: fromWeb ? null : frontDesk.id,
         createdAt: daysAgo(1 + i * 2),
       },
     });
   }
-  log('40 enquiries — 20 converted, 15 discarded across all seven reason codes, 5 open');
+  log('40 enquiries — 20 converted, 15 discarded across all seven reason codes, 5 open (2 from the public form)');
 
   // ── the demo, guaranteed ──────────────────────────────────────────────
   //

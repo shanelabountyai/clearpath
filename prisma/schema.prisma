@@ -22,6 +22,12 @@ enum Role {
   /// Never logs in. Exists so a form submitted through a tokenized link has an
   /// honest actor in the audit trail instead of being attributed to staff.
   client
+  /// Nobody, on the public enquiry form. Here for the same reason `client` is:
+  /// an enquiry that arrived through the website has to be attributable to what
+  /// actually made it, and the alternative is borrowing a staff account for an
+  /// act no member of staff performed. No `User` row ever holds it — see the
+  /// `public` row of the permission matrix, which is one cell wide.
+  public
 }
 
 model User {
@@ -188,6 +194,18 @@ model PracticeSettings {
   /// the practice acted on a call it could not take — so it outlives the
   /// general window by an order of magnitude.
   referredOutRetentionDays Int   @default(365)
+
+  /// P2: whether the public enquiry form accepts anything at all.
+  ///
+  /// Off by default, because the route existing is not consent to run an
+  /// unauthenticated write endpoint — a deployment turns it on deliberately.
+  /// It is also the kill switch: a practice being flooded closes the door from
+  /// the settings row, with no deploy and no code change.
+  publicInquiryEnabled     Boolean @default(false)
+  /// How many enquiries one submitter may send in an hour before the form
+  /// stops accepting. Low on purpose: a person enquiring twice has changed
+  /// their mind, and a person enquiring four times is not a person.
+  publicInquiryPerHour     Int     @default(3)
 }
 
 model Room {
@@ -928,8 +946,15 @@ model Inquiry {
   /// What the retention window counts from.
   discardedAt   DateTime?
 
-  takenById String
-  takenBy   User   @relation("inquiryTakenBy", fields: [takenById], references: [id])
+  /// The staff member who took the call, or null when nobody did — a public
+  /// form submission arrived on its own. That null is the only marker the
+  /// worklist needs: an enquiry nobody has picked up yet.
+  takenById String?
+  /// `Restrict`, not the default `SetNull` an optional relation would take:
+  /// null here means "nobody took this call", and a cascade that quietly
+  /// produced one when a staff account was deleted would rewrite history into
+  /// enquiries that arrived on their own.
+  takenBy   User?   @relation("inquiryTakenBy", fields: [takenById], references: [id], onDelete: Restrict)
 
   /// Set at conversion, and deliberately absent until then (P0-8). The row is
   /// retained afterwards — it is what makes "how long from call to first
@@ -943,4 +968,21 @@ model Inquiry {
 
   @@index([status, discardedAt])
   @@index([requestedClinicianId])
+}
+
+/// One submitter's recent use of the public enquiry form (P2).
+///
+/// The only reason this table exists is that the public form is an
+/// unauthenticated write, and an unauthenticated write with no ceiling is the
+/// liability the PRD named. It holds no enquiry, no name and no address — see
+/// `submitterKey`, which is why the primary key is a keyed hash rather than
+/// the IP it stands for. Rows outlive their window only until the next purge
+/// sweep clears them.
+model InquiryThrottle {
+  /// HMAC of the submitter's address. Never the address.
+  id              String   @id
+  count           Int      @default(0)
+  windowStartedAt DateTime
+
+  @@index([windowStartedAt])
 }

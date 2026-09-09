@@ -114,6 +114,38 @@ interface Strings {
    * a second language is what makes that obvious instead of merely untidy.
    */
   errors: Record<'already_submitted' | 'expired' | 'invalid' | 'unknown', string>;
+
+  /**
+   * The public enquiry form (P2). The one page in the application whose reader
+   * is a stranger, so it is written in both languages and picks one from a
+   * query parameter rather than from a record — there is no record yet.
+   */
+  enquireTitle: string;
+  enquireHeading: string;
+  enquireIntro: string;
+  /**
+   * Printed above the fields, and it is load-bearing rather than polite. There
+   * is nowhere on this form to write a sentence, and this is the line that
+   * explains why to somebody who came here to write one.
+   */
+  enquireNoDetail: string;
+  enquireFirstName: string;
+  enquireLastName: string;
+  enquireEmail: string;
+  enquirePhone: string;
+  enquireContactHint: string;
+  enquireClinician: string;
+  enquireNoPreference: string;
+  enquireHeardHow: string;
+  enquireSources: Record<'gp' | 'friend' | 'search' | 'other', string>;
+  enquireSubmit: string;
+  enquireSubmitting: string;
+  enquireDoneHeading: string;
+  enquireDoneBody: string;
+  enquireUrgent: (phone: string) => string;
+  enquireOtherLanguage: string;
+  /** Keyed by the service's refusal code, never by its message. */
+  enquireErrors: Record<'closed' | 'too_many' | 'invalid' | 'unknown', string>;
 }
 
 export const UI: Record<Language, Strings> = {
@@ -179,6 +211,41 @@ export const UI: Record<Language, Strings> = {
       invalid: 'Some questions still need an answer. The ones marked * cannot be left blank.',
       unknown: 'That did not go through. Please try again, or reply to the message you received.',
     },
+
+    enquireTitle: 'Get in touch',
+    enquireHeading: 'Ask us about an appointment',
+    enquireIntro:
+      'Leave your name and how to reach you, and someone will call you back. We are usually able to answer within two working days.',
+    enquireNoDetail:
+      'Please do not write anything about your health here. This form is only so we know how to reach you — we will ask everything else when we speak, in private.',
+    enquireFirstName: 'First name',
+    enquireLastName: 'Last name',
+    enquireEmail: 'Email',
+    enquirePhone: 'Phone',
+    enquireContactHint: 'One is enough. We will use whichever you give us.',
+    enquireClinician: 'Someone in particular?',
+    enquireNoPreference: 'No preference',
+    enquireHeardHow: 'How did you hear about us?',
+    enquireSources: {
+      gp: 'A doctor or another clinician',
+      friend: 'A friend or family member',
+      search: 'Found you online',
+      other: 'Something else',
+    },
+    enquireSubmit: 'Send',
+    enquireSubmitting: 'Sending…',
+    enquireDoneHeading: 'Thank you — we have your message',
+    enquireDoneBody:
+      'Someone will be in touch. If you gave us a phone number, the call may come from a number you do not recognise.',
+    enquireUrgent: (phone) =>
+      `If this cannot wait, please call us on ${phone}. In an emergency, call 911 or go to your nearest emergency room.`,
+    enquireOtherLanguage: 'Español',
+    enquireErrors: {
+      closed: 'We are not taking enquiries through this form at the moment. Please call us instead.',
+      too_many: 'We have already had a few messages from you. Please give us a little time, or call us.',
+      invalid: 'We still need your name, and either an email address or a phone number.',
+      unknown: 'That did not go through. Please try again, or call us.',
+    },
   },
   es: {
     portalTitle: 'Sus citas',
@@ -241,6 +308,41 @@ export const UI: Record<Language, Strings> = {
       expired: 'Este enlace ha vencido. Responda al mensaje que recibió y le enviaremos uno nuevo.',
       invalid: 'Todavía faltan respuestas. Las preguntas marcadas con * no pueden quedar en blanco.',
       unknown: 'No se pudo enviar. Inténtelo de nuevo o responda al mensaje que recibió.',
+    },
+
+    enquireTitle: 'Comuníquese con nosotros',
+    enquireHeading: 'Pregúntenos por una cita',
+    enquireIntro:
+      'Déjenos su nombre y cómo comunicarnos con usted, y le devolveremos la llamada. Solemos responder dentro de dos días hábiles.',
+    enquireNoDetail:
+      'Por favor no escriba nada sobre su salud aquí. Este formulario es solo para saber cómo comunicarnos con usted — lo demás se lo preguntaremos cuando hablemos, en privado.',
+    enquireFirstName: 'Nombre',
+    enquireLastName: 'Apellido',
+    enquireEmail: 'Correo electrónico',
+    enquirePhone: 'Teléfono',
+    enquireContactHint: 'Con uno basta. Usaremos el que nos deje.',
+    enquireClinician: '¿Alguien en particular?',
+    enquireNoPreference: 'Sin preferencia',
+    enquireHeardHow: '¿Cómo supo de nosotros?',
+    enquireSources: {
+      gp: 'Un médico u otro profesional',
+      friend: 'Un amigo o familiar',
+      search: 'Los encontré en internet',
+      other: 'De otra manera',
+    },
+    enquireSubmit: 'Enviar',
+    enquireSubmitting: 'Enviando…',
+    enquireDoneHeading: 'Gracias — recibimos su mensaje',
+    enquireDoneBody:
+      'Alguien se comunicará con usted. Si nos dejó un teléfono, la llamada puede venir de un número que no reconozca.',
+    enquireUrgent: (phone) =>
+      `Si no puede esperar, llámenos al ${phone}. En una emergencia, llame al 911 o vaya a la sala de emergencias más cercana.`,
+    enquireOtherLanguage: 'English',
+    enquireErrors: {
+      closed: 'Por ahora no recibimos consultas por este formulario. Por favor llámenos.',
+      too_many: 'Ya recibimos varios mensajes suyos. Denos un poco de tiempo, o llámenos.',
+      invalid: 'Todavía necesitamos su nombre y un correo electrónico o un teléfono.',
+      unknown: 'No se pudo enviar. Inténtelo de nuevo o llámenos.',
     },
   },
 };

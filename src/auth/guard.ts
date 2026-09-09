@@ -128,16 +128,28 @@ export function guardedAll<T>(
 /**
  * Log an event that is not itself a data access — a threshold alert firing, a
  * break-glass session opening. Carries reason codes, never content.
+ *
+ * `allowed: false` is for a refusal the matrix did not make: the public
+ * enquiry form is permitted to `create` and is still turned away by a closed
+ * door, a spent hourly allowance or a honeypot. Hard rule 4 wants those on the
+ * record like any other denial, and the reason code is what distinguishes them
+ * from a permission failure.
  */
 export async function auditEvent(
   actor: Actor,
   action: Action,
   resource: Resource,
-  opts: { resourceId?: string; clientId?: string; rule?: string } = {},
+  opts: {
+    resourceId?: string;
+    clientId?: string;
+    rule?: string;
+    reason?: string;
+    allowed?: boolean;
+  } = {},
   tx?: Tx,
 ): Promise<void> {
   await record(tx ?? prisma, { actor, action, resource, ...opts }, {
-    allowed: true,
+    allowed: opts.allowed ?? true,
     rule: (opts.rule ?? 'system') as Decision['rule'],
     breakGlass: !!actor.breakGlass,
   });

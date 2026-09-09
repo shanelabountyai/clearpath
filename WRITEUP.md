@@ -1823,6 +1823,123 @@ spread (called ×7 instead of ×5) puts the oldest past the window without
 moving anything else a test depends on; nothing in the suite reads these rows
 by their exact age, only by the fifteen-strong set and its referral mix.
 
+## 25. One cell wide, and the box that is not there
+
+*P2 of `prd-intake-inquiry.md`: a public enquiry form, which the PRD itself
+described as "a liability" until rate limiting and spam handling stood in front
+of it.*
+
+Everything else in this application is reached by somebody the practice knows:
+a staff session, or a token that was emailed to one client. `/enquire` is
+reached by a stranger, and it writes.
+
+### The role, rather than the exception
+
+The obvious build is a route that skips `guarded` — the actor is nobody, so
+there is nobody to authorize. It is fewer moving parts and it changes no
+policy file, and it fails the one test this project exists to pass. "What can
+an unauthenticated request do to this database" has to be answerable by reading
+`permissions.ts`. Written as a bypass it is answerable only by auditing every
+route, for ever, and by everybody who ever adds one.
+
+So `public` is a role, and it holds exactly one cell: `inquiry: { create }`.
+No `read`, which is what stops the form from becoming a lookup — a submitter
+must never be able to learn that the practice already holds this person, and
+the way to guarantee that is for the anonymous actor to have no read anywhere
+in the matrix rather than for each surface to remember not to offer one.
+
+Its rule is named `unconditional`, and that is not a synonym for `always`.
+`always` appears in six other rows and means "any actor holding this role" —
+where every role holding it belongs to somebody the practice hired. Reusing it
+here would make the anonymous cell look like the others, and would make an
+accidental second use of it invisible. Two identical functions, two different
+claims, and the audit row records which one decided.
+
+### Where the limits actually live
+
+The matrix says what an anonymous request may do. It cannot say how often, and
+it should not try — a permission table that grew a rate limit would be a
+permission table nobody could read. Four separate things bound this cell, and
+all four are in `src/clients/public-inquiry.ts`:
+
+- **A kill switch, off by default.** `publicInquiryEnabled` ships `false`. The
+  route existing in a deployment is not the same as a practice consenting to run
+  an unauthenticated write endpoint, and a practice being flooded needs to shut
+  the door from the settings row rather than from a deploy pipeline.
+- **An hourly ceiling per submitter**, keyed by an HMAC of the address and
+  never by the address. A bare SHA-256 of an IPv4 is not anonymisation: the
+  space is four billion values, so the table would be a recoverable list of
+  everyone who enquired — concentrated, ironically, in the one table added to
+  protect them. With no secret configured the key falls back to a per-process
+  random, which fails *safe* rather than weak: the hashes stay unrecoverable and
+  what degrades is the limit's reach across instances.
+- **A honeypot**, answered with the identical screen a person gets. Telling a
+  bot it was detected is telling whoever wrote it what to change.
+- **A field set with nowhere to put a sentence.** Below.
+
+The order of those checks is a decision, not an accident. Validation runs
+*before* the throttle, because a real person who mistypes their email three
+times must not find the form closed on the fourth attempt — and validation
+costs no query, so nothing is bought by putting it second. The honeypot runs
+*after* the throttle, because a robot should burn its allowance like everybody
+else; checked first, a bot could hammer the endpoint for ever without the
+counter ever moving.
+
+### The box that is not there
+
+This is the part I expected to argue myself out of and did not.
+
+The PRD already names `Inquiry.note` as the honest weak point of the whole
+design: front-desk free text will eventually hold something clinical, because
+somebody rings and says why. Its stated mitigation is that the field is labelled
+for scheduling preferences and the purge bounds the exposure. What is left
+unsaid is the load-bearing part — a person hears "I've been having a hard time
+since my brother died" and types *prefers mornings*. The mitigation is a human.
+
+A textarea on a public counselling form is that same field with the human
+removed. It would not occasionally receive a clinical disclosure; it would
+receive them as a matter of course, written by people who have not yet spoken
+to anybody, straight into a column that hard rule 3 says must not hold them.
+
+The PRD had already rejected structured-only fields — as "unusable for a person
+on a phone". That reasoning is sound and it does not reach here, because nobody
+on this form is on a phone. So the public form asks for a name, one way to make
+contact, an optional clinician and a referral code; it prints a line above the
+fields asking the reader not to write about their health; and it leaves the rest
+to somebody ringing back. What it costs is real: a submitter who can only do
+evenings has nowhere to say so, and front desk asks when they call.
+
+The absence is asserted rather than intended. A source-level test greps the
+service, the page and the action for a `textarea` or a `note` field, because the
+failure mode is not this commit — it is somebody adding "anything else we should
+know?" in six months, reasonably, without any of this context.
+
+### The null that is a fact
+
+`Inquiry.takenById` was a required foreign key to a `User`, and a public
+submission has no such person. Making it nullable is the whole change, and the
+null is not a gap in the data — it *is* the datum: nobody took this call, it
+arrived. On the worklist that is the badge "From the website", which is exactly
+the operational meaning wanted: an enquiry that has reached the practice with
+nobody yet having spoken to the person behind it.
+
+Two things fell out of that. Prisma's default for an optional relation is
+`ON DELETE SET NULL`, which would quietly rewrite a staff-taken call into a
+web-arrived one the day a staff account was deleted; it is pinned back to
+`Restrict`. And deciding "is there a staff member behind this act" is role logic,
+so it is `actingStaffId` in `permissions.ts` rather than an
+`actor.role === 'public'` in the repository — which the grep test would have
+caught, and which is the point of having the grep test.
+
+### The fixture that turned out to be an assertion
+
+The e2e spec's cleanup deleted the rows it had created, and every test after the
+first one failed. The delete trigger refuses to destroy an `open` inquiry, and
+it is a database rule, so raw `psql` is bound by it exactly as the application
+is. The fixture now discards before it deletes — the same two-step the purge
+takes — which makes the teardown a demonstration of the invariant rather than a
+workaround for it.
+
 ## Decisions log
 
 | Decision | Why |
@@ -1838,6 +1955,14 @@ by their exact age, only by the fifteen-strong set and its referral mix.
 | The one `ON DELETE CASCADE` in the schema points at the one deletable table | A waitlist entry for a person who no longer exists is not a thing — saying it in the FK is what keeps the purge ignorant of the table |
 | Conversion pre-generates the client id | `guardedAll` authorizes before it acts, so both audit rows must name a client that does not exist yet; creating first and authorizing after inverts the order the guard exists to enforce |
 | Conversion adds no matrix cell | It needs `create` on `client` and `update` on `inquiry`; only front desk holds both, so the answer was already in the table |
+| A `public` role in the matrix, not a guard bypass for anonymous writes | "What can an unauthenticated request do to this database" must be answerable from one file; as a bypass it is answerable only by auditing every route |
+| The public cell's rule is `unconditional`, not `always` | `always` means "any actor in this role", and every other role holding it was hired; two identical functions, two different claims, and the audit row records which decided |
+| The public cell has `create` and no `read` | Without a read anywhere in the anonymous row, the form cannot become a client-list oracle — guaranteed by the matrix rather than remembered by each surface |
+| The public form has no free-text field | `Inquiry.note`'s mitigation is that a human hears it and types "prefers mornings"; a public textarea is that field with the human removed |
+| Throttle rows keyed by HMAC of the address, never the address | A bare hash of an IPv4 is recoverable in minutes, which would make the anti-abuse table the biggest disclosure in the schema |
+| Validation before the throttle, honeypot after it | A real person's typos must not spend their hour's allowance; a robot's attempts must |
+| `publicInquiryEnabled` ships `false` | Deploying the route is not the same as consenting to run an unauthenticated write endpoint, and a flood needs a switch rather than a deploy |
+| `Inquiry.takenById` nullable, pinned to `ON DELETE RESTRICT` | The null means "nobody took this call"; Prisma's default `SET NULL` would manufacture that meaning whenever a staff account was deleted |
 | `Client.referralSource` duplicates the intake form's answer, unreconciled | They are the same fact at two sensitivity tiers; syncing them would show front desk a clinical submission, and an equality test against the template's options is what stops them drifting |
 | The confirmation rate divides by decided, not by booked | A `reminderPreference: 'none'` client would otherwise drag their clinician's number down for choosing a safety setting — the P0 category error, reappearing as a denominator |
 | A declined hour and a cancelled one are shown as separate kinds of opening | The declined one is still on the books; rendering both as "free" is how a client arrives to find their room taken |

@@ -13,7 +13,17 @@ export type Role =
   | 'supervisor'
   | 'admin'
   | 'auditor'
-  | 'client';
+  | 'client'
+  /**
+   * A stranger on the public enquiry form. Never authenticates, is never a
+   * `User` row, and holds exactly one cell.
+   *
+   * It is a role rather than a guard bypass for the reason this whole file
+   * exists: "what can an anonymous request do to this database" has to be
+   * answerable by reading the matrix. Written as a bypass it would be
+   * answerable only by auditing every route.
+   */
+  | 'public';
 
 export type Resource =
   | 'client' // demographics, emergency contact, consent status
@@ -44,7 +54,7 @@ export type Resource =
 export type Action = 'read' | 'create' | 'update' | 'sign' | 'cosign' | 'waive' | 'discard';
 
 export const ROLES: readonly Role[] = [
-  'front_desk', 'therapist', 'associate', 'supervisor', 'admin', 'auditor', 'client',
+  'front_desk', 'therapist', 'associate', 'supervisor', 'admin', 'auditor', 'client', 'public',
 ];
 export const RESOURCES: readonly Resource[] = [
   'client', 'fee', 'appointment', 'attendance_history', 'progress_note',
@@ -101,6 +111,15 @@ const supervises = (a: Actor, t: Target): boolean =>
 const RULES = {
   never: () => false,
   always: () => true,
+  /**
+   * True for anybody, deliberately named apart from `always`.
+   *
+   * `always` means "any actor holding this role", and every role holding it is
+   * a person the practice hired. This one means "any actor at all, including
+   * one nobody authenticated" — same function, different claim, and the audit
+   * row records which of the two decided.
+   */
+  unconditional: () => true,
   author: isAuthor,
   authorOrSupervisor: (a: Actor, t: Target) => isAuthor(a, t) || supervises(a, t),
   // You do not co-sign your own note.
@@ -232,6 +251,24 @@ const MATRIX: Record<Role, RoleMatrix> = {
    * theirs, so a link that names somebody else's appointment decides `never`.
    */
   client: { appointment: { update: 'token' } },
+
+  /**
+   * One cell, `unconditional`, and it is the entire public internet.
+   *
+   * `create` on `inquiry` and nothing else — no read, so a submitter cannot
+   * learn that the practice already knows them, and no update, so nothing
+   * already written can be altered by whoever writes next. There is no
+   * relationship rule to attach because there is no identity: `unconditional`
+   * says so out loud rather than reusing `always`, which reads as "any actor
+   * in this role" and would be a dangerous thing to copy into a second cell.
+   *
+   * What actually bounds this cell is not the matrix — it is
+   * `src/clients/public-inquiry.ts`: the practice's kill switch, the per
+   * submitter ceiling, and a field set with nowhere to put a clinical
+   * sentence. The matrix says what an anonymous request may do; that file says
+   * how often and with what.
+   */
+  public: { inquiry: { create: 'unconditional' } },
 };
 
 /**
@@ -245,6 +282,19 @@ const MATRIX: Record<Role, RoleMatrix> = {
  */
 export function ownCaseloadOnly(actor: Actor): boolean {
   return actor.role === 'therapist' || actor.role === 'associate' || actor.role === 'supervisor';
+}
+
+/**
+ * The staff member behind an act, or null when there is none.
+ *
+ * `Inquiry.takenById` is a foreign key to a real `User`, and a public form
+ * submission has no such person — nobody took that call, it arrived. Deciding
+ * that from the role is role logic, so it lives here rather than as an
+ * `actor.role === 'public'` in the repository, which is the exact shape the
+ * grep test refuses.
+ */
+export function actingStaffId(actor: Actor): string | null {
+  return actor.role === 'public' ? null : actor.id;
 }
 
 /** A supervisor's caseload includes the clients their supervisees carry. */

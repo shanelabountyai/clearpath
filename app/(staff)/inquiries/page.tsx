@@ -195,6 +195,11 @@ async function InquiriesPage({
                       <Badge>{DISCARD_LABEL[i.discardReason] ?? i.discardReason}</Badge>
                     )}
                     {dueForPurge.has(i.id) && <Badge tone="warning">Due in next purge</Badge>}
+                    {/* Nobody took this one — it arrived through the public
+                        form and has not been spoken to. The badge is the whole
+                        feature staff-side: an enquiry with no person behind it
+                        is one nobody has rung back yet. */}
+                    {i.takenById === null && <Badge tone="info">From the website</Badge>}
                   </div>
                   <p className="mt-1 text-caption text-muted">
                     <span className="font-mono">{i.phone ?? i.email ?? 'no contact given'}</span>

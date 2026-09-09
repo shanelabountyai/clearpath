@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { Role as PrismaRole } from '../generated/prisma/enums';
 import {
   ACTIONS, RESOURCES, ROLES,
   can, ownCaseloadOnly, requiresSecondFactor,
@@ -88,6 +89,8 @@ const ALLOWED: Record<Role, Set<string>> = {
   // decline; reading behind the link and asking for a different time change
   // nothing and stay outside this file.
   client: spec({ appointment: 'update' }),
+  // The public enquiry form. One cell, and it is the whole anonymous internet.
+  public: spec({ inquiry: 'create' }),
 };
 
 /** Cells allowed with NO relationship and NO break-glass. */
@@ -124,6 +127,9 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
   auditor: ALLOWED.auditor,
   // Never unconditional: without a row that is theirs, a token decides `never`.
   client: new Set<string>(),
+  // Unconditional by definition — there is no relationship to hold, which is
+  // exactly why the cell had to be narrow.
+  public: ALLOWED.public,
 };
 
 const ME = 'u-me';
@@ -311,7 +317,7 @@ it('no ad-hoc role checks outside the auth module', () => {
       if (!statSync(path).isFile()) continue;
       const src = readFileSync(path, 'utf8');
       // Authorization decisions come from can(); nothing else branches on a role.
-      if (/\.role\s*[=!]==|['"](front_desk|therapist|associate|supervisor|admin|auditor)['"]\s*[=!]==/.test(src)) {
+      if (/\.role\s*[=!]==|['"](front_desk|therapist|associate|supervisor|admin|auditor|public)['"]\s*[=!]==/.test(src)) {
         offenders.push(path);
       }
     }
@@ -327,7 +333,7 @@ describe('caseload scoping', () => {
   });
 
   it('does not narrow the roles that work across the practice', () => {
-    for (const role of ['front_desk', 'admin', 'auditor', 'client'] as Role[]) {
+    for (const role of ['front_desk', 'admin', 'auditor', 'client', 'public'] as Role[]) {
       expect(ownCaseloadOnly({ id: ME, role })).toBe(false);
     }
   });
@@ -367,6 +373,54 @@ describe('the client role reaches exactly one cell, and only their own row', () 
     // nothing for the roles that already have a rule.
     expect(can({ id: ME, role: 'auditor' }, 'update', 'appointment', { ownerClientId: ME }).allowed)
       .toBe(false);
+  });
+});
+
+describe('the public role is one cell wide', () => {
+  const stranger_ = { id: 'public', role: 'public' as Role };
+
+  it('writes an enquiry', () => {
+    expect(can(stranger_, 'create', 'inquiry').allowed).toBe(true);
+  });
+
+  it('cannot read back the one thing it can write', () => {
+    // The refusal that keeps the form from becoming a lookup: a submitter must
+    // not be able to learn that the practice already holds this person.
+    expect(can(stranger_, 'read', 'inquiry').allowed).toBe(false);
+    expect(can(stranger_, 'update', 'inquiry').allowed).toBe(false);
+    expect(can(stranger_, 'discard', 'inquiry').allowed).toBe(false);
+  });
+
+  it('reaches nothing else, under any relationship or break-glass claim', () => {
+    const dressed = { id: ME, role: 'public' as Role, breakGlass: { reason: 'x' } };
+    const everything: Target = {
+      authorId: ME, authorSupervisorId: ME, clinicianId: ME, recipientId: ME,
+      treatingSupervisorId: ME, ownerClientId: ME,
+    };
+    for (const resource of RESOURCES) {
+      for (const action of ACTIONS) {
+        if (resource === 'inquiry' && action === 'create') continue;
+        expect(can(dressed, action, resource, everything).allowed, `${resource}:${action}`).toBe(false);
+      }
+    }
+  });
+
+  it('is decided by `unconditional`, never by `always`', () => {
+    // `always` reads as "any actor in this role" and every other role holding
+    // it was hired. Keeping the anonymous cell on its own rule name is what
+    // makes an accidental copy of it visible in the audit trail.
+    expect(can(stranger_, 'create', 'inquiry').rule).toBe('unconditional');
+  });
+
+  it('is spellable in the audit log, and by nothing that logs in', () => {
+    // It is in the database enum for the same reason `client` is: an enquiry
+    // that arrived through the website has to be attributable to what made it,
+    // not to whichever staff account was nearest.
+    expect(Object.keys(PrismaRole)).toContain('public');
+    // And there is no account holding it — the seed creates none, and the
+    // session module reads a `User` row, which is the only way an actor with a
+    // role other than `public` is ever built.
+    expect(ROLES).toContain('public');
   });
 });
 
@@ -419,6 +473,7 @@ describe('the second-factor seam', () => {
     expect(requiresSecondFactor('front_desk')).toBe(false);
     expect(requiresSecondFactor('auditor')).toBe(false);
     expect(requiresSecondFactor('client')).toBe(false);
+    expect(requiresSecondFactor('public')).toBe(false);
   });
 
   it('decides it from the role alone, so an identity provider reads it rather than restating it', () => {
@@ -436,7 +491,7 @@ describe('the inquiry stage', () => {
   });
 
   it('denies discard to everybody else, relationship or not', () => {
-    for (const role of ['therapist', 'associate', 'supervisor', 'auditor', 'client'] as Role[]) {
+    for (const role of ['therapist', 'associate', 'supervisor', 'auditor', 'client', 'public'] as Role[]) {
       const [actor, target] = insider(role);
       expect(can(actor, 'discard', 'inquiry', target).allowed, role).toBe(false);
     }

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { guarded, guardedAll } from '../auth/guard';
-import type { Actor } from '../auth/permissions';
-import { DAY, systemClock, type Clock } from '../clock';
+import { actingStaffId, type Actor } from '../auth/permissions';
+import { DAY, HOUR, systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
 import { Conflict, NotFound } from '../errors';
 import { SYSTEM_ACTOR } from '../scheduling/reminders';
@@ -75,10 +75,18 @@ const SELECT = {
   status: true, discardReason: true, discardedAt: true, takenById: true, createdAt: true,
 } as const;
 
+/**
+ * Write down a call — or accept one that arrived without a call at all.
+ *
+ * `takenById` is the staff member behind the act, and the public enquiry form
+ * has none: nobody took that one, it turned up. The null is not a gap in the
+ * data, it is the fact, and `actingStaffId` decides it from the role in the one
+ * module allowed to reason about roles.
+ */
 export async function createInquiry(actor: Actor, data: InquiryInput) {
   return guarded(
     { actor, action: 'create', resource: 'inquiry' },
-    (tx) => tx.inquiry.create({ data: { ...data, takenById: actor.id }, select: SELECT }),
+    (tx) => tx.inquiry.create({ data: { ...data, takenById: actingStaffId(actor) }, select: SELECT }),
   );
 }
 
@@ -282,6 +290,16 @@ async function purgeWhere(clock: Clock) {
  * said who it was.
  */
 export async function runInquiryPurge(clock: Clock = systemClock): Promise<string[]> {
+  // The public form's throttle rows age out here too. They are a side effect of
+  // that form, hold nothing anybody needs once their hour has passed, and this
+  // is already the sweep that destroys what the practice has no reason to keep
+  // — a second schedule for one `deleteMany` would be a second thing to forget
+  // to run. Inlined rather than imported from `public-inquiry.ts`, which
+  // imports `createInquiry` from here.
+  await prisma.inquiryThrottle.deleteMany({
+    where: { windowStartedAt: { lte: new Date(clock.now().getTime() - HOUR) } },
+  });
+
   const due = await prisma.inquiry.findMany({
     where: await purgeWhere(clock),
     select: { id: true },

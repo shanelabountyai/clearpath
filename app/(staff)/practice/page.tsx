@@ -140,6 +140,14 @@ async function PracticePage() {
                 <Field label="Referred-out retention">
                   {data.settings.referredOutRetentionDays} days &mdash; a record the practice acted, not a dead lead
                 </Field>
+                <Field label="Public enquiry form">
+                  {data.settings.publicInquiryEnabled
+                    ? <Badge tone="success">Open &mdash; /enquire accepts enquiries</Badge>
+                    : <Badge>Closed &mdash; the page shows the phone number instead</Badge>}
+                </Field>
+                <Field label="Public enquiry limit">
+                  {data.settings.publicInquiryPerHour} per submitter per hour
+                </Field>
               </dl>
               {/* The number is the setting; what it should be is not something
                   this software can tell anybody. */}
@@ -150,6 +158,17 @@ async function PracticePage() {
                 not an engineering one.</strong> The default here is a placeholder chosen so
                 the sweep has something to run against; a real practice sets it from its own
                 retention obligations, and this software cannot give it that advice.
+              </p>
+              {/* The kill switch, said out loud on the page that holds it. A
+                  practice being flooded should not have to find an engineer. */}
+              <p className="mt-3 text-caption text-subtle">
+                The public form is the only way into this database that does not
+                start with somebody logging in or holding a link.{' '}
+                <strong>Closing it takes effect immediately and needs no deploy.</strong>{' '}
+                It collects a name and a way to make contact and nothing else &mdash;
+                there is deliberately nowhere on it to describe a problem, because
+                a box like that on a counselling website receives health details
+                from people who have not yet spoken to anybody.
               </p>
               {data.settings.autoNoShowOnNoResponse && (
                 /* The honesty note the PRD asks for, on the page where the switch
