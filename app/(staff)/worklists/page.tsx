@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
-import { continuityQueue, unconfirmedSoon, vacationImpact, waitlistOpenings } from '../../../src/scheduling/worklists';
+import { continuityQueue, staleInquiries, unconfirmedSoon, vacationImpact, waitlistOpenings } from '../../../src/scheduling/worklists';
 import { openRescheduleRequests } from '../../../src/portal/service';
 import { openInboundReplies } from '../../../src/messaging/inbound';
 import { handleRescheduleRequest, markInboundHandled } from './actions';
@@ -14,9 +14,10 @@ export const dynamic = 'force-dynamic';
 
 async function WorkListsPage() {
   const { actor } = await requireSession();
-  const [unconfirmed, continuity, absences] = await Promise.all([
+  const [unconfirmed, continuity, staleAsks, absences] = await Promise.all([
     unconfirmedSoon(actor),
     continuityQueue(actor),
+    staleInquiries(actor),
     prisma.availabilityOverride.findMany({
       where: { kind: 'unavailable', toDate: { gte: systemClock.now() } },
       select: { userId: true, fromDate: true, toDate: true, reason: true, user: { select: { name: true } } },
@@ -232,6 +233,41 @@ async function WorkListsPage() {
                   </ul>
                 </Card>
               ))
+          )}
+        </section>
+
+        <section>
+          <h2 className="mb-2 text-subhead font-semibold">Calls nobody has closed out</h2>
+          <p className="mb-3 max-w-prose text-body text-muted">
+            Open inquiries three days old or more, oldest first. An unreturned call is the
+            same category of failure as a client with nothing booked — it just doesn&apos;t
+            have a record to go quiet in.
+          </p>
+          {staleAsks.length === 0 ? (
+            <EmptyState title="No open inquiry is more than three days old">
+              Calls appear here as they age past the window without being converted or discarded.
+            </EmptyState>
+          ) : (
+            <Card className="p-0">
+              <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                {staleAsks.map((i) => (
+                  <li key={i.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-body">
+                    <span className="flex items-center gap-2 font-medium">
+                      {i.lastName}, {i.firstName}
+                      {i.requestedClinician && (
+                        <span className="font-normal text-muted">asked for {i.requestedClinician.name}</span>
+                      )}
+                    </span>
+                    <span className="flex items-center gap-2">
+                      {i.phone
+                        ? <span className="font-mono text-body">{i.phone}</span>
+                        : <span className="text-caption text-subtle">no number on file</span>}
+                      <Badge tone={i.daysSince > 7 ? 'danger' : 'warning'}>{i.daysSince} days old</Badge>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
           )}
         </section>
 

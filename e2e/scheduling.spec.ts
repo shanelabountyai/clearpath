@@ -61,6 +61,14 @@ test.describe('the calendar', () => {
     await page.goto('/worklists');
     await expect(page.getByRole('heading', { name: 'Nobody has said they are coming' })).toBeVisible();
   });
+
+  /** P1-3. The seed's five open enquiries include some past the 3-day window. */
+  test('lists open enquiries nobody has closed out, oldest first', async ({ page }) => {
+    await actAs(page, USERS.frontDesk);
+    await page.goto('/worklists');
+    await expect(page.getByRole('heading', { name: 'Calls nobody has closed out' })).toBeVisible();
+    await expect(page.getByText(/days old/).first()).toBeVisible();
+  });
 });
 
 test.describe('the client form', () => {

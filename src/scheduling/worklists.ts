@@ -161,6 +161,42 @@ export async function continuityQueue(
 }
 
 /**
+ * Open inquiries nobody has closed out, oldest first (P1-3).
+ *
+ * An unreturned call is the continuity queue's failure mode wearing a
+ * different name: nobody said no, nobody booked, and the gap doesn't
+ * announce itself. `read: always` on `inquiry` (same cell `listInquiries`
+ * uses) — a six-person practice discusses its own intake, so this is not
+ * caseload-scoped.
+ */
+export async function staleInquiries(
+  actor: Actor,
+  opts: { clock?: Clock; olderThanDays?: number } = {},
+) {
+  const now = (opts.clock ?? systemClock).now();
+  const cutoff = new Date(now.getTime() - (opts.olderThanDays ?? 3) * DAY);
+
+  return guarded(
+    { actor, action: 'read', resource: 'inquiry' },
+    (tx) =>
+      tx.inquiry.findMany({
+        where: { status: 'open', createdAt: { lte: cutoff } },
+        select: {
+          id: true, firstName: true, lastName: true, phone: true,
+          referralSource: true, createdAt: true,
+          requestedClinician: { select: { name: true } },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+  ).then((rows) =>
+    rows.map((r) => ({
+      ...r,
+      daysSince: Math.floor((now.getTime() - r.createdAt.getTime()) / DAY),
+    })),
+  );
+}
+
+/**
  * The entry shape both waitlist surfaces read. Exactly one of the two branches
  * is present on any row — the database enforces that, not this select.
  */

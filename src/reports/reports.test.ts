@@ -5,7 +5,8 @@ import { prisma } from '../db';
 import { Forbidden } from '../errors';
 import { bookAppointment } from '../scheduling/booking';
 import { cancelAppointment, setStatus, waiveFee } from '../scheduling/lifecycle';
-import { continuityQueue, unconfirmedSoon, vacationImpact, waitlistMatches, waitlistOpenings } from '../scheduling/worklists';
+import { continuityQueue, staleInquiries, unconfirmedSoon, vacationImpact, waitlistMatches, waitlistOpenings } from '../scheduling/worklists';
+import { createInquiry, discardInquiry } from '../clients/inquiry';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { queryAuditLog, toCsv } from './audit';
 import { confirmationReport, utilizationReport, weeklyVolume, weekStart } from './utilization';
@@ -175,6 +176,49 @@ describe('the continuity queue', () => {
     await completeASessionOn(newer.id, '2026-09-01');
     const queue = await continuityQueue(actor(desk), { clock: fixedClock('2026-10-06T12:00:00Z') });
     expect(queue.map((c) => c.code)).toEqual(['TC-OLDER', 'TC-NEWER']);
+  });
+});
+
+describe('the stale inquiry work-list', () => {
+  const backdate = (id: string, createdAt: string) =>
+    prisma.inquiry.update({ where: { id }, data: { createdAt: new Date(createdAt) } });
+  const anInquiry = (over: Partial<Parameters<typeof createInquiry>[1]> = {}) =>
+    createInquiry(actor(desk), { firstName: 'A', lastName: 'Caller', referralSource: 'gp', ...over });
+
+  it('lists open inquiries past the window, oldest first', async () => {
+    const older = await anInquiry({ firstName: 'Old' });
+    await backdate(older.id, '2026-09-01T12:00:00Z');
+    const newer = await anInquiry({ firstName: 'New' });
+    await backdate(newer.id, '2026-09-05T12:00:00Z');
+
+    const list = await staleInquiries(actor(desk), { clock: fixedClock('2026-09-09T12:00:00Z') });
+    expect(list.map((i) => i.firstName)).toEqual(['Old', 'New']);
+    expect(list[0]!.daysSince).toBe(8);
+  });
+
+  it('leaves out an inquiry still inside the window', async () => {
+    const fresh = await anInquiry({ firstName: 'Fresh' });
+    await backdate(fresh.id, '2026-09-08T12:00:00Z');
+    expect(await staleInquiries(actor(desk), { clock: fixedClock('2026-09-09T12:00:00Z') })).toEqual([]);
+  });
+
+  it('leaves out an inquiry that has closed, however old', async () => {
+    const converted = await anInquiry({ firstName: 'Booked' });
+    await prisma.inquiry.update({ where: { id: converted.id }, data: { status: 'converted' } });
+    await backdate(converted.id, '2026-08-01T12:00:00Z');
+    const discarded = await anInquiry({ firstName: 'Gone' });
+    await discardInquiry(actor(desk), discarded.id, 'no_answer');
+    await backdate(discarded.id, '2026-08-01T12:00:00Z');
+
+    expect(await staleInquiries(actor(desk), { clock: fixedClock('2026-09-09T12:00:00Z') })).toEqual([]);
+  });
+
+  it('names who they asked for, when they asked for somebody', async () => {
+    const asked = await anInquiry({ firstName: 'Ask', requestedClinicianId: therapist.id });
+    await backdate(asked.id, '2026-09-01T12:00:00Z');
+
+    const list = await staleInquiries(actor(desk), { clock: fixedClock('2026-09-09T12:00:00Z') });
+    expect(list[0]!.requestedClinician?.name).toBe(therapist.name);
   });
 });
 

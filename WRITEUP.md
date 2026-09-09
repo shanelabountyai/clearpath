@@ -1769,6 +1769,30 @@ There is no live check as the number is typed, no fuzzy name match, and no
 warning anywhere except immediately after the record. Front desk searching for a
 client is already a page that exists.
 
+## 23. The call that never got a status change
+
+*P1-3 of `prd-intake-inquiry.md`: open enquiries older than N days, beside the
+continuity queue.*
+
+An unreturned call and a client with nothing booked are the same failure —
+somebody the practice was supposed to follow up with, and didn't — but an
+enquiry has no appointment table to go quiet in, so nothing before this could
+say how long one had been sitting. `staleInquiries` is `continuityQueue`'s
+shape read against `Inquiry` instead of `Client`: `status: 'open'` in place of
+"nothing booked", `createdAt` in place of a last session, oldest first.
+
+It reuses the cell `listInquiries` already reads under — `inquiry: { read:
+'always' }` for front desk, admin, and every clinician (P1-2's write-up
+covers why: a small practice discusses its own intake). No caseload scoping,
+because the read that grants it has none either.
+
+The window is a three-day default passed as an option, not a
+`PracticeSettings` column. `continuityGapDays` earned a settings row because a
+practice tunes what counts as a *clinical* lapse; how many days an unanswered
+phone call sits before front desk sees it on a work list is an operational
+default nobody has asked to move yet, and the column is one settings
+migration away the day someone does.
+
 ## Decisions log
 
 | Decision | Why |
@@ -1896,6 +1920,7 @@ client is already a page that exists.
 | The duplicate warning follows the record instead of gating it | A caller waits while a check runs, and front desk is stopped doing the one thing they were asked to do. Recording first also means the warning does not need to be believed: the call is on file either way, and `duplicate` was already in the discard vocabulary |
 | A match answers with a client code and nothing else, and nothing is written down | A name or a status would disclose the record the matrix was refusing. Storing the matched id would put a client id on a row built to be destroyed, which is the whole of P0-1 |
 | The match is scoped by the caseload rule, and gated by `may()` rather than `guarded` | A clinician must not learn from a grey warning line that a client exists outside their caseload. And the practice manager, whose client read is break-glass, gets silence rather than a denial row per recorded call and a break-glass prompt over a phone number |
+| The stale-inquiry window is a function default, not a `PracticeSettings` column | `continuityGapDays` exists because the gap defines a *clinical* lapse a practice tunes; how long an unreturned call sits before front desk sees it is an operational default nobody has asked to configure yet |
 
 ## What this project deliberately is not
 
