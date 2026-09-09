@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../db';
 import { Forbidden } from '../errors';
 import { actor, makeClient, makeUser, resetDb, settings } from '../test/harness';
-import { clientAffordances, consentStatus, createClient, effectiveFeeCents, getClient, listClients, setFee, updateClient } from './repository';
+import { clientAffordances, consentStatus, createClient, effectiveFeeCents, getClient, listClients, possibleDuplicates, setFee, updateClient } from './repository';
 
 let desk: Awaited<ReturnType<typeof makeUser>>;
 let therapist: Awaited<ReturnType<typeof makeUser>>;
@@ -69,6 +69,62 @@ describe('the caseload list', () => {
     await makeClient(other.id);
     await listClients(actor(desk));
     expect(await prisma.auditEvent.count()).toBe(1);
+  });
+});
+
+/**
+ * P1-2. The warning front desk sees after recording a call — what it is allowed
+ * to say, and to whom.
+ */
+describe('who we may already know', () => {
+  const contact = { phone: '555-0100', email: 'Sam@example.test' };
+  beforeEach(() => prisma.client.update({ where: { id: client.id }, data: contact }));
+
+  it('matches on the phone number, and answers with a code and nothing else', async () => {
+    const hits = await possibleDuplicates(actor(desk), { phone: '555-0100' });
+    expect(hits).toEqual([{ id: client.id, code: client.code }]);
+  });
+
+  it('matches on the email whatever case it was typed in', async () => {
+    const hits = await possibleDuplicates(actor(desk), { email: 'sam@EXAMPLE.test' });
+    expect(hits.map((h) => h.id)).toEqual([client.id]);
+  });
+
+  it('does not match a stranger', async () => {
+    expect(await possibleDuplicates(actor(desk), { phone: '555-0199' })).toEqual([]);
+  });
+
+  it('a call with no contact details is not a read at all', async () => {
+    expect(await possibleDuplicates(actor(desk), { phone: null, email: null })).toEqual([]);
+    expect(await prisma.auditEvent.count()).toBe(0);
+  });
+
+  it('logs the match as the client read it is', async () => {
+    await possibleDuplicates(actor(desk), contact);
+    const [row] = await prisma.auditEvent.findMany();
+    expect(row).toMatchObject({ actorId: desk.id, action: 'read', resource: 'client', allowed: true });
+  });
+
+  it('tells a clinician only about their own caseload', async () => {
+    const theirs = await makeClient(other.id);
+    await prisma.client.update({ where: { id: theirs.id }, data: { phone: '555-0177' } });
+
+    expect((await possibleDuplicates(actor(therapist), contact)).map((h) => h.id)).toEqual([client.id]);
+    // Somebody else's client stays somebody else's, even as a bare code.
+    expect(await possibleDuplicates(actor(therapist), { phone: '555-0177' })).toEqual([]);
+  });
+
+  it('a supervisor is warned about a supervisee\'s client too', async () => {
+    const supervisor = await makeUser('supervisor');
+    await prisma.user.update({ where: { id: therapist.id }, data: { supervisorId: supervisor.id } });
+    expect((await possibleDuplicates(actor(supervisor), contact)).map((h) => h.id)).toEqual([client.id]);
+  });
+
+  it('says nothing to the practice manager, and does not log a denial for asking', async () => {
+    expect(await possibleDuplicates(actor(admin), contact)).toEqual([]);
+    // Nobody tried to open a record: a break-glass prompt over a phone number
+    // would be the wrong offer, and a denial row here would bury the real ones.
+    expect(await prisma.auditEvent.count()).toBe(0);
   });
 });
 

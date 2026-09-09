@@ -13,9 +13,15 @@ import {
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 const orNull = (f: FormData, k: string) => str(f, k) || null;
 
+/**
+ * Record the call, then look for a client we may already have.
+ *
+ * In that order, and never the reverse: the duplicate check is a warning the
+ * page draws afterwards (P1-2), not a gate the caller waits behind.
+ */
 export async function recordInquiry(formData: FormData) {
   const { actor } = await requireSession();
-  await createInquiry(actor, {
+  const inquiry = await createInquiry(actor, {
     firstName: str(formData, 'firstName'),
     lastName: str(formData, 'lastName'),
     phone: orNull(formData, 'phone'),
@@ -25,7 +31,7 @@ export async function recordInquiry(formData: FormData) {
     referralNote: orNull(formData, 'referralNote'),
     note: orNull(formData, 'note'),
   });
-  revalidatePath('/inquiries');
+  redirect(`/inquiries?recorded=${inquiry.id}`);
 }
 
 export async function discard(formData: FormData) {

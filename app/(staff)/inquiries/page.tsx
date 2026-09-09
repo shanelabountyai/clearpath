@@ -3,6 +3,7 @@ import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
 import { may } from '../../../src/auth/guard';
 import { listInquiries, type InquiryStatus } from '../../../src/clients/inquiry';
+import { possibleDuplicates } from '../../../src/clients/repository';
 import { Badge, Card, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { withDenial } from '@/src/ui/denied';
 import { convert, discard, recordInquiry } from './actions';
@@ -52,6 +53,14 @@ async function InquiriesPage({
   const mayDiscard = may({ actor, action: 'discard', resource: 'inquiry' });
   const mayConvert = may({ actor, action: 'create', resource: 'client' });
 
+  // The call just recorded, and whether we may already have this person as a
+  // client (P1-2). The check is scoped by the same rule as the caseload list,
+  // so a clinician matches inside their own caseload and the practice manager
+  // matches nothing — see `possibleDuplicates`. An empty result is not a
+  // statement that this is a new person, so nothing is drawn for it.
+  const recorded = q.recorded ? inquiries.find((i) => i.id === q.recorded) : undefined;
+  const duplicates = recorded ? await possibleDuplicates(actor, recorded) : [];
+
   const converting = mayConvert && q.convert
     ? inquiries.find((i) => i.id === q.convert && i.status === 'open')
     : undefined;
@@ -93,6 +102,25 @@ async function InquiriesPage({
         <p className="mb-4 rounded-[var(--radius)] border px-3 py-2 text-body" style={{ borderColor: 'var(--danger)', background: 'var(--danger-soft)' }}>
           {q.error}
         </p>
+      )}
+
+      {duplicates.length > 0 && (
+        <div className="mb-4 rounded-[var(--radius-lg)] border px-4 py-3" style={{ borderColor: 'var(--warning)', background: 'var(--warning-soft)' }}>
+          <p className="font-semibold">We may already know this person</p>
+          {/* Codes only, and no name, no clinician, no status: enough to go and
+              look, and nothing about whoever is behind the code. */}
+          <p className="mt-1 max-w-prose text-body">
+            That phone number or email is already on{' '}
+            {duplicates.map((d, n) => (
+              <span key={d.id}>
+                {n > 0 && ', '}
+                <Link className="font-mono underline" href={`/clients/${d.id}`}>{d.code}</Link>
+              </span>
+            ))}
+            . The call is recorded either way — check, and if it is the same person,
+            discard this one as a duplicate.
+          </p>
+        </div>
       )}
 
       {q.converted && (

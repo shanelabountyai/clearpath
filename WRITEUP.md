@@ -1674,6 +1674,101 @@ something to run against. Same shape as the auto-no-show banner from §11 — th
 mechanism works, and a working mechanism is not a reason to ship a policy.
 
 
+## 22. The warning that arrives after the record
+
+*P1-2 of `prd-intake-inquiry.md`: matching a caller against the clients we
+already have, without telling anybody anything about them.*
+
+### It follows the record, it does not stand in front of it
+
+The obvious build is a check on the way in: type a phone number, wait, get told
+whether we know this person, then decide whether to save. That version has a
+person on the phone while a query runs, and it puts a machine between front desk
+and the thing they were asked to do, which is write the call down.
+
+So the order is inverted. `recordInquiry` creates the enquiry and redirects to
+`/inquiries?recorded=<id>`, and the page draws the warning if there is one:
+
+```ts
+const recorded = q.recorded ? inquiries.find((i) => i.id === q.recorded) : undefined;
+const duplicates = recorded ? await possibleDuplicates(actor, recorded) : [];
+```
+
+The call is on file either way. If the match is real, the ending already exists
+— `duplicate` has been in the discard vocabulary since P0-3 — so the warning
+does not need a decision, it needs a next step that was already there.
+
+An empty result draws nothing at all. "No match" is not the same statement as
+"this is a new person", and a green tick saying the second one would be a
+confident lie in exactly the case that matters: a caller whose old record is in
+somebody else's caseload.
+
+### A code, and nothing else, and nothing written down
+
+What comes back is `{ id, code }`. Not a name, not a clinician, not a status,
+not when they were last seen — enough to go and look, and nothing about
+whoever is behind the code.
+
+Nothing is stored either. The tempting version writes the matched client id
+onto the enquiry, so the report can later count how many callers were already
+ours. That is a client id on a row built to be destroyed, which is the single
+thing P0-1 exists to prevent, and the PRD had already answered it for the
+`duplicate` discard reason: the code is enough.
+
+### The scope was already in the matrix
+
+The interesting question is not front desk's — they read every client already.
+It is a clinician's. A therapist takes their own call, types a number, and a
+naive match tells them a client exists whose record they may not open. That is a
+disclosure, in one line of grey text, of exactly what `read: treatingOrSupervising`
+refuses.
+
+So the match reuses the caseload list's scope rather than inventing one, which
+is what the extraction of `caseloadWhere` is for:
+
+```ts
+async function caseloadWhere(actor: Actor) {
+  if (!ownCaseloadOnly(actor)) return {};
+  ...
+  return { treatingClinicianId: { in: [actor.id, ...supervisees] } };
+}
+```
+
+Front desk matches everyone, a clinician matches the clients they treat, a
+supervisor's includes their supervisees'. No new cell, no new rule, and the
+answer moves on its own the day a caseload is reassigned.
+
+The practice manager is the case that decides the shape of the function. Their
+client read is `breakGlass`, so a `guarded` call would refuse them — correctly —
+and write a denial row for every call they record. That is a log full of
+refusals nobody asked for, burying the ones that mean something, and a
+break-glass prompt offered over a phone number is an invitation to open a
+clinical record for a clerical reason. So the check is `may()` first and
+`guarded` only when the answer is yes:
+
+```ts
+if (OR.length === 0 || !may({ actor, action: 'read', resource: 'client', target: OWN_CASELOAD(actor) })) {
+  return [];
+}
+```
+
+Two silences that are not the same silence: an enquiry with no contact details
+is not an access event, and an actor who may not read clients did not attempt
+one. Neither is a denial, and neither is logged. When the match does run it is
+logged as what it is — a `read` on `client`, one row, one access.
+
+### What this deliberately does not do
+
+Matching is exact string equality. `555-0101` and `(555) 010-1` are different
+people to this code, and a warning that sometimes misses is the failure this is
+allowed to have — a warning that sometimes blocks is not. Normalising phone
+numbers is a database function and a migration, and it can wait for somebody to
+report a miss.
+
+There is no live check as the number is typed, no fuzzy name match, and no
+warning anywhere except immediately after the record. Front desk searching for a
+client is already a page that exists.
+
 ## Decisions log
 
 | Decision | Why |
@@ -1798,6 +1893,9 @@ mechanism works, and a working mechanism is not a reason to ship a policy.
 | Time-to-conversion is a median, and `null` on an empty sample | One caller who rang in March and booked in September is a true story about a person and a false one about a practice. And a practice that converted nobody has no conversion time; "0.0 days" would be the most flattering way to report the worst result |
 | The report does not answer "call to first session", and a *comment* is what stopped it | The P0-1 lint greps source as text and matched the words explaining why the join was absent. The check is right: one that can be argued out of a match is one somebody will argue out of a match — and the number needed the clinical join the invariant exists to forbid |
 | `inquiryRetentionDays` ships with the sentence saying nobody here can choose it | How long a discarded enquiry survives is a jurisdictional legal question. The default is a placeholder so the sweep has something to run against, and a working mechanism is not a reason to ship a policy |
+| The duplicate warning follows the record instead of gating it | A caller waits while a check runs, and front desk is stopped doing the one thing they were asked to do. Recording first also means the warning does not need to be believed: the call is on file either way, and `duplicate` was already in the discard vocabulary |
+| A match answers with a client code and nothing else, and nothing is written down | A name or a status would disclose the record the matrix was refusing. Storing the matched id would put a client id on a row built to be destroyed, which is the whole of P0-1 |
+| The match is scoped by the caseload rule, and gated by `may()` rather than `guarded` | A clinician must not learn from a grey warning line that a client exists outside their caseload. And the practice manager, whose client read is break-glass, gets silence rather than a denial row per recorded call and a break-glass prompt over a phone number |
 
 ## What this project deliberately is not
 

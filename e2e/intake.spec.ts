@@ -33,6 +33,30 @@ test.describe('the intake desk', () => {
     await expect(row.getByRole('link', { name: 'Convert to client' })).toHaveCount(0);
   });
 
+  /**
+   * P1-2. The warning arrives *after* the record, and says one thing: there is
+   * a code worth looking at. No name, no clinician, no status — and the call is
+   * on file either way, because a person on the phone is not made to wait.
+   */
+  test('a caller we may already know is flagged, by code and nothing else', async ({ page }) => {
+    const last = caller();
+    await actAs(page, USERS.frontDesk);
+    await page.goto('/inquiries');
+
+    await page.getByLabel('First name').fill('Sam');
+    await page.getByLabel('Last name').fill(last);
+    // TC-001's number, straight out of the seed.
+    await page.getByLabel('Phone').fill('555-0101');
+    await page.getByRole('button', { name: 'Record the call' }).click();
+
+    await expect(page.getByText('We may already know this person')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'TC-001' })).toBeVisible();
+    // Warned, never blocked: the call is recorded and can still be converted.
+    const row = page.locator('li', { hasText: last });
+    await expect(row.getByText('open')).toBeVisible();
+    await expect(row.getByRole('link', { name: 'Convert to client' })).toBeVisible();
+  });
+
   test('front desk ends one with a reason code, and it is a code', async ({ page }) => {
     const last = caller();
     await actAs(page, USERS.frontDesk);

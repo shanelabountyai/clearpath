@@ -81,6 +81,24 @@ export async function getClient(actor: Actor, clientId: string) {
 }
 
 /**
+ * The clients a role is scoped to, as a `where` fragment.
+ *
+ * A supervisor's caseload is their own plus their supervisees'. Front desk gets
+ * no fragment because they book for everyone, and the practice manager never
+ * reaches a query that uses this — their client read is break-glass.
+ */
+async function caseloadWhere(actor: Actor) {
+  if (!ownCaseloadOnly(actor)) return {};
+  const supervisees = includesSuperviseeCaseloads(actor)
+    ? (await prisma.user.findMany({ where: { supervisorId: actor.id }, select: { id: true } })).map((u) => u.id)
+    : [];
+  return { treatingClinicianId: { in: [actor.id, ...supervisees] } };
+}
+
+/** The relationship facts a caseload-wide read asserts about itself. */
+const OWN_CASELOAD = (actor: Actor) => ({ clinicianId: actor.id, treatingSupervisorId: actor.id });
+
+/**
  * The caseload list. A clinician sees their own clients; front desk sees
  * everyone, because they book for everyone.
  *
@@ -89,21 +107,14 @@ export async function getClient(actor: Actor, clientId: string) {
  * record opens that actually matter.
  */
 export async function listClients(actor: Actor, opts: { search?: string } = {}) {
-  const mineOnly = ownCaseloadOnly(actor);
-  // A supervisor's list is their own caseload plus their supervisees'.
-  const supervisees = includesSuperviseeCaseloads(actor)
-    ? (await prisma.user.findMany({ where: { supervisorId: actor.id }, select: { id: true } })).map((u) => u.id)
-    : [];
+  const scope = await caseloadWhere(actor);
 
   return guarded(
-    {
-      actor, action: 'read', resource: 'client',
-      target: { clinicianId: actor.id, treatingSupervisorId: actor.id },
-    },
+    { actor, action: 'read', resource: 'client', target: OWN_CASELOAD(actor) },
     (tx) =>
       tx.client.findMany({
         where: {
-          ...(mineOnly ? { treatingClinicianId: { in: [actor.id, ...supervisees] } } : {}),
+          ...scope,
           ...(opts.search
             ? {
                 OR: [
@@ -116,6 +127,55 @@ export async function listClients(actor: Actor, opts: { search?: string } = {}) 
         },
         select: { ...DEMOGRAPHICS, treatingClinician: { select: { id: true, name: true } } },
         orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      }),
+  );
+}
+
+/**
+ * "We may already know this person" (P1-2).
+ *
+ * A warning, never a block, and it follows the record rather than standing in
+ * front of it — nobody on a phone waits while we decide whether we have met
+ * them. If the match is real, `duplicate` is already in the discard vocabulary
+ * and that is how the call ends.
+ *
+ * Codes, and nothing else. A match says a record exists to go and look at; it
+ * says nothing about the person in it, and nothing is written down either. A
+ * matched id stored on the enquiry would be a client id on a row built to be
+ * destroyed, which is the one thing P0-1 exists to prevent.
+ *
+ * Scoped by the same rule as the caseload list, so this discloses nothing the
+ * matrix does not already allow: front desk matches against everyone, a
+ * clinician against the clients they treat, and the practice manager gets no
+ * match at all rather than a reason to break glass over a phone number. `may`
+ * rather than `guarded` for that last one — nobody asked to open a record, and
+ * a denial row per recorded call would bury the denials that mean something.
+ *
+ * Matching is exact. A number typed with different punctuation is missed, and
+ * a warning that sometimes misses is the failure this is allowed to have; a
+ * warning that sometimes blocks is not.
+ */
+export async function possibleDuplicates(
+  actor: Actor,
+  contact: { phone?: string | null; email?: string | null },
+): Promise<{ id: string; code: string }[]> {
+  const OR = [
+    ...(contact.phone ? [{ phone: contact.phone }] : []),
+    ...(contact.email ? [{ email: { equals: contact.email, mode: 'insensitive' as const } }] : []),
+  ];
+  // Nothing to match on is not an access event, so it is not an audit row.
+  if (OR.length === 0 || !may({ actor, action: 'read', resource: 'client', target: OWN_CASELOAD(actor) })) {
+    return [];
+  }
+  const scope = await caseloadWhere(actor);
+
+  return guarded(
+    { actor, action: 'read', resource: 'client', target: OWN_CASELOAD(actor) },
+    (tx) =>
+      tx.client.findMany({
+        where: { ...scope, OR },
+        select: { id: true, code: true },
+        orderBy: { code: 'asc' },
       }),
   );
 }
