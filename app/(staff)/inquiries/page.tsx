@@ -2,11 +2,11 @@ import Link from 'next/link';
 import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
 import { may } from '../../../src/auth/guard';
-import { listInquiries, previewInquiryPurge, type InquiryStatus } from '../../../src/clients/inquiry';
+import { clinicianCapacity, listInquiries, previewInquiryPurge, type InquiryStatus } from '../../../src/clients/inquiry';
 import { possibleDuplicates } from '../../../src/clients/repository';
 import { Badge, Card, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { withDenial } from '@/src/ui/denied';
-import { convert, discard, recordInquiry } from './actions';
+import { assign, convert, discard, recordInquiry, setAccepting } from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,19 +38,33 @@ async function InquiriesPage({
   const { actor } = await requireSession();
   const q = await searchParams;
   const status = (q.status as InquiryStatus | undefined) || undefined;
+  // "Yours" is the clinician's own queue. It is a filter on a list they can
+  // already read in full, not a narrower permission — the matrix says
+  // `read: always` and a six-person practice discusses its own intake.
+  const mine = q.assigned === 'me';
 
-  const inquiries = await listInquiries(actor, { status });
+  const inquiries = await listInquiries(actor, { status, assignedTo: mine ? actor.id : undefined });
   // P1-4: what the next sweep would destroy, so the window is visible before
   // it fires — only worth asking when discarded rows are actually on screen.
   const dueForPurge = status === 'discarded'
     ? new Set((await previewInquiryPurge(actor)).map((r) => r.id))
     : new Set<string>();
-  const clinicians = await prisma.user.findMany({
-    where: { active: true, role: { in: ['therapist', 'associate', 'supervisor'] } },
-    select: { id: true, name: true },
-    orderBy: { name: 'asc' },
-  });
+  // Declared and measured, side by side (P2). Everyone who works intake reads
+  // it; only the clinician it is about may change their own row, and the
+  // practice manager deliberately may not change anybody's. It is also the
+  // roster the conversion and assignment pickers draw from — one read, because
+  // "who can I send this to" and "who has room" are the same question.
+  const clinicians = await clinicianCapacity(actor);
+  const byId = new Map(clinicians.map((c) => [c.id, c]));
   const names = new Map(clinicians.map((c) => [c.id, c.name]));
+
+  const mayAssign = may({ actor, action: 'update', resource: 'inquiry' });
+  // Holding this is what makes somebody a clinician on this page, with no code
+  // outside `src/auth/` comparing a role (hard rule 1).
+  const mayDeclareCapacity = may({
+    actor, action: 'update', resource: 'capacity', target: { subjectUserId: actor.id },
+  });
+  const own = mayDeclareCapacity ? byId.get(actor.id) : undefined;
 
   // Both affordances come from the matrix, never from the role. Clinicians
   // take calls and cannot end them; conversion needs `create` on `client`,
@@ -90,13 +104,25 @@ async function InquiriesPage({
                 href={s ? `/inquiries?status=${s}` : '/inquiries'}
                 className="rounded-[var(--radius)] border px-2.5 py-1"
                 style={{
-                  borderColor: status === s ? 'var(--accent)' : 'var(--border)',
-                  background: status === s ? 'var(--accent-soft)' : 'transparent',
+                  borderColor: !mine && status === s ? 'var(--accent)' : 'var(--border)',
+                  background: !mine && status === s ? 'var(--accent-soft)' : 'transparent',
                 }}
               >
                 {s ? s.slice(0, 1).toUpperCase() + s.slice(1) : 'All'}
               </Link>
             ))}
+            {mayDeclareCapacity && (
+              <Link
+                href="/inquiries?assigned=me&status=open"
+                className="rounded-[var(--radius)] border px-2.5 py-1"
+                style={{
+                  borderColor: mine ? 'var(--accent)' : 'var(--border)',
+                  background: mine ? 'var(--accent-soft)' : 'transparent',
+                }}
+              >
+                Yours{own?.queued ? ` (${own.queued})` : ''}
+              </Link>
+            )}
           </nav>
         }
       />
@@ -164,7 +190,10 @@ async function InquiriesPage({
                 <Text name="dateOfBirth" label="Date of birth" type="date" required />
                 <Pick name="treatingClinicianId" label="Treating clinician"
                   defaultValue={converting.requestedClinicianId ?? ''}
-                  options={clinicians.map((c) => ({ value: c.id, label: c.name }))} />
+                  options={clinicians.map((c) => ({
+                    value: c.id,
+                    label: c.accepting ? c.name : `${c.name} — not taking anybody new`,
+                  }))} />
                 <Pick name="language" label="Language" defaultValue="en"
                   options={[{ value: 'en', label: 'English' }, { value: 'es', label: 'Spanish' }]} />
                 <Pick name="templateKey" label="Intake packet to send" defaultValue=""
@@ -209,8 +238,53 @@ async function InquiriesPage({
                   </p>
                   {i.note && <p className="mt-1 max-w-prose text-body text-muted">{i.note}</p>}
 
-                  {i.status === 'open' && (mayConvert || mayDiscard) && (
+                  {i.status === 'open' && (
+                    <p className="mt-1 text-caption">
+                      {i.assignedClinicianId ? (
+                        <>
+                          <span className="text-muted">In </span>
+                          <span className="font-medium">{names.get(i.assignedClinicianId) ?? 'someone'}</span>
+                          <span className="text-muted">&rsquo;s queue</span>
+                          {/* The warning front desk needs *after* the fact too:
+                              somebody may have closed since the call landed. */}
+                          {byId.get(i.assignedClinicianId)?.accepting === false && (
+                            <span className="ml-1.5"><Badge tone="warning">not taking anybody new</Badge></span>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-subtle">Nobody&rsquo;s queue yet</span>
+                      )}
+                    </p>
+                  )}
+
+                  {i.status === 'open' && (mayConvert || mayDiscard || mayAssign) && (
                     <div className="mt-2 flex flex-wrap items-center gap-2">
+                      {mayAssign && (
+                        <form action={assign} className="flex items-center gap-1.5">
+                          <input type="hidden" name="id" value={i.id} />
+                          <label htmlFor={`assign-${i.id}`} className="sr-only">Whose queue this call goes in</label>
+                          <select
+                            id={`assign-${i.id}`} name="clinicianId"
+                            defaultValue={i.assignedClinicianId ?? ''}
+                            className="rounded-[var(--radius)] border px-2 py-1 text-caption"
+                            style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
+                          >
+                            <option value="">Nobody</option>
+                            {/* Capacity rides on the option label, so the answer
+                                is in front of the person choosing rather than a
+                                scroll away. It never removes anybody: a caller
+                                who asked for Alex by name still goes to Alex. */}
+                            {clinicians.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}{c.accepting ? '' : ' — closed'} · {c.caseload} clients, {c.queued} waiting
+                              </option>
+                            ))}
+                          </select>
+                          <button className="rounded-[var(--radius)] border px-2.5 py-1 text-caption font-medium" style={{ borderColor: 'var(--border-strong)' }}>
+                            Assign
+                          </button>
+                        </form>
+                      )}
                       {mayConvert && (
                         <Link
                           href={`/inquiries?convert=${i.id}`}
@@ -245,6 +319,46 @@ async function InquiriesPage({
             </ul>
           )}
         </div>
+
+        <div className="space-y-4">
+        <Card>
+          <h2 className="mb-1 font-semibold">Who has room</h2>
+          <p className="mb-3 max-w-prose text-caption text-subtle">
+            Two numbers and one answer. The counts are read off the rows — active
+            clients, and calls already waiting in that queue — so nobody has to keep
+            them true. Whether a clinician is taking somebody new is theirs to say,
+            and nobody else&rsquo;s: the practice manager cannot set it either.
+          </p>
+          <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+            {clinicians.map((c) => (
+              <li key={c.id} className="flex items-center justify-between gap-2 py-2 text-body">
+                <span>
+                  {c.name}
+                  <span className="ml-1.5 text-caption text-subtle">
+                    {c.caseload} clients · {c.queued} waiting
+                  </span>
+                </span>
+                {c.accepting
+                  ? <Badge tone="success">open</Badge>
+                  : <Badge tone="neutral">closed</Badge>}
+              </li>
+            ))}
+          </ul>
+
+          {own && (
+            <form action={setAccepting} className="mt-3 flex items-center gap-2 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
+              {/* No subject field: the action reads it off the session, so there
+                  is nothing here to point at another clinician. */}
+              <input type="hidden" name="accepting" value={own.accepting ? 'no' : 'yes'} />
+              <p className="flex-1 text-caption text-muted">
+                You are {own.accepting ? 'taking new clients' : 'not taking anybody new'}.
+              </p>
+              <button className="rounded-[var(--radius)] border px-2.5 py-1 text-caption font-medium" style={{ borderColor: 'var(--border-strong)' }}>
+                {own.accepting ? 'Close my books' : 'Open my books'}
+              </button>
+            </form>
+          )}
+        </Card>
 
         <Card>
           <h2 className="mb-1 font-semibold">Record a call</h2>
@@ -282,6 +396,7 @@ async function InquiriesPage({
             </button>
           </form>
         </Card>
+        </div>
       </div>
     </>
   );

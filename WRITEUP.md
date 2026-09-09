@@ -1940,6 +1940,119 @@ is. The fixture now discards before it deletes — the same two-step the purge
 takes — which makes the teardown a demonstration of the invariant rather than a
 workaround for it.
 
+## 26. Two hands on one decision
+
+Front desk takes a call and has to decide where it goes. That decision has two
+inputs and they belong to two different people: *where should this go* is
+operations, and *can I take somebody new* is a judgement about a caseload only
+the person carrying it can make. Almost every version of this feature collapses
+them — one screen, one role, one column — and the collapse is invisible until
+the day somebody is marked as having room by somebody who does not have to see
+the client.
+
+So the feature is two cells in the matrix, deliberately held apart.
+
+**Assignment reuses a cell that already existed.** `Inquiry.assignedClinicianId`
+is written by `assignInquiry`, guarded by `update` on `inquiry`. Front desk and
+the practice manager hold that cell; clinicians do not, and that was already
+true before this feature — P0-4 gave clinicians `read` and `create` on the
+grounds that recording a call is clerical and ending one is operations. Deciding
+where a call goes is the same category, so the answer was already in the table
+and no new cell had to be reviewed. A clinician cannot assign a call to
+themselves, which reads as a restriction and is really the same rule: taking
+work is still a decision about where the practice's intake goes.
+
+It is separate from `requestedClinicianId` on purpose. One is what the caller
+said and the other is what the practice decided, and a practice that collapses
+them loses the case it most needs to see: the call that went somewhere other
+than the name the person asked for.
+
+**Capacity is a new resource, and the interesting cell is a denial.**
+
+The obvious home for "am I taking new clients" is a boolean on `User`, edited
+through `user: { update: … }`. The practice manager already holds that cell. The
+problem is what else is in it: `user.update` is roles and supervision, and
+giving a clinician the reach to set their own capacity through it gives them the
+reach to set their own role. That is the argument P0-4 already makes about
+`discard` and `delete` — a power nobody named is a power nobody reviewed — so
+capacity became its own resource holding exactly one boolean about oneself, with
+a new rule to match:
+
+```ts
+self: (a, t) => t.subjectUserId !== undefined && a.id === t.subjectUserId,
+```
+
+Narrower than `recipient`, which is about delivery. This one says the row has no
+meaning apart from whose it is.
+
+| role | capacity |
+|---|---|
+| therapist / associate / supervisor | `read: always`, `update: self` |
+| front_desk | `read: always` |
+| admin | `read: always` |
+| auditor / client / public | — |
+
+Admin reads every row and writes none. It is the only cell on this page the
+practice manager is denied, and there is nothing clinical in it to justify the
+denial — which is exactly why it is worth stating. A manager who can mark a
+clinician open has changed what the signal means, from *what this clinician can
+carry* to *what the practice would like*, and the row they overwrote was the
+only record that somebody disagreed. Deactivating a departing clinician is still
+`user.update`, which admin does hold; declaring that somebody has room is not
+the same act. A supervisor cannot set it for a supervisee either, and that one
+took a test of its own, because supervision reaches everything else in this
+codebase except process notes.
+
+The service function takes no subject:
+
+```ts
+export async function setCapacity(actor: Actor, accepting: boolean)
+```
+
+A parameter would be a second way to name a subject, and the only thing it could
+ever express is the case the matrix exists to refuse. The form has no hidden
+field for it either.
+
+**Half the signal is never typed.**
+
+`acceptingNewClients` is declared and maintained by a person. Caseload and queue
+depth are not: they are counted off rows that already exist — active clients
+with that treating clinician, open enquiries already in that queue — through a
+filtered relation count, with no column anywhere.
+
+That asymmetry is the whole of the design. A declared boolean is cheap to keep
+true because it changes when the clinician decides it changes. A declared
+*number* is wrong by Thursday, and a stale capacity figure is worse than none,
+because front desk would believe it. So the number is measured and the judgement
+is declared, and each is held by the thing that can actually keep it honest.
+
+**A signal, never a gate.**
+
+Assigning a call to a clinician who has closed their books succeeds. The warning
+is drawn on the row rather than in place of the control, and it stays there
+afterwards, because somebody can close their books an hour after a call landed
+with them.
+
+Blocking would have been one line and would have been wrong. A caller who rang
+and asked for Alex by name belongs with Alex whatever Alex's books say, and a
+hard block teaches exactly one behaviour: flip the boolean to get past it, which
+destroys the signal for everybody else. `no_capacity` was already in the discard
+vocabulary from P0-3, and it is the honest ending when the answer is really no.
+
+The last piece is what the page uses to decide whether to draw the toggle. Not a
+role check — hard rule 1 forbids one and the grep test enforces it:
+
+```ts
+const mayDeclareCapacity = may({
+  actor, action: 'update', resource: 'capacity', target: { subjectUserId: actor.id },
+});
+```
+
+"Is this person a clinician" is not a question the page asks. "May this person
+declare their own capacity" is, and the answer draws both the toggle and the
+*Yours* filter that shows their own queue. The two questions have the same
+answer today. Only one of them stays correct when the matrix changes.
+
 ## Decisions log
 
 | Decision | Why |
@@ -2079,6 +2192,14 @@ workaround for it.
 | The purge preview shares its cutoff with the purge, not its own copy | Two candidate-set computations that are supposed to always agree are one of them one edit away from silently not; `purgeCutoff` is read by both, so they cannot drift |
 | The preview reads under `inquiry: { read: 'always' }`, with no new cell | Naming what the next sweep will destroy is not a new power over the row — it is the same read `listInquiries` already grants, pointed at a narrower `where` |
 | `spam` and `referred_out` get their own retention column, the other five reasons do not | Both are `PracticeSettings` fields with their own default, same pattern as `inquiryRetentionDays` — not a per-reason table, because five of the seven reasons have never asked for a different clock than the general one and a column nobody reads is the thing this project's own ladder argues against |
+| Capacity is its own resource, not an `update` on `user` | `user.update` is roles and supervision; a clinician reaching their own capacity through it reaches their own role. One boolean about oneself gets its own cell, for the reason `discard` is not `delete` |
+| The practice manager reads capacity and cannot set it | A manager who can mark a clinician open has changed the signal from what that clinician can carry into what the practice would like, and overwritten the only record that somebody disagreed. Removing a departing clinician is `user.update`; declaring somebody has room is a different act |
+| `setCapacity` takes no subject id | A parameter naming who to set would be a second way to express the one case the matrix exists to refuse. The actor is the subject, and the form has no hidden field either |
+| Capacity is declared, caseload and queue depth are measured | A declared boolean changes when the clinician decides it changes. A declared number is wrong by Thursday, and front desk would believe it — so the counts come off rows that already exist, through a filtered relation count and no column |
+| A closed clinician can still be assigned a call | A caller who asked for Alex by name belongs with Alex. A hard block teaches one behaviour — flip the boolean to get past it — which destroys the signal for everybody. `no_capacity` was already the honest ending |
+| Assignment reuses `update` on `inquiry` rather than adding an `assign` action | Deciding where a call goes is the same category as declaring one dead, and P0-4 already put that cell with front desk and the practice manager. A clinician cannot assign one to themselves, which is the same rule read from the other side |
+| `assignedClinicianId` is separate from `requestedClinicianId` | One is what the caller said, the other is what the practice decided. Collapsing them loses the case worth seeing: the call sent somewhere other than the name that was asked for |
+| The page decides what to draw with `may(… 'capacity', { subjectUserId: actor.id })` | "Is this person a clinician" is not a question a page may ask (hard rule 1). "May this person declare their own capacity" is, and only one of the two stays correct when the matrix changes |
 | The purge's candidate query is one `OR` of per-reason cutoffs, not five separate queries | `purgeWhere` still runs once, for the same reason `purgeCutoff` used to be shared between the purge and its preview: two computations that must always agree are one of them one edit away from silently not |
 
 ## What this project deliberately is not

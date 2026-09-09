@@ -29,6 +29,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     form_request: 'read create',
     portal_link: 'read create',
     inquiry: 'read create update discard',
+    capacity: 'read',
   }),
   therapist: spec({
     client: 'read update',
@@ -43,6 +44,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     alert: 'read update',
     portal_link: 'read create',
     inquiry: 'read create',
+    capacity: 'read update',
   }),
   associate: spec({
     client: 'read update',
@@ -57,6 +59,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     alert: 'read update',
     portal_link: 'read create',
     inquiry: 'read create',
+    capacity: 'read update',
   }),
   supervisor: spec({
     client: 'read update',
@@ -71,6 +74,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     alert: 'read update',
     portal_link: 'read create',
     inquiry: 'read create',
+    capacity: 'read update',
   }),
   admin: spec({
     client: 'read update', // break-glass only
@@ -83,6 +87,9 @@ const ALLOWED: Record<Role, Set<string>> = {
     portal_link: 'read create',
     user: 'read create update',
     inquiry: 'read create update discard',
+    // Read, and no update anywhere in this row: the practice manager is the one
+    // person who cannot declare that a clinician has room.
+    capacity: 'read',
   }),
   auditor: spec({ audit_log: 'read' }),
   // The tokenized door, and nothing else in the matrix. `update` is confirm and
@@ -101,18 +108,22 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
     form_template: 'read',
     form_request: 'read create',
     inquiry: 'read create',
+    // `read` only: `update` is `self`, so without a subject it decides never.
+    capacity: 'read',
   }),
   associate: spec({
     appointment: 'read create update',
     form_template: 'read',
     form_request: 'read create',
     inquiry: 'read create',
+    capacity: 'read',
   }),
   supervisor: spec({
     appointment: 'read create update',
     form_template: 'read',
     form_request: 'read create',
     inquiry: 'read create',
+    capacity: 'read',
   }),
   admin: spec({
     fee: 'read update waive',
@@ -123,6 +134,7 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
     portal_link: 'read create',
     user: 'read create update',
     inquiry: 'read create update discard',
+    capacity: 'read',
   }),
   auditor: ALLOWED.auditor,
   // Never unconditional: without a row that is theirs, a token decides `never`.
@@ -140,7 +152,7 @@ const insider = (role: Role): [Actor, Target] => [
   { id: ME, role, breakGlass: { reason: 'client in crisis' } },
   {
     authorId: ME, authorSupervisorId: ME, clinicianId: ME, recipientId: ME,
-    treatingSupervisorId: ME, ownerClientId: ME,
+    treatingSupervisorId: ME, ownerClientId: ME, subjectUserId: ME,
   },
 ];
 /** Actor supervises the target's author but wrote nothing. */
@@ -148,7 +160,7 @@ const oversight = (role: Role): [Actor, Target] => [
   { id: ME, role },
   {
     authorId: OTHER, authorSupervisorId: ME, clinicianId: OTHER, recipientId: OTHER,
-    treatingSupervisorId: ME, ownerClientId: OTHER,
+    treatingSupervisorId: ME, ownerClientId: OTHER, subjectUserId: OTHER,
   },
 ];
 /** Actor holds no relationship at all. */
@@ -156,7 +168,7 @@ const stranger = (role: Role): [Actor, Target] => [
   { id: ME, role },
   {
     authorId: OTHER, authorSupervisorId: OTHER, clinicianId: OTHER, recipientId: OTHER,
-    treatingSupervisorId: OTHER, ownerClientId: OTHER,
+    treatingSupervisorId: OTHER, ownerClientId: OTHER, subjectUserId: OTHER,
   },
 ];
 
@@ -373,6 +385,55 @@ describe('the client role reaches exactly one cell, and only their own row', () 
     // nothing for the roles that already have a rule.
     expect(can({ id: ME, role: 'auditor' }, 'update', 'appointment', { ownerClientId: ME }).allowed)
       .toBe(false);
+  });
+});
+
+describe('capacity is declared by the clinician it is about, and by nobody else', () => {
+  const alex: Actor = { id: ME, role: 'therapist' };
+  const own: Target = { subjectUserId: ME };
+  const somebodyElse: Target = { subjectUserId: OTHER };
+
+  it('a clinician sets their own', () => {
+    expect(can(alex, 'update', 'capacity', own).allowed).toBe(true);
+    expect(can(alex, 'update', 'capacity', own).rule).toBe('self');
+  });
+
+  it('and cannot set a colleague\'s, at any seniority', () => {
+    for (const role of ['therapist', 'associate', 'supervisor'] as Role[]) {
+      expect(can({ id: ME, role }, 'update', 'capacity', somebodyElse).allowed, role).toBe(false);
+    }
+  });
+
+  it('a supervisor cannot set it for a supervisee they otherwise oversee', () => {
+    expect(can({ id: ME, role: 'supervisor' }, 'update', 'capacity', {
+      subjectUserId: OTHER, authorSupervisorId: ME, treatingSupervisorId: ME, clinicianId: OTHER,
+    }).allowed).toBe(false);
+  });
+
+  it('the practice manager reads every row and writes none — break-glass included', () => {
+    const ray: Actor = { id: ME, role: 'admin' };
+    expect(can(ray, 'read', 'capacity', somebodyElse).allowed).toBe(true);
+    expect(can(ray, 'update', 'capacity', somebodyElse).allowed).toBe(false);
+    expect(can(ray, 'update', 'capacity', own).allowed).toBe(false);
+    expect(can({ ...ray, breakGlass: { reason: 'short staffed' } }, 'update', 'capacity', somebodyElse).allowed).toBe(false);
+  });
+
+  it('front desk reads it to decide where a call goes, and never writes it', () => {
+    const dana: Actor = { id: ME, role: 'front_desk' };
+    expect(can(dana, 'read', 'capacity', somebodyElse).allowed).toBe(true);
+    expect(can(dana, 'update', 'capacity', own).allowed).toBe(false);
+  });
+
+  it('is unreachable without a subject — a missing target is never a match', () => {
+    expect(can(alex, 'update', 'capacity', {}).allowed).toBe(false);
+  });
+
+  it('is not reachable by the auditor, the client link, or the public form', () => {
+    for (const role of ['auditor', 'client', 'public'] as Role[]) {
+      for (const action of ACTIONS) {
+        expect(can({ id: ME, role }, action, 'capacity', own).allowed, `${role}/${action}`).toBe(false);
+      }
+    }
   });
 });
 

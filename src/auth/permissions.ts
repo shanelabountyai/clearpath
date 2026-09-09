@@ -39,7 +39,16 @@ export type Resource =
   | 'portal_link' // a client's own tokenized door into their schedule
   | 'audit_log'
   | 'user' // accounts, roles, supervision relationships
-  | 'inquiry'; // a caller, before there is a client record to put them in
+  | 'inquiry' // a caller, before there is a client record to put them in
+  /**
+   * A clinician's own statement about whether they can take somebody new.
+   *
+   * Its own resource rather than an `update` on `user`, for the reason `discard`
+   * is not `delete`: `user` update is roles and supervision, and a clinician
+   * must never hold that. This is one boolean about oneself, and it reads
+   * wrong anywhere else.
+   */
+  | 'capacity';
 
 /**
  * `waive` is its own action rather than an `update` on `fee`, because reversing
@@ -59,7 +68,7 @@ export const ROLES: readonly Role[] = [
 export const RESOURCES: readonly Resource[] = [
   'client', 'fee', 'appointment', 'attendance_history', 'progress_note',
   'process_note', 'form_template', 'form_request', 'form_submission',
-  'alert', 'portal_link', 'audit_log', 'user', 'inquiry',
+  'alert', 'portal_link', 'audit_log', 'user', 'inquiry', 'capacity',
 ];
 export const ACTIONS: readonly Action[] = [
   'read', 'create', 'update', 'sign', 'cosign', 'waive', 'discard',
@@ -96,6 +105,8 @@ export interface Target {
    * living in `portal/service.ts` where nobody reviewing policy would find it.
    */
   ownerClientId?: string;
+  /** The staff member a row is *about*, where that is the whole relationship. */
+  subjectUserId?: string;
 }
 
 type RuleName = keyof typeof RULES;
@@ -139,6 +150,16 @@ const RULES = {
   treatingOrSupervising: (a: Actor, t: Target) =>
     (t.clinicianId !== undefined && a.id === t.clinicianId) ||
     (a.role === 'supervisor' && t.treatingSupervisorId !== undefined && a.id === t.treatingSupervisorId),
+  /**
+   * The actor is the person this row is about.
+   *
+   * Narrower than `recipient`, which is about delivery: this one says the row
+   * has no meaning apart from whose it is. A clinician declaring their own
+   * capacity is the only holder, and the practice manager deliberately is not
+   * — see the `capacity` cells.
+   */
+  self: (a: Actor, t: Target) =>
+    t.subjectUserId !== undefined && a.id === t.subjectUserId,
   /** Addressed to exactly one person. Never a shared inbox, never front desk. */
   recipient: (a: Actor, t: Target) =>
     t.recipientId !== undefined && a.id === t.recipientId,
@@ -187,6 +208,10 @@ const CLINICIAN: RoleMatrix = {
   // an inquiry asking for them by name is a capacity question they answer. No
   // `discard`: recording a call is clerical, declaring one dead is operations.
   inquiry: { read: 'always', create: 'always' },
+  // Read every clinician's, set only your own. Whether you can take somebody
+  // new is a judgement about your own caseload, and it is not delegable —
+  // which is why `update` here is `self` and not `always`.
+  capacity: { read: 'always', update: 'self' },
 };
 
 /**
@@ -203,6 +228,10 @@ const MATRIX: Record<Role, RoleMatrix> = {
     // Owns the phone, so owns the caller who is not yet anybody — including
     // declaring one dead. There is no clinical content here to withhold.
     inquiry: { read: 'always', create: 'always', update: 'always', discard: 'always' },
+    // Reads it to decide where a call goes; never sets it. Assignment is front
+    // desk's call, capacity is the clinician's answer, and the whole point of
+    // the signal is that those are two different people.
+    capacity: { read: 'always' },
   },
 
   therapist: CLINICIAN,
@@ -233,6 +262,14 @@ const MATRIX: Record<Role, RoleMatrix> = {
     // Unconditional, and no break-glass entry anywhere in this row: an inquiry
     // holds no clinical content, so there is nothing here to break glass for.
     inquiry: { read: 'always', create: 'always', update: 'always', discard: 'always' },
+    // Read, and deliberately no `update` — the one cell the practice manager
+    // is denied that has nothing clinical in it, and no break-glass to reach
+    // it with. A manager who can mark a clinician open has made the signal
+    // mean "what the practice wants" rather than "what the clinician can do",
+    // and the row it would overwrite is the only defence against a caseload
+    // nobody agreed to. Deactivating a departing clinician is `user.update`,
+    // which admin does hold; declaring someone has room is not the same act.
+    capacity: { read: 'always' },
   },
 
   auditor: {

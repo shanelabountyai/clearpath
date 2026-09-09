@@ -59,6 +59,16 @@ model User {
   inboundRepliesHandled     InboundReply[]
   inquiriesTaken            Inquiry[]           @relation("inquiryTakenBy")
   inquiriesRequested        Inquiry[]           @relation("inquiryRequested")
+  inquiriesAssigned         Inquiry[]           @relation("inquiryAssigned")
+
+  /// P2: whether this clinician is taking somebody new right now — the
+  /// declared half of the capacity signal, and theirs alone to set. It is a
+  /// signal and never a gate: front desk still assigns to a closed clinician
+  /// when the caller asked for them by name, and sees a warning saying so.
+  /// The measured half — caseload, and the queue already assigned — is derived
+  /// from rows that already exist and has no column, because a number a person
+  /// has to maintain is a number that goes stale.
+  acceptingNewClients Boolean @default(true)
 }
 
 enum ReminderPreference {
@@ -934,6 +944,18 @@ model Inquiry {
   requestedClinicianId String?
   requestedClinician   User?   @relation("inquiryRequested", fields: [requestedClinicianId], references: [id])
 
+  /// P2: whose queue this call is in. Distinct from `requestedClinician` on
+  /// purpose — one is what the caller said, the other is what the practice
+  /// decided, and collapsing them would lose the case where front desk sends a
+  /// caller somewhere other than the name they asked for. Null is the default
+  /// and is the unassigned queue front desk works from.
+  ///
+  /// `Restrict`, for the same reason `takenBy` is: null here means "nobody has
+  /// been given this call", and a cascade that quietly produced one when a
+  /// clinician left would turn a handover into an unassigned row nobody notices.
+  assignedClinicianId String?
+  assignedClinician   User?   @relation("inquiryAssigned", fields: [assignedClinicianId], references: [id], onDelete: Restrict)
+
   referralSource ReferralSource
   referralNote   String?
   /// Operational free text at the front-desk tier — the same tier as
@@ -968,6 +990,7 @@ model Inquiry {
 
   @@index([status, discardedAt])
   @@index([requestedClinicianId])
+  @@index([status, assignedClinicianId])
 }
 
 /// One submitter's recent use of the public enquiry form (P2).

@@ -6,7 +6,7 @@ import { requireSession } from '../../../src/session';
 import { Conflict } from '../../../src/errors';
 import { issueForm } from '../../../src/forms/service';
 import {
-  convertInquiry, createInquiry, discardInquiry,
+  assignInquiry, convertInquiry, createInquiry, discardInquiry, setCapacity,
   type DiscardReason, type ReferralSource,
 } from '../../../src/clients/inquiry';
 
@@ -37,6 +37,29 @@ export async function recordInquiry(formData: FormData) {
 export async function discard(formData: FormData) {
   const { actor } = await requireSession();
   await discardInquiry(actor, str(formData, 'id'), str(formData, 'reason') as DiscardReason);
+  revalidatePath('/inquiries');
+}
+
+/**
+ * Put a call in a clinician's queue, or take it back out.
+ *
+ * An empty select is `null`, not a no-op: unassigning is a real act — a
+ * clinician handing a call back is the thing the queue exists to make visible.
+ */
+export async function assign(formData: FormData) {
+  const { actor } = await requireSession();
+  await assignInquiry(actor, str(formData, 'id'), orNull(formData, 'clinicianId'));
+  revalidatePath('/inquiries');
+}
+
+/**
+ * Say whether you can take somebody new. No subject in the form — `setCapacity`
+ * takes it from the session, so there is nothing here for a hand-rolled POST to
+ * point at somebody else.
+ */
+export async function setAccepting(formData: FormData) {
+  const { actor } = await requireSession();
+  await setCapacity(actor, str(formData, 'accepting') === 'yes');
   revalidatePath('/inquiries');
 }
 

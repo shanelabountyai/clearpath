@@ -97,4 +97,90 @@ test.describe('the intake desk', () => {
     const notDue = page.locator('li', { hasText: 'Enquiry D01' });
     await expect(notDue.getByText('Due in next purge')).toHaveCount(0);
   });
+
+  /**
+   * P2. Assignment and capacity, and the fact that they are two hands.
+   *
+   * The unit tests prove the matrix. What this proves is that the two halves
+   * meet correctly on one screen: front desk can put a call anywhere and reads
+   * the signal while doing it, and the person the signal is about is the only
+   * one who can change it.
+   */
+  test('front desk puts a call in a queue and reads capacity while doing it', async ({ page }) => {
+    const last = caller();
+    await actAs(page, USERS.frontDesk);
+    await page.goto('/inquiries');
+
+    await page.getByLabel('First name').fill('Jo');
+    await page.getByLabel('Last name').fill(last);
+    await page.getByRole('button', { name: 'Record the call' }).click();
+
+    const row = page.locator('li', { hasText: last });
+    await expect(row.getByText('Nobody’s queue yet')).toBeVisible();
+
+    // Rosa has closed her books in the seed, and the option says so before
+    // the click rather than after it. Selected by the option's own value: the
+    // label carries live counts, so matching on its text would be a spec that
+    // fails the day somebody books a session.
+    const picker = row.getByLabel('Whose queue this call goes in');
+    const closed = picker.locator('option', { hasText: `${USERS.supervisor} — closed` });
+    await expect(closed).toHaveCount(1);
+
+    await picker.selectOption((await closed.getAttribute('value'))!);
+    await row.getByRole('button', { name: 'Assign' }).click();
+
+    // Assigned anyway — a signal, never a gate — and the warning stays on the
+    // row afterwards, because a clinician can close their books at any point
+    // after a call landed with them.
+    const assigned = page.locator('li', { hasText: last });
+    await expect(assigned.getByText(`In ${USERS.supervisor}’s queue`)).toBeVisible();
+    await expect(assigned.getByText('not taking anybody new')).toBeVisible();
+  });
+
+  test('front desk reads the capacity board and cannot change anybody’s answer', async ({ page }) => {
+    await actAs(page, USERS.frontDesk);
+    await page.goto('/inquiries');
+
+    await expect(page.getByText('Who has room')).toBeVisible();
+    await expect(page.getByRole('button', { name: /my books$/ })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: /^Yours/ })).toHaveCount(0);
+  });
+
+  test('a clinician works their own queue and declares their own capacity', async ({ page }) => {
+    await actAs(page, USERS.therapist);
+    await page.goto('/inquiries');
+
+    // Nour is open in the seed, and holds one seeded enquiry.
+    const toggle = page.getByRole('button', { name: 'Close my books' });
+    await expect(toggle).toBeVisible();
+    await toggle.click();
+    await expect(page.getByRole('button', { name: 'Open my books' })).toBeVisible();
+
+    await page.getByRole('link', { name: /^Yours/ }).click();
+    await expect(page).toHaveURL(/assigned=me/);
+    // Every row on this filter is theirs, and it is a view rather than a
+    // narrower permission — the unfiltered list still shows everybody's.
+    const rows = page.locator('li', { hasText: 'Enquiry O' });
+    await expect(rows.first().getByText(`In ${USERS.therapist}’s queue`)).toBeVisible();
+
+    // Assignment is not theirs, even over a call sitting in their own queue.
+    await expect(rows.first().getByRole('button', { name: 'Assign' })).toHaveCount(0);
+
+    // Put it back, so the spec leaves the seeded practice as it found it.
+    await page.goto('/inquiries');
+    await page.getByRole('button', { name: 'Open my books' }).click();
+    await expect(page.getByRole('button', { name: 'Close my books' })).toBeVisible();
+  });
+
+  test('the practice manager reads the board and has no way to set a clinician open', async ({ page }) => {
+    await actAs(page, USERS.manager);
+    await page.goto('/inquiries');
+
+    await expect(page.getByText('Who has room')).toBeVisible();
+    // Assignment yes — where a call goes is operations. Capacity no: it is the
+    // one cell on this page the practice manager is denied, and there is no
+    // break-glass to reach it with.
+    await expect(page.getByRole('button', { name: 'Assign' }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: /my books$/ })).toHaveCount(0);
+  });
 });

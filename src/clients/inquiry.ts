@@ -71,7 +71,8 @@ export interface InquiryInput {
 
 const SELECT = {
   id: true, firstName: true, lastName: true, phone: true, email: true,
-  requestedClinicianId: true, referralSource: true, referralNote: true, note: true,
+  requestedClinicianId: true, assignedClinicianId: true,
+  referralSource: true, referralNote: true, note: true,
   status: true, discardReason: true, discardedAt: true, takenById: true, createdAt: true,
 } as const;
 
@@ -98,12 +99,18 @@ export async function createInquiry(actor: Actor, data: InquiryInput) {
  * intake. That is a UI default rather than a permission, and the matrix says so
  * with `read: always`.
  */
-export async function listInquiries(actor: Actor, opts: { status?: InquiryStatus } = {}) {
+export async function listInquiries(
+  actor: Actor,
+  opts: { status?: InquiryStatus; assignedTo?: string } = {},
+) {
   return guarded(
     { actor, action: 'read', resource: 'inquiry' },
     (tx) =>
       tx.inquiry.findMany({
-        where: opts.status ? { status: opts.status } : {},
+        where: {
+          ...(opts.status ? { status: opts.status } : {}),
+          ...(opts.assignedTo ? { assignedClinicianId: opts.assignedTo } : {}),
+        },
         select: SELECT,
         orderBy: { createdAt: 'desc' },
       }),
@@ -157,6 +164,111 @@ export async function discardInquiry(
         where: { id },
         data: { status: 'discarded', discardReason: reason, discardedAt: (opts.clock ?? systemClock).now() },
         select: SELECT,
+      }),
+  );
+}
+
+/**
+ * ─────────────────────── assignment and capacity (P2) ───────────────────────
+ *
+ * Two halves of one decision, held by two different people on purpose.
+ *
+ * Front desk decides where a call goes; the clinician says whether they can
+ * take it. Neither overrides the other: assignment is `update` on `inquiry` —
+ * a cell front desk and the practice manager already hold and clinicians
+ * deliberately do not — and capacity is its own resource whose only writer is
+ * the person it is about. So the signal cannot be talked into agreeing with
+ * whoever wants the call placed.
+ *
+ * Both live here rather than in a staff module because the only reason either
+ * exists is deciding where an enquiry goes, and the rule and the only writer
+ * of the column it governs should not be two files apart.
+ */
+
+/**
+ * Put a call in somebody's queue, or take it back out (`null`).
+ *
+ * Only an open inquiry: a converted one belongs to a client with a treating
+ * clinician, and a discarded one is counting down to being destroyed. Both
+ * refuse with the same `Conflict` a late transition raises — the status is not
+ * changing here, so this is a guard on the row's state rather than a move
+ * through the table above.
+ *
+ * A clinician who is not accepting is **not** refused. Somebody who rang and
+ * asked for Alex by name still goes to Alex; the signal is what front desk
+ * reads before deciding, and `no_capacity` is the honest ending when the answer
+ * is really no. A hard block here would only teach people to flip the boolean.
+ */
+export async function assignInquiry(actor: Actor, id: string, clinicianId: string | null) {
+  const row = await prisma.inquiry.findUnique({ where: { id }, select: { status: true } });
+  if (!row) throw new NotFound('Inquiry');
+  if (row.status !== 'open') {
+    throw new Conflict(`A ${row.status} inquiry cannot be assigned`, 'bad_transition');
+  }
+
+  return guarded(
+    { actor, action: 'update', resource: 'inquiry', resourceId: id },
+    (tx) => tx.inquiry.update({ where: { id }, data: { assignedClinicianId: clinicianId }, select: SELECT }),
+  );
+}
+
+/**
+ * Every clinician, what they say, and what the rows say.
+ *
+ * `accepting` is declared and maintained by hand. `caseload` and `queued` are
+ * measured off data that already exists, which is why neither has a column:
+ * a number somebody has to remember to update is a number that is wrong by
+ * Thursday, and a stale capacity figure is worse than none because front desk
+ * would believe it.
+ */
+export async function clinicianCapacity(actor: Actor) {
+  return guarded(
+    { actor, action: 'read', resource: 'capacity' },
+    async (tx) => {
+      const clinicians = await tx.user.findMany({
+        where: { active: true, role: { in: ['therapist', 'associate', 'supervisor'] } },
+        select: {
+          id: true, name: true, acceptingNewClients: true,
+          _count: {
+            select: {
+              clients: { where: { status: 'active' } },
+              inquiriesAssigned: { where: { status: 'open' } },
+            },
+          },
+        },
+        orderBy: { name: 'asc' },
+      });
+
+      return clinicians.map((c) => ({
+        id: c.id,
+        name: c.name,
+        accepting: c.acceptingNewClients,
+        caseload: c._count.clients,
+        queued: c._count.inquiriesAssigned,
+      }));
+    },
+  );
+}
+
+/**
+ * Say whether you can take somebody new. Yours alone — `self`, and the target
+ * is what makes that decidable in the matrix rather than here.
+ *
+ * The id is taken from the actor and never from the caller. A parameter would
+ * be a second way to name a subject, and the only thing it could ever express
+ * is the case the matrix exists to refuse.
+ */
+export async function setCapacity(actor: Actor, accepting: boolean) {
+  return guarded(
+    {
+      actor, action: 'update', resource: 'capacity', resourceId: actor.id,
+      target: { subjectUserId: actor.id },
+    },
+    (tx) =>
+      tx.user.update({
+        where: { id: actor.id },
+        data: { acceptingNewClients: accepting },
+        select: { id: true, acceptingNewClients: true },
       }),
   );
 }

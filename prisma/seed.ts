@@ -100,7 +100,14 @@ async function main() {
   const auditorUser = await mk('Owen Delacroix', 'auditor');
 
   const clinicians = [rosa, dev, nour, tom, kai, priya];
-  log(`${clinicians.length} clinicians (2 supervisors, 3 therapists, 1 associate under ${rosa.name})`);
+  // P2: two of the six have closed their books. The signal only teaches
+  // anything if the fixture has both answers in it — a roster that is
+  // uniformly open renders the same screen as a roster with no signal at all.
+  await prisma.user.updateMany({
+    where: { id: { in: [rosa.id, kai.id] } },
+    data: { acceptingNewClients: false },
+  });
+  log(`${clinicians.length} clinicians (2 supervisors, 3 therapists, 1 associate under ${rosa.name}) — ${rosa.name} and ${kai.name} are not taking anybody new`);
 
   // Everyone works Monday–Friday, 9:00 to 17:00.
   for (const c of clinicians) {
@@ -765,11 +772,16 @@ async function main() {
         referralSource: REFERRAL_MIX[(i * 2) % REFERRAL_MIX.length]!,
         note: fromWeb ? null : i % 2 === 0 ? 'Mornings only' : 'Cannot do Tuesdays',
         takenById: fromWeb ? null : frontDesk.id,
+        // P2: three of the five are in somebody's queue and two are in nobody's
+        // — including one sent to Rosa, who has closed her books, because
+        // "assigned to a clinician with no room" is a real state front desk
+        // reaches when a caller asks for a name and the screen has to say so.
+        assignedClinicianId: i === 0 ? dev.id : i === 1 ? rosa.id : i === 2 ? nour.id : null,
         createdAt: daysAgo(1 + i * 2),
       },
     });
   }
-  log('40 enquiries — 20 converted, 15 discarded across all seven reason codes, 5 open (2 from the public form)');
+  log('40 enquiries — 20 converted, 15 discarded across all seven reason codes, 5 open (2 from the public form, 3 assigned to a queue)');
 
   // ── the demo, guaranteed ──────────────────────────────────────────────
   //

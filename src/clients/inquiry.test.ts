@@ -4,11 +4,12 @@ import { prisma } from '../db';
 import { Conflict, Forbidden } from '../errors';
 import { intakeForm } from '../forms/fixtures';
 import { ReferralSource as PrismaReferralSource } from '../generated/prisma/enums';
-import { actor, makeUser, resetDb, settings } from '../test/harness';
+import { actor, makeClient, makeUser, resetDb, settings } from '../test/harness';
 import { callArgs, readSource, sourceFiles } from '../test/source';
 import {
-  assertTransition, canTransition, convertInquiry, createInquiry, discardInquiry, listInquiries,
-  previewInquiryPurge, runInquiryPurge, TRANSITIONS, updateInquiry, type InquiryStatus, type ReferralSource,
+  assertTransition, assignInquiry, canTransition, clinicianCapacity, convertInquiry, createInquiry,
+  discardInquiry, listInquiries, previewInquiryPurge, runInquiryPurge, setCapacity, TRANSITIONS,
+  updateInquiry, type InquiryStatus, type ReferralSource,
 } from './inquiry';
 
 const STATUSES: InquiryStatus[] = ['open', 'converted', 'discarded'];
@@ -395,6 +396,134 @@ describe('conversion', () => {
     await convert(desk, inq.id);
     expect(await prisma.outboxMessage.count()).toBe(0);
     expect(await prisma.formRequest.count()).toBe(0);
+  });
+});
+
+
+/**
+ * P2: assignment and capacity — one decision held by two people.
+ */
+describe('assignment, and the capacity signal it reads', () => {
+  let admin: Awaited<ReturnType<typeof makeUser>>;
+  let alex: Awaited<ReturnType<typeof makeUser>>;
+  let bea: Awaited<ReturnType<typeof makeUser>>;
+
+  beforeEach(async () => {
+    await resetDb();
+    await settings();
+    desk = await makeUser('front_desk');
+    therapist = await makeUser('therapist');
+    admin = await makeUser('admin');
+    alex = await makeUser('therapist', { name: 'Alex' });
+    bea = await makeUser('supervisor', { name: 'Bea' });
+  });
+  afterAll(() => prisma.$disconnect());
+
+  it('puts a call in a queue, and takes it back out', async () => {
+    const inq = await anInquiry();
+    expect(inq.assignedClinicianId).toBeNull();
+
+    expect((await assignInquiry(actor(desk), inq.id, alex.id)).assignedClinicianId).toBe(alex.id);
+    // Handing it back is a real act, not a no-op — it is what puts the call
+    // back on the unassigned queue where somebody will see it.
+    expect((await assignInquiry(actor(desk), inq.id, null)).assignedClinicianId).toBeNull();
+  });
+
+  it('is front desk and the practice manager, and never a clinician', async () => {
+    const inq = await anInquiry();
+    await expect(assignInquiry(actor(therapist), inq.id, alex.id)).rejects.toThrow(Forbidden);
+    // Including assigning a call to oneself: taking work is still a decision
+    // about where the practice's intake goes.
+    await expect(assignInquiry(actor(alex), inq.id, alex.id)).rejects.toThrow(Forbidden);
+    expect((await assignInquiry(actor(admin), inq.id, alex.id)).assignedClinicianId).toBe(alex.id);
+  });
+
+  it('refuses a call that already ended, either way', async () => {
+    const dead = await anInquiry();
+    await discardInquiry(actor(desk), dead.id, 'no_answer');
+    await expect(assignInquiry(actor(desk), dead.id, alex.id)).rejects.toThrow(Conflict);
+
+    const converted = await anInquiry();
+    await convertInquiry(actor(desk), converted.id, {
+      code: 'TC-ASN', dateOfBirth: new Date('1990-01-01'), treatingClinicianId: alex.id,
+    });
+    await expect(assignInquiry(actor(desk), converted.id, alex.id)).rejects.toThrow(Conflict);
+  });
+
+  it('assigns to a clinician with no room — a signal, never a gate', async () => {
+    await setCapacity(actor(alex), false);
+    const inq = await anInquiry();
+    // Somebody who rang and asked for Alex by name still goes to Alex. The
+    // honest ending when the answer is really no is a `no_capacity` discard.
+    expect((await assignInquiry(actor(desk), inq.id, alex.id)).assignedClinicianId).toBe(alex.id);
+  });
+
+  it('is audited as an update on the inquiry, naming no client', async () => {
+    const inq = await anInquiry();
+    await assignInquiry(actor(desk), inq.id, alex.id);
+    const row = await prisma.auditEvent.findFirstOrThrow({
+      where: { resource: 'inquiry', action: 'update', resourceId: inq.id },
+    });
+    expect(row.allowed).toBe(true);
+    expect(row.clientId).toBeNull();
+  });
+
+  it('lists one clinician\'s queue without narrowing what they may read', async () => {
+    const hers = await anInquiry();
+    const his = await anInquiry({ firstName: 'C' });
+    await assignInquiry(actor(desk), hers.id, alex.id);
+    await assignInquiry(actor(desk), his.id, bea.id);
+
+    const queue = await listInquiries(actor(alex), { assignedTo: alex.id });
+    expect(queue.map((i) => i.id)).toEqual([hers.id]);
+    // The filter is a view, not a permission: unfiltered still returns both.
+    expect((await listInquiries(actor(alex))).length).toBe(2);
+  });
+
+  it('counts caseload and queue off the rows, not off a column', async () => {
+    await makeClient(alex.id);
+    await makeClient(alex.id);
+    const inactive = await makeClient(alex.id);
+    await prisma.client.update({ where: { id: inactive.id }, data: { status: 'inactive' } });
+
+    const waiting = await anInquiry();
+    const ended = await anInquiry({ firstName: 'D' });
+    await assignInquiry(actor(desk), waiting.id, alex.id);
+    await assignInquiry(actor(desk), ended.id, alex.id);
+    await discardInquiry(actor(desk), ended.id, 'chose_elsewhere');
+
+    const rows = await clinicianCapacity(actor(desk));
+    // Front desk is not a clinician and does not appear in a list of who can
+    // take somebody new.
+    expect(rows.map((r) => r.name)).toEqual(['Alex', 'Bea', therapist.name].sort());
+    expect(rows.find((r) => r.id === alex.id)).toMatchObject({
+      accepting: true, caseload: 2, queued: 1,
+    });
+  });
+
+  it('is declared by the clinician it is about, and by nobody else', async () => {
+    expect((await setCapacity(actor(alex), false)).acceptingNewClients).toBe(false);
+
+    // There is no parameter to point at somebody else, so the matrix is asked
+    // about the actor's own row and the only failing case is a role that has
+    // no business declaring anybody\'s.
+    for (const who of [desk, admin]) {
+      await expect(setCapacity(actor(who), false)).rejects.toThrow(Forbidden);
+    }
+    // The practice manager\'s denial is on the record like any other.
+    const denial = await prisma.auditEvent.findFirstOrThrow({
+      where: { resource: 'capacity', action: 'update', allowed: false, actorId: admin.id },
+    });
+    expect(denial.resourceId).toBe(admin.id);
+    expect(denial.clientId).toBeNull();
+  });
+
+  it('is readable by everyone who works intake, and by nobody outside it', async () => {
+    for (const who of [desk, admin, alex, bea]) {
+      expect((await clinicianCapacity(actor(who))).length).toBe(3);
+    }
+    const auditor = await makeUser('auditor');
+    await expect(clinicianCapacity(actor(auditor))).rejects.toThrow(Forbidden);
   });
 });
 
