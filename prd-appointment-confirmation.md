@@ -78,75 +78,80 @@ Numbering is local to this feature. Existing parent-PRD requirements are referen
 
 ### Must-Have (P0)
 
+> **Status.** Every box below is ticked against a named test, not against a
+> memory of building it — `confirmation.test.ts`, `reminders.test.ts` and
+> `nonresponse.test.ts` (83 tests) plus the portal e2e spec exercise every
+> item, and WRITEUP.md §10–17 documents the design. Checked 2026-09-09.
+
 **P0-1: `confirmation` is its own field, and it is not `status`** *(core learning artifact of this feature)*
 A new `AppointmentConfirmation` enum on `Appointment`: `not_required | pending | confirmed | declined | no_response`. It is written by the cadence job and the client door, and by nothing else. `status` continues to mean what it means today.
-- [ ] `Appointment.confirmation` defaults to `not_required`; the cadence job is the only thing that promotes it to `pending`
-- [ ] A grep-style lint (same shape as the existing role-check and author-only lints, scanning `src/` and `app/`) fails the build on any assignment that writes `status: 'no_show'` outside `src/scheduling/lifecycle.ts`
-- [ ] `setStatus(actor, id, 'arrived' | 'in_session' | 'completed')` succeeds regardless of `confirmation`, and **leaves `confirmation` untouched** — a client who attends without answering ends the day as `completed` / `no_response`, and that row is the fixture the whole feature is judged on
-- [ ] A unit test asserts every (`status` × `confirmation`) pair the job can produce, and that no `confirmation` value is reachable from a `status` write
+- [x] `Appointment.confirmation` defaults to `not_required`; the cadence job is the only thing that promotes it to `pending`
+- [x] A grep-style lint (same shape as the existing role-check and author-only lints, scanning `src/` and `app/`) fails the build on any assignment that writes `status: 'no_show'` outside `src/scheduling/lifecycle.ts`
+- [x] `setStatus(actor, id, 'arrived' | 'in_session' | 'completed')` succeeds regardless of `confirmation`, and **leaves `confirmation` untouched** — a client who attends without answering ends the day as `completed` / `no_response`, and that row is the fixture the whole feature is judged on
+- [x] A unit test asserts every (`status` × `confirmation`) pair the job can produce, and that no `confirmation` value is reachable from a `status` write
 
 **P0-2: Eligibility — the practice must have actually asked**
 A pure function `confirmationRequired(client, appointment, settings): boolean`, decided before the first send and re-checked before any fee.
-- [ ] `reminderPreference === 'none'` ⇒ `not_required`, permanently, at every stage and in the fee rule. Not "fewer messages": none, and therefore no fee. *(D-01)*
-- [ ] A client whose chosen channel has no address on file (`sms` with `phone === null`, `email` with `email === null`) ⇒ `not_required`
-- [ ] An appointment booked less than `graceMinutes` before its start ⇒ `not_required` (there was no time to ask)
-- [ ] The fee rule reads `confirmation === 'no_response'`, which is unreachable without at least one `OutboxMessage` row for that appointment — asserted directly: for every appointment in the seeded quarter with a fee from this feature, at least one outbox row exists whose `appointmentId` matches
-- [ ] Changing a client to `reminderPreference = 'none'` mid-cadence stops the remaining stages and moves live `pending` rows to `not_required`
+- [x] `reminderPreference === 'none'` ⇒ `not_required`, permanently, at every stage and in the fee rule. Not "fewer messages": none, and therefore no fee. *(D-01)*
+- [x] A client whose chosen channel has no address on file (`sms` with `phone === null`, `email` with `email === null`) ⇒ `not_required`
+- [x] An appointment booked less than `graceMinutes` before its start ⇒ `not_required` (there was no time to ask)
+- [x] The fee rule reads `confirmation === 'no_response'`, which is unreachable without at least one `OutboxMessage` row for that appointment — asserted directly: for every appointment in the seeded quarter with a fee from this feature, at least one outbox row exists whose `appointmentId` matches
+- [x] Changing a client to `reminderPreference = 'none'` mid-cadence stops the remaining stages and moves live `pending` rows to `not_required`
 
 **P0-3: Three-stage cadence, clock-driven and idempotent**
 A new `AppointmentReminder` table: `appointmentId`, `stage` (`d5 | d1 | d0`), `dueAt`, `sentAt`, `outboxMessageId`, with `@@unique([appointmentId, stage])` — the same idempotency-key discipline as `Appointment.occurrenceKey`. One entry point, `runReminderHorizon(clock, opts)`, queues every stage whose `dueAt` has passed and which has no row yet.
-- [ ] Stage due times derive from `startAt`: `d5` = start − 5 days, `d1` = start − 1 day, `d0` = start − `dayOfLeadHours` (default 3h), all computed against the injected clock. **Zero bare `new Date()`** — the existing clock lint covers this
-- [ ] Running the horizon twice over the same window creates **zero** duplicate reminders and zero duplicate outbox rows (direct analogue of the existing `materialiseSeries` idempotency spec)
-- [ ] An appointment booked 2 days out skips `d5` and still gets `d1` and `d0`; an appointment booked 6 hours out gets `d0` only; both are `pending`, both are fee-eligible
-- [ ] A test using `fixedClock` walks a single appointment from booking to fee in under a second of wall time by advancing the clock, and asserts exactly 3 outbox rows
-- [ ] Cancelled, `late_cancelled`, `declined`, and already-`confirmed` appointments queue **no further stages** — confirming at `d5` means two messages you do not get
-- [ ] The horizon run is a script (`npm run reminders:run`) plus a function; no cron dependency, no scheduler library
+- [x] Stage due times derive from `startAt`: `d5` = start − 5 days, `d1` = start − 1 day, `d0` = start − `dayOfLeadHours` (default 3h), all computed against the injected clock. **Zero bare `new Date()`** — the existing clock lint covers this
+- [x] Running the horizon twice over the same window creates **zero** duplicate reminders and zero duplicate outbox rows (direct analogue of the existing `materialiseSeries` idempotency spec)
+- [x] An appointment booked 2 days out skips `d5` and still gets `d1` and `d0`; an appointment booked 6 hours out gets `d0` only; both are `pending`, both are fee-eligible
+- [x] A test using `fixedClock` walks a single appointment from booking to fee in under a second of wall time by advancing the clock, and asserts exactly 3 outbox rows
+- [x] Cancelled, `late_cancelled`, `declined`, and already-`confirmed` appointments queue **no further stages** — confirming at `d5` means two messages you do not get
+- [x] The horizon run is a script (`npm run reminders:run`) plus a function; no cron dependency, no scheduler library
 
 **P0-4: The client's door — two buttons on the existing portal token** *(the design decision most likely to be argued with; see D-03 and Risks)*
 Confirm and decline are new actions on the **existing `PortalLink`** surface in `src/portal/service.ts`, addressed by appointment id, gated exactly like `requestReschedule`: a token naming another client's appointment gets `NotFound`, never `Forbidden`. **No second token type is minted.** The reminder body is the existing neutral `appointment_reminder` template plus the personal link.
-- [ ] The message body passes `assertDiscreet` unchanged; the template gains a link and no clinical vocabulary. A spec asserts the exact rendered string
-- [ ] No free-text field is added to any client-facing page. Two buttons, plus the existing four reschedule reason codes
-- [ ] Confirming is idempotent: a second tap is the same confirmation, not a second one (same rule as the open reschedule request)
-- [ ] Declining **inside** the late-cancel window renders an interstitial naming the fee in dollars and requires a second tap; declining outside it does not. Both are Playwright-assertable on the seeded practice
-- [ ] A decline routes through the existing `cancelAppointment`, so `classifyCancellation` — not this feature — decides `cancelled` vs `late_cancelled` and the existing `lateCancelFeeCents` applies. No new money logic on the decline path
-- [ ] An expired portal link on a confirm attempt returns the existing `expired` conflict and leaves `confirmation` untouched
-- [ ] Opening the link, confirming, and declining are each audit-logged with the **client as actor** and `rule: 'token'`, in the same transaction as the write, exactly like `openPortal` does today
+- [x] The message body passes `assertDiscreet` unchanged; the template gains a link and no clinical vocabulary. A spec asserts the exact rendered string
+- [x] No free-text field is added to any client-facing page. Two buttons, plus the existing four reschedule reason codes
+- [x] Confirming is idempotent: a second tap is the same confirmation, not a second one (same rule as the open reschedule request)
+- [x] Declining **inside** the late-cancel window renders an interstitial naming the fee in dollars and requires a second tap; declining outside it does not. Both are Playwright-assertable on the seeded practice
+- [x] A decline routes through the existing `cancelAppointment`, so `classifyCancellation` — not this feature — decides `cancelled` vs `late_cancelled` and the existing `lateCancelFeeCents` applies. No new money logic on the decline path
+- [x] An expired portal link on a confirm attempt returns the existing `expired` conflict and leaves `confirmation` untouched
+- [x] Opening the link, confirming, and declining are each audit-logged with the **client as actor** and `rule: 'token'`, in the same transaction as the write, exactly like `openPortal` does today
 
 **P0-5: What silence means, and the two things it is not**
 At `startAt + graceMinutes` (default 20), a sweep evaluates appointments still `confirmation = 'pending'`.
-- [ ] It sets `confirmation = 'no_response'` **always** — this is a communication fact and is recorded whatever else happens
-- [ ] It transitions `status` to `no_show` **only if** `status === 'scheduled'` — never from `confirmed`, `arrived`, `in_session`, or `completed`. A front-desk check-in always beats the sweep, and a client who is mid-session is untouchable *(D-02)*
-- [ ] It does nothing at all where `confirmation === 'not_required'`
-- [ ] The `no_show` transition and the fee write happen in one transaction with their audit rows; the actor is a named system actor (`role: 'admin'`, id `system`), not a person, and not the client
-- [ ] `PracticeSettings.autoNoShowOnNoResponse` (boolean, **default true**, per the owner's explicit ask) gates only the `status` transition and the fee. With it off, `no_response` is still recorded and the appointment lands on the front-desk work list — which is the whole feature minus the money
-- [ ] A spec asserts the indefensible case directly: seeded client confirms nothing, arrives, is marked `arrived` at start − 5 min; sweep runs; `status` is untouched, `confirmation` is `no_response`, `chargeFeeCents` is null
+- [x] It sets `confirmation = 'no_response'` **always** — this is a communication fact and is recorded whatever else happens
+- [x] It transitions `status` to `no_show` **only if** `status === 'scheduled'` — never from `confirmed`, `arrived`, `in_session`, or `completed`. A front-desk check-in always beats the sweep, and a client who is mid-session is untouchable *(D-02)*
+- [x] It does nothing at all where `confirmation === 'not_required'`
+- [x] The `no_show` transition and the fee write happen in one transaction with their audit rows; the actor is a named system actor (`role: 'admin'`, id `system`), not a person, and not the client
+- [x] `PracticeSettings.autoNoShowOnNoResponse` (boolean, **default true**, per the owner's explicit ask) gates only the `status` transition and the fee. With it off, `no_response` is still recorded and the appointment lands on the front-desk work list — which is the whole feature minus the money
+- [x] A spec asserts the indefensible case directly: seeded client confirms nothing, arrives, is marked `arrived` at start − 5 min; sweep runs; `status` is untouched, `confirmation` is `no_response`, `chargeFeeCents` is null
 
 **P0-6: The no-show fee is its own money**
 New `PracticeSettings.noShowFeeCents`, integer cents, **default 9000** — identical to `lateCancelFeeCents` today, so shipping the field changes no existing behaviour. `setStatus(..., 'no_show')` stops reading `lateCancelFeeCents` and reads `noShowFeeCents`.
-- [ ] Integer cents throughout; no float, no decimal string, asserted by the existing money conventions
-- [ ] A regression spec pins the existing behaviour: with both fields at their defaults, every existing `no_show` fixture produces the same `chargeFeeCents` as before the change
-- [ ] A spec sets `noShowFeeCents = 18000` and `lateCancelFeeCents = 9000` and asserts a no-show charges 18000 and a late cancel 9000 — the reason the fields are separate
-- [ ] `attendanceSummary`'s `chargeableFeeCents` continues to sum both, unchanged
-- [ ] A human-set `no_show` and a sweep-set `no_show` produce the identical fee. The policy is about the fact, not about who noticed it
+- [x] Integer cents throughout; no float, no decimal string, asserted by the existing money conventions
+- [x] A regression spec pins the existing behaviour: with both fields at their defaults, every existing `no_show` fixture produces the same `chargeFeeCents` as before the change
+- [x] A spec sets `noShowFeeCents = 18000` and `lateCancelFeeCents = 9000` and asserts a no-show charges 18000 and a late cancel 9000 — the reason the fields are separate
+- [x] `attendanceSummary`'s `chargeableFeeCents` continues to sum both, unchanged
+- [x] A human-set `no_show` and a sweep-set `no_show` produce the identical fee. The policy is about the fact, not about who noticed it
 
 **P0-7: Waiver, because an automatic charge without a reversal is not shippable**
 Practice manager only. Sets `chargeFeeCents = 0` and records `feeWaivedById`, `feeWaivedAt`, `feeWaiveReason` (a code from a fixed list: `practice_error`, `client_disputed`, `emergency`, `goodwill` — not free text).
-- [ ] Authorization via `src/auth/permissions.ts` only, as a new action on the existing `fee` resource. No ad-hoc role check anywhere
-- [ ] Front desk attempting a waiver gets a 403 and the denial is audit-logged *(the existing lifecycle comment already says waiving a fee is a management decision, not a data-entry one — this makes it true)*
-- [ ] The waiver is an audit row in the same transaction; the original fee amount is recoverable from the audit trail, not overwritten out of existence
-- [ ] Waiving does not alter `status` or `confirmation`. The client still did not turn up; the practice chose not to charge
+- [x] Authorization via `src/auth/permissions.ts` only, as a new action on the existing `fee` resource. No ad-hoc role check anywhere
+- [x] Front desk attempting a waiver gets a 403 and the denial is audit-logged *(the existing lifecycle comment already says waiving a fee is a management decision, not a data-entry one — this makes it true)*
+- [x] The waiver is an audit row in the same transaction; the original fee amount is recoverable from the audit trail, not overwritten out of existence
+- [x] Waiving does not alter `status` or `confirmation`. The client still did not turn up; the practice chose not to charge
 
 **P0-8: Group sessions confirm per attendee** *(parent P2 shipped; this must not undo it)*
-- [ ] Every attendee appointment in a `groupSessionId` gets its own reminder rows, its own token-addressed confirm/decline, and its own `confirmation` value
-- [ ] One attendee declining cancels **that attendee's appointment only**; the group session and every co-attendee are untouched, including the room and clinician reservation
-- [ ] The non-response sweep evaluates attendees independently — 5 attendees, 2 silent, produces exactly 2 `no_response` rows
-- [ ] The message body still names no group topic. `GroupSession.topic` is an operational label for the staff calendar and is on the wrong side of the deny-list to ever leave the building
+- [x] Every attendee appointment in a `groupSessionId` gets its own reminder rows, its own token-addressed confirm/decline, and its own `confirmation` value
+- [x] One attendee declining cancels **that attendee's appointment only**; the group session and every co-attendee are untouched, including the room and clinician reservation
+- [x] The non-response sweep evaluates attendees independently — 5 attendees, 2 silent, produces exactly 2 `no_response` rows
+- [x] The message body still names no group topic. `GroupSession.topic` is an operational label for the staff calendar and is on the wrong side of the deny-list to ever leave the building
 
 **P0-9: Audit and staff-side visibility**
-- [ ] Every state change in this feature — `pending`, `confirmed`, `declined`, `no_response`, the auto `no_show`, the fee, the waiver — is audit-logged in the same transaction as the write, with resource type + id and a reason code. **No message body, no phone number, no email address, no client name in the log**
-- [ ] The confirmation column and the "unconfirmed, starting soon" work list are readable by front desk under the existing `appointment` resource; no new resource, no new matrix row *(if the matrix does need a row, the permission test's 100%-coverage assertion catches it — that is the point of asserting the denials)*
-- [ ] The auditor can filter to appointments with a `no_response`-derived fee and see, per appointment: 3 send events, 0 answer events, 1 determination, 1 fee
-- [ ] No appointment id, client id, or token appears in any app log line produced by the cadence job; counts only
+- [x] Every state change in this feature — `pending`, `confirmed`, `declined`, `no_response`, the auto `no_show`, the fee, the waiver — is audit-logged in the same transaction as the write, with resource type + id and a reason code. **No message body, no phone number, no email address, no client name in the log**
+- [x] The confirmation column and the "unconfirmed, starting soon" work list are readable by front desk under the existing `appointment` resource; no new resource, no new matrix row *(if the matrix does need a row, the permission test's 100%-coverage assertion catches it — that is the point of asserting the denials)*
+- [x] The auditor can filter to appointments with a `no_response`-derived fee and see, per appointment: 3 send events, 0 answer events, 1 determination, 1 fee
+- [x] No appointment id, client id, or token appears in any app log line produced by the cadence job; counts only
 
 ### Nice-to-Have (P1)
 
