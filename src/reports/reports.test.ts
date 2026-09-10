@@ -589,7 +589,7 @@ describe('the referral report', () => {
   const RANGE = { from: '2026-08-01', to: '2026-09-30' };
 
   /** An enquiry, placed on a date, with an ending. */
-  const call = (over: Record<string, unknown>) =>
+  const call = (over: Record<string, unknown> = {}) =>
     prisma.inquiry.create({
       data: {
         firstName: 'Test', lastName: 'Caller', referralSource: 'gp',
@@ -652,6 +652,74 @@ describe('the referral report', () => {
     await call({ createdAt: new Date('2026-09-15T10:00:00Z') });
     const rep = await referralReport(actor(admin), RANGE);
     expect(rep.totals.total).toBe(1);
+  });
+
+  it('breaks the gp code down by surgery — the number a code could never give', async () => {
+    const riverside = await prisma.referrer.create({ data: { practice: 'Riverside', name: 'Dr Patel' } });
+    const marsh = await prisma.referrer.create({ data: { practice: 'Marsh Lane' } });
+
+    // Riverside sends three and two land; Marsh Lane sends two and none do.
+    // Under the bare `gp` row these are one number, 5 calls at 40%, and the
+    // practice has nobody to ring about it.
+    for (const n of [0, 1]) {
+      const c = await makeClient(therapist.id);
+      await call({ referrerId: riverside.id, status: 'converted', clientId: c.id, createdAt: new Date(`2026-09-0${n + 1}T10:00:00Z`) });
+    }
+    await call({ referrerId: riverside.id, status: 'open' });
+    for (const n of [0, 1]) {
+      await call({ referrerId: marsh.id, status: 'discarded', discardReason: 'chose_elsewhere', discardedAt: new Date(`2026-09-0${n + 3}T10:00:00Z`) });
+    }
+
+    const rep = await referralReport(actor(admin), RANGE);
+    expect(rep.sources.find((x) => x.source === 'gp')!.total).toBe(5);
+    // Sorted by volume, labelled with the doctor where there is one.
+    expect(rep.referrers.map((r) => [r.label, r.total, r.conversionRate])).toEqual([
+      ['Dr Patel, Riverside', 3, 2 / 3],
+      ['Marsh Lane', 2, 0],
+    ]);
+  });
+
+  it('leaves a gp call with no surgery recorded out, rather than calling it Unknown', async () => {
+    const riverside = await prisma.referrer.create({ data: { practice: 'Riverside' } });
+    await call({ referrerId: riverside.id });
+    for (let n = 0; n < 4; n++) await call();
+
+    // Four of the five say only "a GP". An "Unknown" bucket would top this
+    // table and read as a statement about the practice's biggest referrer.
+    const rep = await referralReport(actor(admin), RANGE);
+    expect(rep.sources.find((x) => x.source === 'gp')!.total).toBe(5);
+    expect(rep.referrers).toEqual([
+      { id: riverside.id, label: 'Riverside', total: 1, open: 1, converted: 0, discarded: 0, conversionRate: 0 },
+    ]);
+  });
+
+  it('reports where referred-out callers were sent — the other direction', async () => {
+    const ed = await prisma.referrer.create({ data: { practice: 'County ED Service' } });
+    for (let n = 0; n < 2; n++) {
+      await call({
+        status: 'discarded', discardReason: 'referred_out',
+        discardedAt: new Date('2026-09-05T10:00:00Z'), referredOutToId: ed.id,
+      });
+    }
+    // One referred out with nobody recorded — counted in the reason, absent
+    // from the destinations, for the same reason a blank surgery is.
+    await call({ status: 'discarded', discardReason: 'referred_out', discardedAt: new Date('2026-09-05T10:00:00Z') });
+
+    const rep = await referralReport(actor(admin), RANGE);
+    expect(rep.reasons.find((r) => r.reason === 'referred_out')!.count).toBe(3);
+    expect(rep.destinations).toEqual([{ id: ed.id, label: 'County ED Service', count: 2 }]);
+  });
+
+  it('names a surgery but still names no client — it is an aggregate either way', async () => {
+    const riverside = await prisma.referrer.create({ data: { practice: 'Riverside' } });
+    await call({ referrerId: riverside.id, firstName: 'Test', lastName: 'Caller' });
+
+    // The guard is `attendance_history`, not `read: inquiry`, and what leaves
+    // the function has to keep earning that. A practice is a business
+    // relationship; a caller is a person.
+    const rep = await referralReport(actor(admin), RANGE);
+    expect(JSON.stringify(rep)).not.toMatch(/Caller/);
+    expect(rep.referrers[0]!.label).toBe('Riverside');
   });
 
   it('refuses the roles the matrix refuses, like every other report here', async () => {

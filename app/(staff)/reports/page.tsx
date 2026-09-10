@@ -218,6 +218,38 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
               </tbody>
             </table>
           )}
+          {referrals.referrers.length > 0 && (
+            <div className="mt-4 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
+              <h3 className="font-medium">Which practice, which doctor</h3>
+              {/* The table the "GP" row could never be. A code answers how
+                  many; only the entity answers which surgery has gone quiet,
+                  and that is the one a practice manager rings. No client is
+                  named here — a surgery is the practice's own business
+                  relationship, not somebody's health. */}
+              <p className="mt-1 mb-2 max-w-prose text-caption text-subtle">
+                Only referrals where somebody wrote the surgery down. A blank is
+                &ldquo;nobody recorded it&rdquo;, so it is absent rather than sitting at the
+                top of this table as a referrer called Unknown.
+              </p>
+              <table className="w-full border-collapse text-body">
+                <thead>
+                  <tr className="text-left text-muted">
+                    <Th>Referred by</Th><Th right>Calls</Th><Th right>Converted</Th><Th right>Rate</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {referrals.referrers.map((r) => (
+                    <tr key={r.id}>
+                      <Td>{r.label}</Td>
+                      <Td right>{r.total}</Td>
+                      <Td right>{r.converted}</Td>
+                      <Td right>{pct(r.conversionRate)}</Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           <p className="mt-3 text-caption text-subtle">
             {referrals.daysToConversion === null
               ? 'Nothing converted in this period, so there is no time to report.'
@@ -253,6 +285,24 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
                 </li>
               ))}
             </ul>
+          )}
+
+          {referrals.destinations.length > 0 && (
+            <div className="mt-4 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
+              <h3 className="font-medium">Where they went instead</h3>
+              {/* The other direction of the same directory. "Referred out" is
+                  the one discard reason kept for a year rather than ninety
+                  days, because it records the practice having acted — and until
+                  there was a destination it could not say what the act was. */}
+              <ul className="mt-2 space-y-1 text-body">
+                {referrals.destinations.map((d) => (
+                  <li key={d.id} className="flex items-baseline justify-between gap-2">
+                    <span className="text-muted">{d.label}</span>
+                    <span className="font-mono text-caption">{d.count}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </Card>
       </div>

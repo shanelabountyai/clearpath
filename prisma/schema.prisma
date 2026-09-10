@@ -910,6 +910,49 @@ enum InquiryDiscardReason {
   spam
 }
 
+/// Who sent them, or who we sent them to (P2).
+///
+/// The entity behind two codes that were previously only codes: a
+/// `referralSource` of `gp`, and a `referred_out` discard. "GP" as an enum
+/// value answers *how many* and can never answer *which surgery has stopped
+/// sending anybody* — and that second question is the one a practice acts on.
+///
+/// Deliberately one table for both directions rather than `Referrer` and
+/// `ReferralDestination`. It is the same six surgeries either way: the one you
+/// send an eating-disorder case to is the one that sends you their anxiety
+/// referrals next month, and two tables would hold that relationship twice and
+/// let the halves drift.
+///
+/// Holds no client and no clinical content — it is a business contact list,
+/// which is why it survives the purge that destroys the enquiries pointing at
+/// it and why `onDelete: Restrict` guards both directions.
+model Referrer {
+  id String @id @default(cuid())
+
+  /// The surgery, agency or practice. Required: an unnamed doctor at a named
+  /// surgery is still somebody front desk can ring, and a named doctor at
+  /// nowhere is not.
+  practice String
+  /// The person there, where there is one.
+  name     String?
+
+  phone String?
+  email String?
+
+  /// Retired, never deleted — enquiries point here and the report reads them.
+  /// A surgery that has stopped taking referrals is a fact about now, not a
+  /// reason to rewrite what happened last March.
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  referredIn  Inquiry[] @relation("inquiryReferrer")
+  referredOut Inquiry[] @relation("inquiryReferredOut")
+
+  @@unique([practice, name])
+  @@index([active])
+}
+
 /// Both endings are terminal. See `src/clients/inquiry.ts`.
 enum InquiryStatus {
   open
@@ -958,6 +1001,27 @@ model Inquiry {
 
   referralSource ReferralSource
   referralNote   String?
+
+  /// Which practice, which doctor (P2). Only ever set alongside
+  /// `referralSource = gp`, and a database CHECK is what says so — the code
+  /// and the entity are one fact, and a row where they disagree is not
+  /// something to validate on the way in, it is something to make impossible.
+  ///
+  /// `Restrict`, like every other optional relation on this table: null here
+  /// means "nobody recorded which surgery", and a cascade that quietly
+  /// produced one when a contact was tidied up would turn a known referrer
+  /// into an unknown one with no trace.
+  referrerId String?
+  referrer   Referrer? @relation("inquiryReferrer", fields: [referrerId], references: [id], onDelete: Restrict)
+
+  /// Where we sent them instead. The other half of the same entity, and only
+  /// ever set with `discardReason = referred_out` — also a CHECK.
+  ///
+  /// This is why `referred_out` has its own 365-day retention window: it is
+  /// the record of the practice having *acted*, and without a destination that
+  /// record said only that somebody was turned away.
+  referredOutToId String?
+  referredOutTo   Referrer? @relation("inquiryReferredOut", fields: [referredOutToId], references: [id], onDelete: Restrict)
   /// Operational free text at the front-desk tier — the same tier as
   /// `WaitlistEntry.note`, and the honest weak point of this design. The purge
   /// is what bounds how long whatever ends up here survives.
@@ -991,6 +1055,7 @@ model Inquiry {
   @@index([status, discardedAt])
   @@index([requestedClinicianId])
   @@index([status, assignedClinicianId])
+  @@index([referrerId])
 }
 
 /// One submitter's recent use of the public enquiry form (P2).

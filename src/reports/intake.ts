@@ -38,6 +38,11 @@ export async function referralReport(
         },
         select: {
           referralSource: true, status: true, discardReason: true, createdAt: true,
+          // The entity behind the two codes (P2). A surgery is the practice's
+          // own business relationship, not somebody's health, so naming one on
+          // a screen that names no client is still an aggregate.
+          referrer: { select: { id: true, practice: true, name: true } },
+          referredOutTo: { select: { id: true, practice: true, name: true } },
           client: {
             // How long the call took to become a record, and no further. The
             // tempting next number — call to first session — needs a clinical
@@ -55,6 +60,19 @@ export async function referralReport(
       const byReason = new Map<string, number>();
       const totals = blank();
 
+      /**
+       * Who sends them, and who they were sent to (P2).
+       *
+       * `gp` referrals with no surgery recorded are simply absent rather than
+       * bucketed as "unknown": the honest reading of a null is "nobody wrote it
+       * down", and an "unknown" bar large enough to top the table would be a
+       * statement about the practice's biggest referrer that is not true.
+       */
+      type Contact = { id: string; practice: string; name: string | null };
+      const label = (r: Contact) => (r.name ? `${r.name}, ${r.practice}` : r.practice);
+      const byReferrer = new Map<string, Contact & ReturnType<typeof blank>>();
+      const byDestination = new Map<string, Contact & { count: number }>();
+
       const toConversion: number[] = [];
 
       for (const r of rows) {
@@ -69,6 +87,21 @@ export async function referralReport(
 
         if (r.status === 'discarded' && r.discardReason) {
           byReason.set(r.discardReason, (byReason.get(r.discardReason) ?? 0) + 1);
+        }
+
+        if (r.referrer) {
+          const e = byReferrer.get(r.referrer.id) ?? { ...r.referrer, ...blank() };
+          e.total++;
+          if (r.status === 'open') e.open++;
+          if (r.status === 'converted') e.converted++;
+          if (r.status === 'discarded') e.discarded++;
+          byReferrer.set(r.referrer.id, e);
+        }
+
+        if (r.referredOutTo) {
+          const e = byDestination.get(r.referredOutTo.id) ?? { ...r.referredOutTo, count: 0 };
+          e.count++;
+          byDestination.set(r.referredOutTo.id, e);
         }
 
         if (r.client) {
@@ -92,6 +125,27 @@ export async function referralReport(
             conversionRate: s.total === 0 ? 0 : s.converted / s.total,
           }))
           .sort((a, b) => b.total - a.total),
+        /**
+         * The table the `gp` row could never be. "GPs send us 40% of our calls"
+         * is a number nobody can act on; "Riverside sent eleven and nine became
+         * clients, Marsh Lane sent nine and one did" is two conversations to
+         * have this week.
+         */
+        referrers: [...byReferrer.values()]
+          .map((r) => ({
+            id: r.id,
+            label: label(r),
+            total: r.total,
+            open: r.open,
+            converted: r.converted,
+            discarded: r.discarded,
+            conversionRate: r.total === 0 ? 0 : r.converted / r.total,
+          }))
+          .sort((a, b) => b.total - a.total || a.label.localeCompare(b.label)),
+        /** And where the practice sent people instead — the other direction. */
+        destinations: [...byDestination.values()]
+          .map((r) => ({ id: r.id, label: label(r), count: r.count }))
+          .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)),
         reasons: [...byReason.entries()]
           .map(([reason, count]) => ({ reason: reason as DiscardReason, count }))
           .sort((a, b) => b.count - a.count),

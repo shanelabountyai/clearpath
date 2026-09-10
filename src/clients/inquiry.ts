@@ -66,13 +66,19 @@ export interface InquiryInput {
   requestedClinicianId?: string | null;
   referralSource: ReferralSource;
   referralNote?: string | null;
+  /**
+   * Which surgery sent them (P2). Meaningful only alongside `referralSource:
+   * 'gp'`, and dropped rather than rejected on any other source — see
+   * `createInquiry`. The database refuses the disagreeing row outright.
+   */
+  referrerId?: string | null;
   note?: string | null;
 }
 
 const SELECT = {
   id: true, firstName: true, lastName: true, phone: true, email: true,
   requestedClinicianId: true, assignedClinicianId: true,
-  referralSource: true, referralNote: true, note: true,
+  referralSource: true, referralNote: true, referrerId: true, referredOutToId: true, note: true,
   status: true, discardReason: true, discardedAt: true, takenById: true, createdAt: true,
 } as const;
 
@@ -87,9 +93,26 @@ const SELECT = {
 export async function createInquiry(actor: Actor, data: InquiryInput) {
   return guarded(
     { actor, action: 'create', resource: 'inquiry' },
-    (tx) => tx.inquiry.create({ data: { ...data, takenById: actingStaffId(actor) }, select: SELECT }),
+    (tx) =>
+      tx.inquiry.create({
+        data: { ...data, ...gpOnly(data), takenById: actingStaffId(actor) },
+        select: SELECT,
+      }),
   );
 }
+
+/**
+ * A surgery is only a fact about a `gp` referral.
+ *
+ * Dropped here rather than refused, because the form has no way to hide the
+ * picker when the source changes and a `Conflict` would be a 500 on an
+ * ordinary mis-click. What is refused is the *stored* row: the database CHECK
+ * `inquiry_referrer_only_for_gp` makes the disagreeing combination
+ * unrepresentable, so this function shapes and the database forbids. Two
+ * mechanisms, and only one of them can be routed around.
+ */
+const gpOnly = (data: Partial<InquiryInput>) =>
+  data.referralSource === 'gp' ? {} : { referrerId: null };
 
 /**
  * One access event, one audit row — the same argument `listClients` makes.
@@ -125,7 +148,15 @@ export async function updateInquiry(
 ) {
   return guarded(
     { actor, action: 'update', resource: 'inquiry', resourceId: id },
-    (tx) => tx.inquiry.update({ where: { id }, data, select: SELECT }),
+    // Only when the source is being written: a partial edit that leaves
+    // `referralSource` alone must not silently clear a referrer the row
+    // already carries legitimately.
+    (tx) =>
+      tx.inquiry.update({
+        where: { id },
+        data: data.referralSource === undefined ? data : { ...data, ...gpOnly(data) },
+        select: SELECT,
+      }),
   );
 }
 
@@ -142,7 +173,7 @@ export async function discardInquiry(
   actor: Actor,
   id: string,
   reason: DiscardReason,
-  opts: { clock?: Clock } = {},
+  opts: { clock?: Clock; referredOutToId?: string | null } = {},
 ) {
   const row = await prisma.inquiry.findUnique({ where: { id }, select: { status: true } });
   if (!row) throw new NotFound('Inquiry');
@@ -162,9 +193,95 @@ export async function discardInquiry(
     (tx) =>
       tx.inquiry.update({
         where: { id },
-        data: { status: 'discarded', discardReason: reason, discardedAt: (opts.clock ?? systemClock).now() },
+        data: {
+          status: 'discarded',
+          discardReason: reason,
+          discardedAt: (opts.clock ?? systemClock).now(),
+          // Where they went, on the one reason where that is a fact (P2).
+          // Dropped on every other reason for the same argument `gpOnly` makes,
+          // and refused outright by `inquiry_referred_out_has_a_reason`.
+          referredOutToId: reason === 'referred_out' ? (opts.referredOutToId ?? null) : null,
+        },
         select: SELECT,
       }),
+  );
+}
+
+/**
+ * ───────────────────────── the referral directory (P2) ─────────────────────
+ *
+ * `gp` and `referred_out` were codes. A code answers "how many came from a
+ * GP"; it cannot answer "which surgery has stopped sending us anybody", and
+ * that second question is the one a practice does something about.
+ *
+ * One table serves both directions on purpose: the surgery you refer an
+ * eating-disorder case out to is the surgery that sends you their anxiety
+ * referrals next month, and splitting it in two would hold that relationship
+ * twice and let the halves drift.
+ *
+ * It holds no client and no clinical content, which is what makes it safe for
+ * a report guarded on aggregates to name a row out loud — a surgery is the
+ * practice's business relationship, not somebody's health.
+ */
+
+/** A contact the practice exchanges referrals with. */
+export interface ReferrerInput {
+  practice: string;
+  name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+}
+
+const REFERRER_SELECT = {
+  id: true, practice: true, name: true, phone: true, email: true, active: true,
+} as const;
+
+/**
+ * The directory. Retired entries are included by default and marked, never
+ * hidden: a report over last March has to be able to name a surgery that has
+ * since closed its list, and a picker filters this list rather than asking for
+ * a different one.
+ */
+export async function listReferrers(actor: Actor, opts: { activeOnly?: boolean } = {}) {
+  return guarded(
+    { actor, action: 'read', resource: 'referrer' },
+    (tx) =>
+      tx.referrer.findMany({
+        where: opts.activeOnly ? { active: true } : {},
+        select: REFERRER_SELECT,
+        orderBy: [{ practice: 'asc' }, { name: 'asc' }],
+      }),
+  );
+}
+
+/**
+ * Add one. Front desk hears "Dr Patel at Riverside" mid-call and needs it in
+ * the list before the enquiry is saved, so the power sits with the people on
+ * the phone rather than behind a practice-settings page.
+ *
+ * The anonymous form holds no cell here, deliberately: a public submitter
+ * saying "my GP sent me" writes a code and nothing else, and somebody rings
+ * back to find out which surgery. Letting the internet append to a directory
+ * every future enquiry reads is not the same act as letting it leave a name
+ * and a number.
+ */
+export async function createReferrer(actor: Actor, data: ReferrerInput) {
+  return guarded(
+    { actor, action: 'create', resource: 'referrer' },
+    (tx) => tx.referrer.create({ data, select: REFERRER_SELECT }),
+  );
+}
+
+/**
+ * Retire one, or bring it back. Never a delete: enquiries point here, the
+ * report reads them, and a surgery that stopped taking referrals in June is a
+ * fact about June onwards — not a reason to rewrite what happened in March.
+ * `onDelete: Restrict` on both relations says the same thing in the database.
+ */
+export async function setReferrerActive(actor: Actor, id: string, active: boolean) {
+  return guarded(
+    { actor, action: 'update', resource: 'referrer', resourceId: id },
+    (tx) => tx.referrer.update({ where: { id }, data: { active }, select: REFERRER_SELECT }),
   );
 }
 

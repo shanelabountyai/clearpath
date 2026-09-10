@@ -693,6 +693,33 @@ async function main() {
   }
   log('8 clients on the waitlist');
 
+  // ── the referral directory ────────────────────────────────────────────
+  //
+  // Six contacts, and the fixture is what makes the P2 report worth drawing:
+  // two surgeries with very different conversion rates behind the same `gp`
+  // code, and one entry already retired so the "retired, never deleted" rule
+  // has something on screen to be true about.
+  const referrers = await Promise.all(
+    [
+      { practice: 'Riverside Surgery', name: 'Dr A. Patel', phone: '555-0910' },
+      { practice: 'Marsh Lane Medical Centre', name: 'Dr J. Okonkwo', phone: '555-0911' },
+      { practice: 'Northgate Health Centre', name: null, phone: '555-0912' },
+      { practice: 'County Eating Disorders Service', name: null, email: 'test.referrals@example.test' },
+      { practice: 'Hillside Family Practice', name: 'Dr M. Reyes', phone: '555-0913' },
+      // Closed its list. Enquiries still point at it, which is the whole
+      // argument for retiring rather than deleting.
+      { practice: 'Old Mill Surgery', name: null, phone: '555-0914', active: false },
+    ].map((data) => prisma.referrer.create({ data })),
+  );
+  const [riverside, marshLane, northgate, edService, hillside, oldMill] = referrers;
+  log('6 referring practices — 5 active, 1 retired');
+
+  // Which surgery gets the credit, spread so the report is a shape rather than
+  // six equal rows. Riverside sends the most and converts well; Marsh Lane
+  // sends nearly as many and converts badly, which is the comparison the bare
+  // `gp` code could never show.
+  const REFERRER_MIX = [riverside!, riverside!, marshLane!, northgate!, hillside!];
+
   // ── enquiries ─────────────────────────────────────────────────────────
   //
   // Counted, not drawn — same rule as the client loop above, and here it also
@@ -721,6 +748,12 @@ async function main() {
         lastName: `Enquiry ${client.code}`,
         phone: `555-03${String(no).padStart(2, '0')}`,
         referralSource: REFERRAL_MIX[no % REFERRAL_MIX.length]!,
+        // Only on a `gp` row — the database CHECK refuses it anywhere else, so
+        // a fixture that got this wrong would fail the seed rather than write
+        // a row the report would quietly mis-count.
+        referrerId: REFERRAL_MIX[no % REFERRAL_MIX.length] === 'gp'
+          ? REFERRER_MIX[no % REFERRER_MIX.length]!.id
+          : null,
         // The same fact the client carries, because conversion copies it. A
         // mismatch here would be a broken fixture, not the deliberate
         // non-reconciliation with the *intake form's* answer (D-04).
@@ -744,8 +777,17 @@ async function main() {
         lastName: `Enquiry D${String(i + 1).padStart(2, '0')}`,
         phone: `555-04${String(i).padStart(2, '0')}`,
         referralSource: REFERRAL_MIX[(i * 3) % REFERRAL_MIX.length]!,
+        referrerId: REFERRAL_MIX[(i * 3) % REFERRAL_MIX.length] === 'gp'
+          ? REFERRER_MIX[i % REFERRER_MIX.length]!.id
+          : null,
         status: 'discarded',
         discardReason: DISCARD_CODES[i % DISCARD_CODES.length]!,
+        // The other direction, on the one reason where it is a fact. Both
+        // referred-out rows go to the specialist service, which is what that
+        // reason usually means in a general counselling practice.
+        referredOutToId: DISCARD_CODES[i % DISCARD_CODES.length] === 'referred_out'
+          ? edService!.id
+          : null,
         discardedAt: daysAgo(called - 3),
         takenById: frontDesk.id,
         createdAt: daysAgo(called),
@@ -770,6 +812,12 @@ async function main() {
         phone: fromWeb ? null : `555-05${String(i).padStart(2, '0')}`,
         email: fromWeb ? `test.enquiry.o${i + 1}@example.test` : null,
         referralSource: REFERRAL_MIX[(i * 2) % REFERRAL_MIX.length]!,
+        // Never on a row that came through the public form, even where the
+        // source is `gp`: the anonymous submitter holds no `referrer` cell and
+        // has no way to say which surgery, so the fixture must not either.
+        referrerId: !fromWeb && REFERRAL_MIX[(i * 2) % REFERRAL_MIX.length] === 'gp'
+          ? REFERRER_MIX[i % REFERRER_MIX.length]!.id
+          : null,
         note: fromWeb ? null : i % 2 === 0 ? 'Mornings only' : 'Cannot do Tuesdays',
         takenById: fromWeb ? null : frontDesk.id,
         // P2: three of the five are in somebody's queue and two are in nobody's
@@ -780,6 +828,17 @@ async function main() {
         createdAt: daysAgo(1 + i * 2),
       },
     });
+  }
+  // One converted enquiry points at the retired surgery, so the report and the
+  // enquiry list both have to name a contact that is no longer taking anybody
+  // — the case a hard delete would have destroyed.
+  const oldest = await prisma.inquiry.findFirst({
+    where: { status: 'converted', referralSource: 'gp' },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true },
+  });
+  if (oldest) {
+    await prisma.inquiry.update({ where: { id: oldest.id }, data: { referrerId: oldMill!.id } });
   }
   log('40 enquiries — 20 converted, 15 discarded across all seven reason codes, 5 open (2 from the public form, 3 assigned to a queue)');
 

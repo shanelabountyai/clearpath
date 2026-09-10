@@ -48,7 +48,23 @@ export type Resource =
    * must never hold that. This is one boolean about oneself, and it reads
    * wrong anywhere else.
    */
-  | 'capacity';
+  | 'capacity'
+  /**
+   * The practice's referral contact list — surgeries, agencies, the doctor at
+   * one. Who sent a caller, and who a caller was sent to.
+   *
+   * Its own resource rather than a shape of `inquiry`, for the reason `discard`
+   * is not `delete`: an enquiry is one call and is destroyed on a window; this
+   * is a shared directory every future enquiry reads, and editing it changes
+   * what a report said about last year. Same tier, different blast radius, so
+   * it gets its own row to review.
+   *
+   * `public` deliberately holds nothing here. The anonymous form may `create`
+   * an enquiry; it may not write a string into a list the whole practice reads
+   * — which is why a submission that says "my GP sent me" stays a bare code
+   * with no detail, and somebody rings back to find out which surgery.
+   */
+  | 'referrer';
 
 /**
  * `waive` is its own action rather than an `update` on `fee`, because reversing
@@ -68,7 +84,7 @@ export const ROLES: readonly Role[] = [
 export const RESOURCES: readonly Resource[] = [
   'client', 'fee', 'appointment', 'attendance_history', 'progress_note',
   'process_note', 'form_template', 'form_request', 'form_submission',
-  'alert', 'portal_link', 'audit_log', 'user', 'inquiry', 'capacity',
+  'alert', 'portal_link', 'audit_log', 'user', 'inquiry', 'capacity', 'referrer',
 ];
 export const ACTIONS: readonly Action[] = [
   'read', 'create', 'update', 'sign', 'cosign', 'waive', 'discard',
@@ -212,6 +228,10 @@ const CLINICIAN: RoleMatrix = {
   // new is a judgement about your own caseload, and it is not delegable —
   // which is why `update` here is `self` and not `always`.
   capacity: { read: 'always', update: 'self' },
+  // Exactly the `inquiry` shape, and for the same reason: a clinician taking
+  // their own call should be able to name the surgery that sent the person,
+  // and curating the practice's contact list afterwards is operations.
+  referrer: { read: 'always', create: 'always' },
 };
 
 /**
@@ -232,6 +252,8 @@ const MATRIX: Record<Role, RoleMatrix> = {
     // desk's call, capacity is the clinician's answer, and the whole point of
     // the signal is that those are two different people.
     capacity: { read: 'always' },
+    // Owns the phone, so owns the phone book.
+    referrer: { read: 'always', create: 'always', update: 'always' },
   },
 
   therapist: CLINICIAN,
@@ -270,6 +292,11 @@ const MATRIX: Record<Role, RoleMatrix> = {
     // nobody agreed to. Deactivating a departing clinician is `user.update`,
     // which admin does hold; declaring someone has room is not the same act.
     capacity: { read: 'always' },
+    // Unlike `capacity` directly above, this one the practice manager does
+    // hold in full: who the practice exchanges referrals with is a business
+    // relationship they run, not a clinical judgement somebody else has to
+    // make about themselves.
+    referrer: { read: 'always', create: 'always', update: 'always' },
   },
 
   auditor: {

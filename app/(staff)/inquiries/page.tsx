@@ -2,11 +2,11 @@ import Link from 'next/link';
 import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
 import { may } from '../../../src/auth/guard';
-import { clinicianCapacity, listInquiries, previewInquiryPurge, type InquiryStatus } from '../../../src/clients/inquiry';
+import { clinicianCapacity, listInquiries, listReferrers, previewInquiryPurge, type InquiryStatus } from '../../../src/clients/inquiry';
 import { possibleDuplicates } from '../../../src/clients/repository';
 import { Badge, Card, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { withDenial } from '@/src/ui/denied';
-import { assign, convert, discard, recordInquiry, setAccepting } from './actions';
+import { addReferrer, assign, convert, discard, recordInquiry, setAccepting, toggleReferrer } from './actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,6 +58,16 @@ async function InquiriesPage({
   const byId = new Map(clinicians.map((c) => [c.id, c]));
   const names = new Map(clinicians.map((c) => [c.id, c.name]));
 
+  // Who sends the practice people, and who it sends people to (P2). Retired
+  // entries come back too and are marked — an enquiry from last March still
+  // points at one, and a row that could not name its own referrer would be
+  // worse than a row that says "closed".
+  const referrers = await listReferrers(actor);
+  const referrerLabel = new Map(
+    referrers.map((r) => [r.id, r.name ? `${r.name}, ${r.practice}` : r.practice]),
+  );
+  const openReferrers = referrers.filter((r) => r.active);
+
   const mayAssign = may({ actor, action: 'update', resource: 'inquiry' });
   // Holding this is what makes somebody a clinician on this page, with no code
   // outside `src/auth/` comparing a role (hard rule 1).
@@ -70,6 +80,10 @@ async function InquiriesPage({
   // take calls and cannot end them; conversion needs `create` on `client`,
   // which only front desk holds — so no new cell had to be reviewed for it.
   const mayDiscard = may({ actor, action: 'discard', resource: 'inquiry' });
+  // Front desk and every clinician may add a surgery; only front desk and the
+  // practice manager curate the list afterwards. Both come from the matrix.
+  const mayAddReferrer = may({ actor, action: 'create', resource: 'referrer' });
+  const mayCurateReferrers = may({ actor, action: 'update', resource: 'referrer' });
   const mayConvert = may({ actor, action: 'create', resource: 'client' });
 
   // The call just recorded, and whether we may already have this person as a
@@ -233,6 +247,8 @@ async function InquiriesPage({
                   <p className="mt-1 text-caption text-muted">
                     <span className="font-mono">{i.phone ?? i.email ?? 'no contact given'}</span>
                     {' · '}{REFERRAL_LABEL[i.referralSource] ?? i.referralSource}
+                    {i.referrerId && ` (${referrerLabel.get(i.referrerId) ?? 'a practice'})`}
+                    {i.referredOutToId && ` · referred to ${referrerLabel.get(i.referredOutToId) ?? 'another practice'}`}
                     {i.requestedClinicianId && ` · asked for ${names.get(i.requestedClinicianId) ?? 'someone'}`}
                     {' · '}{i.createdAt.toISOString().slice(0, 10)}
                   </p>
@@ -307,6 +323,22 @@ async function InquiriesPage({
                               <option key={v} value={v}>{l}</option>
                             ))}
                           </select>
+                          {/* Where they went instead. Read only on a
+                              `referred_out` discard and ignored on every other
+                              reason, so no JavaScript has to hide it — and a
+                              reason that is a record of the practice having
+                              acted finally says what the act was. */}
+                          <label htmlFor={`out-${i.id}`} className="sr-only">Referred to</label>
+                          <select
+                            id={`out-${i.id}`} name="referredOutToId" defaultValue=""
+                            className="rounded-[var(--radius)] border px-2 py-1 text-caption"
+                            style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}
+                          >
+                            <option value="">Referred to&hellip;</option>
+                            {openReferrers.map((r) => (
+                              <option key={r.id} value={r.id}>{referrerLabel.get(r.id)}</option>
+                            ))}
+                          </select>
                           <button className="rounded-[var(--radius)] border px-2.5 py-1 text-caption font-medium" style={{ borderColor: 'var(--border-strong)' }}>
                             Discard
                           </button>
@@ -361,6 +393,66 @@ async function InquiriesPage({
         </Card>
 
         <Card>
+          <h2 className="mb-1 font-semibold">Referring practices</h2>
+          <p className="mb-3 max-w-prose text-caption text-subtle">
+            Who sends the practice people, and who it sends people to. Entries are
+            retired, never deleted &mdash; enquiries point at them, and a surgery that
+            closed its list in June is a fact about June, not a reason to rewrite
+            March. The public form cannot add to this list.
+          </p>
+          {referrers.length === 0 ? (
+            <p className="text-body text-muted">Nobody in the directory yet.</p>
+          ) : (
+            <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+              {referrers.map((r) => (
+                <li key={r.id} className="flex items-center justify-between gap-2 py-2 text-body">
+                  <span>
+                    {r.practice}
+                    {r.name && <span className="ml-1.5 text-caption text-muted">{r.name}</span>}
+                    {(r.phone || r.email) && (
+                      <span className="ml-1.5 font-mono text-caption text-subtle">{r.phone ?? r.email}</span>
+                    )}
+                  </span>
+                  {mayCurateReferrers ? (
+                    <form action={toggleReferrer}>
+                      <input type="hidden" name="id" value={r.id} />
+                      <input type="hidden" name="active" value={r.active ? 'no' : 'yes'} />
+                      <button className="rounded-[var(--radius)] border px-2 py-0.5 text-caption" style={{ borderColor: 'var(--border)' }}>
+                        {r.active ? 'Retire' : 'Restore'}
+                      </button>
+                    </form>
+                  ) : (
+                    !r.active && <Badge tone="neutral">retired</Badge>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {mayAddReferrer && (
+            <details className="mt-3 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
+              <summary className="cursor-pointer text-caption text-muted">Add one</summary>
+              {/* Front desk hears "Dr Patel at Riverside" mid-call, so adding
+                  one lives beside the call form rather than behind a settings
+                  page a clinician cannot reach. */}
+              <form action={addReferrer} className="mt-3 space-y-3">
+                <Text id="ref-practice" name="practice" label="Practice or agency" required />
+                <Text id="ref-name" name="name" label="Doctor or contact" />
+                {/* Labelled apart from the caller's own phone and email on
+                    the form below — two boxes on one page called "Phone" is a
+                    screen reader reading the same word twice for two
+                    different people. */}
+                <Text id="ref-phone" name="phone" label="Practice phone" type="tel" />
+                <Text id="ref-email" name="email" label="Practice email" type="email" />
+                <button className="w-full rounded-[var(--radius)] border px-3 py-1.5 text-caption font-medium" style={{ borderColor: 'var(--border-strong)' }}>
+                  Add to the directory
+                </button>
+              </form>
+            </details>
+          )}
+        </Card>
+
+        <Card>
           <h2 className="mb-1 font-semibold">Record a call</h2>
           <p className="mb-3 max-w-prose text-caption text-subtle">
             Nothing is ever sent to an enquiry — no portal link, no form, no text. There
@@ -375,6 +467,13 @@ async function InquiriesPage({
               options={[{ value: '', label: 'Anybody' }, ...clinicians.map((c) => ({ value: c.id, label: c.name }))]} />
             <Pick name="referralSource" label="How they found us" defaultValue="search"
               options={Object.entries(REFERRAL_LABEL).map(([value, label]) => ({ value, label }))} />
+            {/* Only kept when the source above is a GP or clinician — the
+                server drops it otherwise and the database refuses the row that
+                disagrees, so a change of mind on the select above cannot leave
+                a surgery attached to "found us online". */}
+            <Pick name="referrerId" label="Which practice (GP referrals only)" defaultValue=""
+              options={[{ value: '', label: 'Not recorded' },
+                ...openReferrers.map((r) => ({ value: r.id, label: referrerLabel.get(r.id)! }))]} />
             <Text name="referralNote" label="Referral detail" />
             <div>
               <label htmlFor="note" className="block text-micro font-medium tracking-wide text-subtle uppercase">
@@ -402,14 +501,19 @@ async function InquiriesPage({
   );
 }
 
-function Text({ name, label, type = 'text', required = false }: {
-  name: string; label: string; type?: string; required?: boolean;
+/**
+ * `id` defaults to the field name and is overridden where two forms on this
+ * page collect the same one — a duplicated DOM id makes `htmlFor` ambiguous,
+ * and a screen reader then announces the wrong label for the wrong box.
+ */
+function Text({ name, label, type = 'text', required = false, id = name }: {
+  name: string; label: string; type?: string; required?: boolean; id?: string;
 }) {
   return (
     <div>
-      <label htmlFor={name} className="block text-micro font-medium tracking-wide text-subtle uppercase">{label}</label>
+      <label htmlFor={id} className="block text-micro font-medium tracking-wide text-subtle uppercase">{label}</label>
       <input
-        id={name} name={name} type={type} required={required}
+        id={id} name={name} type={type} required={required}
         className="mt-1 w-full rounded-[var(--radius)] border px-2 py-1.5 text-body"
         style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
       />

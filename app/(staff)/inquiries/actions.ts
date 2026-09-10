@@ -6,7 +6,8 @@ import { requireSession } from '../../../src/session';
 import { Conflict } from '../../../src/errors';
 import { issueForm } from '../../../src/forms/service';
 import {
-  assignInquiry, convertInquiry, createInquiry, discardInquiry, setCapacity,
+  assignInquiry, convertInquiry, createInquiry, createReferrer, discardInquiry,
+  setCapacity, setReferrerActive,
   type DiscardReason, type ReferralSource,
 } from '../../../src/clients/inquiry';
 
@@ -29,6 +30,10 @@ export async function recordInquiry(formData: FormData) {
     requestedClinicianId: orNull(formData, 'requestedClinicianId'),
     referralSource: str(formData, 'referralSource') as ReferralSource,
     referralNote: orNull(formData, 'referralNote'),
+    // Kept only when the source is `gp` — `createInquiry` drops it otherwise,
+    // and the database refuses the row that disagrees. The form cannot hide
+    // this picker without JavaScript, so the shaping happens server-side.
+    referrerId: orNull(formData, 'referrerId'),
     note: orNull(formData, 'note'),
   });
   redirect(`/inquiries?recorded=${inquiry.id}`);
@@ -36,7 +41,35 @@ export async function recordInquiry(formData: FormData) {
 
 export async function discard(formData: FormData) {
   const { actor } = await requireSession();
-  await discardInquiry(actor, str(formData, 'id'), str(formData, 'reason') as DiscardReason);
+  await discardInquiry(actor, str(formData, 'id'), str(formData, 'reason') as DiscardReason, {
+    // Only lands on a `referred_out` discard; ignored on every other reason.
+    referredOutToId: orNull(formData, 'referredOutToId'),
+  });
+  revalidatePath('/inquiries');
+}
+
+/**
+ * Add a surgery to the directory, mid-call.
+ *
+ * `referrer: create`, a cell front desk and every clinician hold and the
+ * public form deliberately does not — the anonymous internet may leave an
+ * enquiry, not append to a list the whole practice reads.
+ */
+export async function addReferrer(formData: FormData) {
+  const { actor } = await requireSession();
+  await createReferrer(actor, {
+    practice: str(formData, 'practice'),
+    name: orNull(formData, 'name'),
+    phone: orNull(formData, 'phone'),
+    email: orNull(formData, 'email'),
+  });
+  revalidatePath('/inquiries');
+}
+
+/** Retire one, or bring it back. Never a delete — enquiries point at it. */
+export async function toggleReferrer(formData: FormData) {
+  const { actor } = await requireSession();
+  await setReferrerActive(actor, str(formData, 'id'), str(formData, 'active') === 'yes');
   revalidatePath('/inquiries');
 }
 

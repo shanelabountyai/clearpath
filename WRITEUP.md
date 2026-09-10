@@ -2053,10 +2053,145 @@ declare their own capacity" is, and the answer draws both the toggle and the
 *Yours* filter that shows their own queue. The two questions have the same
 answer today. Only one of them stays correct when the matrix changes.
 
+## 27. When a code stops being enough
+
+`referralSource` was an enum with four values, and for most of them an enum is
+the right answer forever. "A friend told them" is a complete fact. "They found
+us online" is a complete fact. `gp` is not: it names a category with six members
+in it, and the practice deals with those six members individually.
+
+The tell is what the report could and could not say. `GP — 40% of calls, 55%
+convert` is a true sentence nobody can act on. The sentence somebody acts on is
+`Riverside sent eleven and nine became clients; Marsh Lane sent nine and one
+did` — that is a phone call to make this week, and no amount of care taken over
+the enum was ever going to produce it. A code answers *how many*. Only an entity
+answers *which*.
+
+### One table, two directions
+
+`referred_out` had the same shape and the opposite arrow: the practice sends
+somebody to a specialist service and records only that it happened. The obvious
+design is two models, `Referrer` and `ReferralDestination`, because inbound and
+outbound sound like different things.
+
+They are not different things. They are the same six surgeries seen from two
+sides — the service you refer an eating-disorder case *to* is the practice that
+sends you their anxiety referrals next month — and two tables would have held
+that relationship twice and let the halves drift into two spellings of the same
+surgery. So `Referrer` is one table and `Inquiry` carries two nullable foreign
+keys into it, `referrerId` and `referredOutToId`. A row can legitimately have
+both: a GP referred them in, and the practice referred them somewhere else.
+
+### The empty cell is the interesting one
+
+The new resource is `referrer`, and its rows read almost exactly like `inquiry`:
+clinicians get `read create`, front desk and the practice manager get `update`
+as well. That parallel is deliberate — writing down which surgery sent a caller
+is clerical, the same as writing the call down; curating the list every future
+call reads is operations.
+
+The cell worth reviewing is the one that is not there.
+
+```ts
+public: { inquiry: { create: 'unconditional' } },
+```
+
+Unchanged. The public enquiry form (§25) may create an enquiry and holds nothing
+on `referrer`. That is not an oversight and it is not symmetry for its own sake:
+an enquiry is one row about one caller with a retention window counting down on
+it, and a referrer is a permanent shared string that every future call sees in a
+picker and every future report groups by. Letting an anonymous submitter write
+one is a much longer-lived write than the one they came to make.
+
+So a public submission that says "my GP sent me" stays a bare code. What that
+costs is a phone call to find out which surgery — which is a call the form was
+always going to need anyway, because there is no free-text box on it either.
+
+### The rule that is not a validator
+
+Two invariants: a surgery only belongs with `referralSource = 'gp'`, and a
+destination only with `discardReason = 'referred_out'`. The instinct is a
+validator in the service, throwing on the bad combination.
+
+The database holds them instead:
+
+```sql
+ALTER TABLE "Inquiry" ADD CONSTRAINT "inquiry_referrer_only_for_gp"
+  CHECK ("referrerId" IS NULL OR "referralSource" = 'gp');
+```
+
+The same argument hard rule 5 makes about append-only audit rows: a rule that
+lives only in the module everybody is *supposed* to call is a rule that holds
+until somebody does not call it. The seed writes inquiries with the raw client,
+and the constraint means a fixture that got this wrong fails the seed instead of
+quietly writing a row the report mis-counts.
+
+But the service does not throw. It *shapes*:
+
+```ts
+const gpOnly = (data: Partial<InquiryInput>) =>
+  data.referralSource === 'gp' ? {} : { referrerId: null };
+```
+
+Because the form has no JavaScript, the surgery picker cannot hide itself when
+somebody changes the source select above it. A `Conflict` there would be a 500
+on an ordinary change of mind. So the service drops the field and the database
+forbids the row — two mechanisms doing two different jobs, and only one of them
+can be routed around. The unit tests assert both halves separately, including
+one that writes through `prisma.inquiry.create` specifically to prove the
+constraint fires for a caller the service never sees.
+
+`updateInquiry` needed one more line than expected. Clearing the referrer
+whenever the source is not `gp` would clear it on *every* partial edit that did
+not mention the source — adding a scheduling note would silently drop the
+surgery. So the shaping runs only when `referralSource` is actually being
+written.
+
+### Retired, never deleted
+
+`Referrer.active` is a boolean and there is no `discard` action anywhere in the
+`referrer` row of the matrix. A surgery that closed its list in June is a fact
+about June onwards; it is not a reason to rewrite what a report said about
+March, and the enquiries pointing at it still have to be able to name it.
+`onDelete: Restrict` on both relations says the same thing to anybody reaching
+past the service, and a test proves the database refuses to delete a contact an
+enquiry still points at.
+
+The other direction matters too: the retention purge destroys the enquiry and
+leaves the referrer standing. The directory is a business contact list, not a
+record of a caller — it holds nothing the retention window has any claim on.
+
+### What this deliberately does not do
+
+**`Client` gets no `referrerId`.** Conversion copies `referralSource` and
+`referralNote` onto the client (P0-9) and does not copy the surgery. The
+converted enquiry is retained forever — that is what makes "how long from call
+to first session" answerable — so the fact is still reachable, and nothing
+currently reads a client-side copy. A second column would be a second thing to
+keep in step for a question nobody has asked yet.
+
+**No "Unknown" bucket.** A `gp` call with no surgery recorded is simply absent
+from the referrer table rather than aggregated under a name. The honest reading
+of that null is "nobody wrote it down", and in the seeded data an Unknown bar
+would sit at the top of the table and read as a statement about the practice's
+largest referrer.
+
+**No deduplication.** `@@unique([practice, name])` stops the exact same pair
+being typed twice, and nothing stops "Riverside Surgery" and "Riverside
+Surgery " from both existing. Fuzzy matching a directory of six entries curated
+by the two people who ring them is a solution looking for a practice ten times
+this size.
+
 ## Decisions log
 
 | Decision | Why |
 |---|---|
+| `Referrer` is one table for referrals in and referrals out | The same six surgeries seen from two sides; two tables would hold the relationship twice and let the spellings drift |
+| `public` holds no cell on `referrer` | An enquiry is one row on a retention clock; a directory entry is a permanent shared string every future call and report reads |
+| The source/entity agreement is a database CHECK, not a validator | The seed and any future writer bypass the service; a rule that lives only in the module everybody is supposed to call holds until somebody does not |
+| The service drops a mismatched referrer instead of throwing | A no-JavaScript form cannot hide the picker when the source changes, and a `Conflict` there is a 500 on an ordinary change of mind |
+| Referrers are retired with `active`, never deleted | Enquiries and past reports point at them; a surgery closing its list in June is not a reason to rewrite March |
+| `Client` gets no copy of the referrer | The converted enquiry is retained forever, so the fact is already reachable; a second column is a second thing to keep in step |
 | `process_note` and `progress_note` as separate resources, not one with a flag | A flag invites scattered `if (note.private)`; separate resources put the difference in the policy table where it is testable |
 | `can()` returns a `Decision`, not a boolean | The audit log needs the rule that fired and whether break-glass was open; a boolean forces every call site to re-derive it |
 | A `client` role in the matrix, empty on purpose | A tokenized submission gets an honest actor in the audit trail instead of being attributed to staff |

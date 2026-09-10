@@ -8,7 +8,8 @@ import { actor, makeClient, makeUser, resetDb, settings } from '../test/harness'
 import { callArgs, readSource, sourceFiles } from '../test/source';
 import {
   assertTransition, assignInquiry, canTransition, clinicianCapacity, convertInquiry, createInquiry,
-  discardInquiry, listInquiries, previewInquiryPurge, runInquiryPurge, setCapacity, TRANSITIONS,
+  createReferrer, discardInquiry, listInquiries, listReferrers, previewInquiryPurge,
+  runInquiryPurge, setCapacity, setReferrerActive, TRANSITIONS,
   updateInquiry, type InquiryStatus, type ReferralSource,
 } from './inquiry';
 
@@ -524,6 +525,134 @@ describe('assignment, and the capacity signal it reads', () => {
     }
     const auditor = await makeUser('auditor');
     await expect(clinicianCapacity(actor(auditor))).rejects.toThrow(Forbidden);
+  });
+});
+
+describe('referral-source detail: which practice, which doctor (P2)', () => {
+  let admin: Awaited<ReturnType<typeof makeUser>>;
+  let riverside: Awaited<ReturnType<typeof createReferrer>>;
+  let edService: Awaited<ReturnType<typeof createReferrer>>;
+
+  beforeEach(async () => {
+    await resetDb();
+    await settings();
+    desk = await makeUser('front_desk');
+    therapist = await makeUser('therapist');
+    admin = await makeUser('admin');
+    riverside = await createReferrer(actor(desk), { practice: 'Riverside Surgery', name: 'Dr Patel' });
+    edService = await createReferrer(actor(desk), { practice: 'County ED Service' });
+  });
+  afterAll(() => prisma.$disconnect());
+
+  it('turns a code into an entity: a gp referral names the surgery', async () => {
+    const inq = await anInquiry({ referralSource: 'gp', referrerId: riverside.id });
+    expect(inq).toMatchObject({ referralSource: 'gp', referrerId: riverside.id });
+  });
+
+  it('drops the surgery when the source is not a gp referral', async () => {
+    // The picker cannot hide itself without JavaScript, so a change of mind on
+    // the source above must not leave a surgery attached to "found us online".
+    const inq = await anInquiry({ referralSource: 'search', referrerId: riverside.id });
+    expect(inq.referrerId).toBeNull();
+  });
+
+  it('and the database refuses the disagreeing row outright, not just the service', async () => {
+    // The one that matters: the invariant is a CHECK, so a hand-rolled write
+    // that never passes through `createInquiry` is refused too.
+    await expect(
+      prisma.inquiry.create({
+        data: {
+          firstName: 'A', lastName: 'Caller', referralSource: 'friend', referrerId: riverside.id,
+        },
+      }),
+    ).rejects.toThrow(/inquiry_referrer_only_for_gp/);
+  });
+
+  it('leaves an existing surgery alone on an edit that does not touch the source', async () => {
+    const inq = await anInquiry({ referralSource: 'gp', referrerId: riverside.id });
+    const edited = await updateInquiry(actor(desk), inq.id, { note: 'Mornings only' });
+    expect(edited.referrerId).toBe(riverside.id);
+  });
+
+  it('clears it when an edit moves the source off gp', async () => {
+    const inq = await anInquiry({ referralSource: 'gp', referrerId: riverside.id });
+    const edited = await updateInquiry(actor(desk), inq.id, { referralSource: 'friend' });
+    expect(edited.referrerId).toBeNull();
+  });
+
+  it('records where a referred-out caller was sent', async () => {
+    const inq = await anInquiry();
+    const out = await discardInquiry(actor(desk), inq.id, 'referred_out', {
+      referredOutToId: edService.id,
+    });
+    expect(out).toMatchObject({ discardReason: 'referred_out', referredOutToId: edService.id });
+  });
+
+  it('ignores a destination on any other reason', async () => {
+    const inq = await anInquiry();
+    const out = await discardInquiry(actor(desk), inq.id, 'no_answer', {
+      referredOutToId: edService.id,
+    });
+    expect(out.referredOutToId).toBeNull();
+  });
+
+  it('and the database refuses that combination too', async () => {
+    const inq = await anInquiry();
+    await expect(
+      prisma.inquiry.update({
+        where: { id: inq.id },
+        data: { status: 'discarded', discardReason: 'spam', discardedAt: new Date(), referredOutToId: edService.id },
+      }),
+    ).rejects.toThrow(/inquiry_referred_out_has_a_reason/);
+  });
+
+  it('never lets the public form name a surgery — it holds no cell here', async () => {
+    const stranger = { id: 'anon', role: 'public' as const };
+    await expect(createReferrer(stranger, { practice: 'Anything At All' })).rejects.toThrow(Forbidden);
+    await expect(listReferrers(stranger)).rejects.toThrow(Forbidden);
+
+    // And the denial is on the record, like every other one.
+    const denial = await prisma.auditEvent.findFirstOrThrow({
+      where: { resource: 'referrer', action: 'create', allowed: false },
+    });
+    expect(denial.actorId).toBe('anon');
+  });
+
+  it('lets a clinician add one and not retire one', async () => {
+    const added = await createReferrer(actor(therapist), { practice: 'Hillside Family Practice' });
+    expect(added.active).toBe(true);
+    await expect(setReferrerActive(actor(therapist), added.id, false)).rejects.toThrow(Forbidden);
+  });
+
+  it('retires rather than deletes, and keeps the enquiries pointing at it', async () => {
+    const inq = await anInquiry({ referralSource: 'gp', referrerId: riverside.id });
+    const retired = await setReferrerActive(actor(admin), riverside.id, false);
+    expect(retired.active).toBe(false);
+
+    // Still listed, still named by the row that points at it. A surgery that
+    // closed its list this June is not a reason to rewrite last March.
+    const all = await listReferrers(actor(desk));
+    expect(all.map((r) => r.id)).toContain(riverside.id);
+    expect(await listReferrers(actor(desk), { activeOnly: true })).toHaveLength(1);
+    expect((await listInquiries(actor(desk))).find((r) => r.id === inq.id)?.referrerId)
+      .toBe(riverside.id);
+  });
+
+  it('and the database refuses to delete one an enquiry still points at', async () => {
+    await anInquiry({ referralSource: 'gp', referrerId: riverside.id });
+    await expect(prisma.referrer.delete({ where: { id: riverside.id } })).rejects.toThrow();
+  });
+
+  it('survives the purge that destroys the enquiries pointing at it', async () => {
+    // The directory is a contact list, not a record of a caller. The window
+    // that destroys the enquiry has nothing to say about the surgery.
+    const inq = await anInquiry({ referralSource: 'gp', referrerId: riverside.id });
+    const clock = fixedClock(T0);
+    await discardInquiry(actor(desk), inq.id, 'not_a_fit', { clock });
+
+    const later = fixedClock(new Date(new Date(T0).getTime() + 200 * DAY).toISOString());
+    expect(await runInquiryPurge(later)).toContain(inq.id);
+    expect(await prisma.referrer.findUnique({ where: { id: riverside.id } })).not.toBeNull();
   });
 });
 

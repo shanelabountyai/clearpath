@@ -20,7 +20,9 @@ test.describe('the intake desk', () => {
 
     await page.getByLabel('First name').fill('Sam');
     await page.getByLabel('Last name').fill(last);
-    await page.getByLabel('Phone').fill('555-0100');
+    // Exact: the referral directory beside this form collects a practice
+    // phone, and `getByLabel` matches on substring.
+    await page.getByLabel('Phone', { exact: true }).fill('555-0100');
     await page.getByRole('button', { name: 'Record the call' }).click();
 
     const row = page.locator('li', { hasText: last });
@@ -46,7 +48,7 @@ test.describe('the intake desk', () => {
     await page.getByLabel('First name').fill('Sam');
     await page.getByLabel('Last name').fill(last);
     // TC-001's number, straight out of the seed.
-    await page.getByLabel('Phone').fill('555-0101');
+    await page.getByLabel('Phone', { exact: true }).fill('555-0101');
     await page.getByRole('button', { name: 'Record the call' }).click();
 
     await expect(page.getByText('We may already know this person')).toBeVisible();
@@ -170,6 +172,59 @@ test.describe('the intake desk', () => {
     await page.goto('/inquiries');
     await page.getByRole('button', { name: 'Open my books' }).click();
     await expect(page.getByRole('button', { name: 'Close my books' })).toBeVisible();
+  });
+
+  /**
+   * P2. The referral code becomes an entity.
+   *
+   * The unit tests prove the shaping and the database CHECK. What this proves
+   * is the screen: a call recorded against a surgery says which surgery, and
+   * the two halves of the `referrer` row — add, and curate — land on different
+   * people exactly as the matrix says.
+   */
+  test('front desk records which surgery sent a caller, and it shows on the row', async ({ page }) => {
+    const last = caller();
+    await actAs(page, USERS.frontDesk);
+    await page.goto('/inquiries');
+
+    await page.getByLabel('First name').fill('Ines');
+    await page.getByLabel('Last name').fill(last);
+    await page.getByLabel('How they found us').selectOption('gp');
+    await page.getByLabel('Which practice (GP referrals only)')
+      .selectOption({ label: 'Dr A. Patel, Riverside Surgery' });
+    await page.getByRole('button', { name: 'Record the call' }).click();
+
+    // "A GP" is the code; this is the thing a practice manager can ring.
+    // The detail line, not the "Referred to" picker further down the same row.
+    const row = page.locator('li', { hasText: last });
+    await expect(row.locator('p', { hasText: 'Dr A. Patel, Riverside Surgery' })).toBeVisible();
+  });
+
+  test('a clinician may add a practice to the directory and may not retire one', async ({ page }) => {
+    await actAs(page, USERS.therapist);
+    await page.goto('/inquiries');
+
+    await expect(page.getByText('Referring practices')).toBeVisible();
+    // `referrer: create` — the same shape as `inquiry`: writing one down is
+    // clerical, curating the list every future call reads is operations.
+    await page.getByText('Add one').click();
+    await expect(page.getByRole('button', { name: 'Add to the directory' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Retire' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Restore' })).toHaveCount(0);
+  });
+
+  test('front desk retires a practice and it is still named by the calls that point at it', async ({ page }) => {
+    await actAs(page, USERS.frontDesk);
+    await page.goto('/inquiries');
+
+    // Seeded already retired, and still on the list — the whole argument for
+    // an `update` rather than a `delete`.
+    const retired = page.locator('li', { hasText: 'Old Mill Surgery' });
+    await expect(retired.getByRole('button', { name: 'Restore' })).toBeVisible();
+
+    // And it is not offered on a new call, because it has closed its list.
+    const picker = page.getByLabel('Which practice (GP referrals only)');
+    await expect(picker.locator('option', { hasText: 'Old Mill Surgery' })).toHaveCount(0);
   });
 
   test('the practice manager reads the board and has no way to set a clinician open', async ({ page }) => {

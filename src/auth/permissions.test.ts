@@ -30,6 +30,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     portal_link: 'read create',
     inquiry: 'read create update discard',
     capacity: 'read',
+    referrer: 'read create update',
   }),
   therapist: spec({
     client: 'read update',
@@ -45,6 +46,9 @@ const ALLOWED: Record<Role, Set<string>> = {
     portal_link: 'read create',
     inquiry: 'read create',
     capacity: 'read update',
+    // Exactly the `inquiry` shape: name the surgery on a call you took, and
+    // leave curating the list to the people who run the practice.
+    referrer: 'read create',
   }),
   associate: spec({
     client: 'read update',
@@ -60,6 +64,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     portal_link: 'read create',
     inquiry: 'read create',
     capacity: 'read update',
+    referrer: 'read create',
   }),
   supervisor: spec({
     client: 'read update',
@@ -75,6 +80,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     portal_link: 'read create',
     inquiry: 'read create',
     capacity: 'read update',
+    referrer: 'read create',
   }),
   admin: spec({
     client: 'read update', // break-glass only
@@ -90,6 +96,10 @@ const ALLOWED: Record<Role, Set<string>> = {
     // Read, and no update anywhere in this row: the practice manager is the one
     // person who cannot declare that a clinician has room.
     capacity: 'read',
+    // And this one they do hold in full — who the practice exchanges referrals
+    // with is a business relationship they run, not a judgement about a
+    // clinician that only that clinician can make.
+    referrer: 'read create update',
   }),
   auditor: spec({ audit_log: 'read' }),
   // The tokenized door, and nothing else in the matrix. `update` is confirm and
@@ -110,6 +120,9 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
     inquiry: 'read create',
     // `read` only: `update` is `self`, so without a subject it decides never.
     capacity: 'read',
+    // Every cell here is `always` — a contact list has no relationship to
+    // hold, which is exactly why the narrow part had to be *who* holds it.
+    referrer: 'read create',
   }),
   associate: spec({
     appointment: 'read create update',
@@ -117,6 +130,7 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
     form_request: 'read create',
     inquiry: 'read create',
     capacity: 'read',
+    referrer: 'read create',
   }),
   supervisor: spec({
     appointment: 'read create update',
@@ -124,6 +138,7 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
     form_request: 'read create',
     inquiry: 'read create',
     capacity: 'read',
+    referrer: 'read create',
   }),
   admin: spec({
     fee: 'read update waive',
@@ -135,6 +150,7 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
     user: 'read create update',
     inquiry: 'read create update discard',
     capacity: 'read',
+    referrer: 'read create update',
   }),
   auditor: ALLOWED.auditor,
   // Never unconditional: without a row that is theirs, a token decides `never`.
@@ -385,6 +401,58 @@ describe('the client role reaches exactly one cell, and only their own row', () 
     // nothing for the roles that already have a rule.
     expect(can({ id: ME, role: 'auditor' }, 'update', 'appointment', { ownerClientId: ME }).allowed)
       .toBe(false);
+  });
+});
+
+describe('the referral directory is written by staff and never by the internet', () => {
+  it('the public form may leave an enquiry and may not touch the contact list', () => {
+    const stranger: Actor = { id: 'anon', role: 'public' };
+    // The one thing it holds, unchanged.
+    expect(can(stranger, 'create', 'inquiry').allowed).toBe(true);
+    // And nothing at all here. This is the cell that keeps "my GP sent me" a
+    // bare code on a public submission: a `create` here would let anybody
+    // append a string to a directory the whole practice reads and the report
+    // aggregates by.
+    for (const action of ACTIONS) {
+      expect(can(stranger, action, 'referrer').allowed, action).toBe(false);
+    }
+  });
+
+  it('a clinician may name a surgery and may not curate the list', () => {
+    for (const role of ['therapist', 'associate', 'supervisor'] as Role[]) {
+      const c: Actor = { id: ME, role };
+      expect(can(c, 'read', 'referrer').allowed, role).toBe(true);
+      expect(can(c, 'create', 'referrer').allowed, role).toBe(true);
+      // The same line `inquiry` draws: recording is clerical, curating is
+      // operations. Retiring a surgery changes what every future call sees.
+      expect(can(c, 'update', 'referrer').allowed, role).toBe(false);
+    }
+  });
+
+  it('front desk and the practice manager curate it, with no break-glass anywhere', () => {
+    for (const role of ['front_desk', 'admin'] as Role[]) {
+      for (const action of ['read', 'create', 'update'] as const) {
+        expect(can({ id: ME, role }, action, 'referrer').allowed, `${role}/${action}`).toBe(true);
+        expect(can({ id: ME, role }, action, 'referrer').rule, `${role}/${action}`).toBe('always');
+      }
+    }
+  });
+
+  it('holds no discard: a contact is retired by an update, never destroyed', () => {
+    // `active: false` is an `update`. There is deliberately no verb here that
+    // removes a row an enquiry and a past report both point at.
+    for (const role of ROLES) {
+      expect(can({ id: ME, role }, 'discard', 'referrer').allowed, role).toBe(false);
+    }
+  });
+
+  it('is not reachable by the auditor or a client link', () => {
+    for (const role of ['auditor', 'client'] as Role[]) {
+      for (const action of ACTIONS) {
+        expect(can({ id: ME, role }, action, 'referrer', { ownerClientId: ME }).allowed,
+          `${role}/${action}`).toBe(false);
+      }
+    }
   });
 });
 
