@@ -699,7 +699,8 @@ export async function ownDrafts(actor: Actor, clock: Clock = systemClock) {
  *
  * The other blockers are checked inside the transaction and refuse before any
  * write, because they are facts about the plan rather than races with a
- * neighbour.
+ * neighbour. The date answers first (D-30): before the last day nothing
+ * executes, whatever else the plan still needs.
  *
  * **One `guarded` row, and `auditEvent` for everything it caused (D-21).** The
  * PRD sketched `guardedAll` over the records touched, and the matrix refuses
@@ -729,6 +730,13 @@ export async function executeDeparture(actor: Actor, departureId: string, clock:
         target: { subjectUserId: d.userId },
       },
       async (tx) => {
+        // D-30. Sessions move from the last day on and the account closes
+        // whenever this runs, so an early click would leave the weeks between
+        // on somebody who can no longer sign in. Inside the guard, so a
+        // supervisor's early attempt is still a denial on the record.
+        if (localDateOf(now) < d.lastDayOn.toISOString().slice(0, 10)) {
+          throw new Conflict('A departure cannot execute before its last day', 'before_last_day');
+        }
         const blockers = (await blockersOf(tx, d)).filter((b) => b.kind !== 'hour_clash');
         if (blockers.length) {
           throw new Conflict(`This departure has ${blockers.length} unresolved item(s)`, 'departure_not_ready');

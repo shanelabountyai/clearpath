@@ -19,6 +19,8 @@ const REFUSAL: Record<string, string> = {
   hour_clash:
     'Nothing moved — not one client. A session being transferred lands on an hour its receiving clinician already holds. Move that session, then execute again.',
   departure_not_ready: 'Nothing moved. This plan still has the unresolved items listed here.',
+  before_last_day:
+    'Nothing moved. A departure executes on its last day, not before — until then the caseload is still theirs to work.',
   already_departing: 'That person already has a departure planned. Withdraw it before recording another.',
   last_day_past: 'A last day is needed, and it cannot be before today.',
   not_on_caseload: 'That client is no longer on this caseload, so there is nothing to decide.',

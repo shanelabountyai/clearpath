@@ -28,7 +28,7 @@ test.describe('a clinician leaving', () => {
     sql(`update "Departure" set status = 'cancelled' where status = 'planned' and "userId" = ${leaver}`);
   });
 
-  test('the practice manager records notice, decides, and is refused before the plan is ready', async ({ page }) => {
+  test('the practice manager records notice, decides, and is refused before the last day', async ({ page }) => {
     await actAs(page, USERS.manager);
     await page.goto('/departures');
     await page.getByLabel('Who is leaving').selectOption({ label: LEAVER });
@@ -49,8 +49,9 @@ test.describe('a clinician leaving', () => {
     await expect(refusal(page, 'cannot take this on')).toBeVisible();
     await expect(page.getByText('11 clients with no decision')).toBeVisible();
 
+    // Thirty days out and not ready either: the date answers first (D-30).
     await page.getByRole('button', { name: 'Execute departure' }).click();
-    await expect(refusal(page, 'Nothing moved')).toBeVisible();
+    await expect(refusal(page, 'executes on its last day, not before')).toBeVisible();
   });
 
   test('front desk reads the plan and is shown nothing to change', async ({ page }) => {

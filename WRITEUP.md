@@ -2937,14 +2937,21 @@ executed one, so a green sweep has tested both states. The steps:
 
 The first run's assertion expected no open sessions left on the leaver. There
 were 45. `executeDeparture` moves sessions from the last day on, and the weeks
-before it belong to the leaver, who is still working. The demo executes on the
+before it belong to the leaver, who is still working. The demo executed on the
 real date, twelve days before the seeded last day, so 22 of those sessions were
 still in the future, sitting on an account the same transaction had just closed.
 That is the silent half-moved state D-06 exists to prevent, reached by clicking
-Execute early rather than by a clash. Nothing refuses an execution before the
-last day. The spec now asserts what the code promises (nothing open from the
-last day on). Whether to refuse early execution or to move from the earlier of
-now and the last day is still an open product question.
+Execute early rather than by a clash. Nothing refused an execution before the
+last day. The spec asserts what the code promises (nothing open from the last
+day on).
+
+**Decided and built as D-30: execution is refused before the last day.** The
+alternative was to move from the earlier of now and the last day, which would
+have had the clash scan flag weeks that only move if somebody clicks early. The
+refusal is checked inside the guard, ahead of the other blockers: a supervisor's
+early attempt is still a denial on the record, and a plan that is early *and*
+unready is told about the date. The seed now gives notice three weeks before its
+`TODAY` and leaves on it, so the demo executes on any real date after that.
 
 ### What it deliberately does not do
 
@@ -3151,6 +3158,7 @@ now and the last day is still an open product question.
 | Refusals travel back as a `Conflict` code, never its message | The code is the page's whole vocabulary, and a URL is no place for anything a person typed or a record holds |
 | The receiving supervisor is checked with `may(… 'cosign' …)`, not a role | The first draft compared `role === 'supervisor'` and hard rule 1's grep failed the build. The matrix is the only place that knows who can co-sign |
 | The demo's leaver is a seventh therapist added at the end of the seed | The seed's PRNG sequence carries weight, and other specs assert seeded caseload counts. A clinician who draws nothing and holds hours no standing slot uses moves nothing else |
+| Execution is refused before the last day, inside the guard and ahead of the other blockers (D-30) | Sessions move from the last day on and the account closes whenever execution runs, so an early click left the weeks between on a clinician who could no longer sign in. Before the guard, a supervisor's early attempt would have come back as a date refusal with no denial row |
 
 ## What this project deliberately is not
 

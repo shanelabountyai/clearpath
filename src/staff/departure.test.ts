@@ -10,6 +10,7 @@ import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../tes
 import { getClient } from '../clients/repository';
 import { indiscreetTerms } from '../messaging/outbox';
 import { whenLong } from '../strings';
+import { zonedToUtc } from '../time';
 import {
   TRANSITIONS, abandonedNotesByDeparture, assertTransition, canTransition, cancelDeparture, decideAssignment,
   departureBlockers, departureWorklist, executeDeparture, getDeparturePlan, ownDrafts, planDeparture,
@@ -592,6 +593,42 @@ describe('the transfer, in one transaction (P0-6)', () => {
     await executeDeparture(actor(manager), departure.id, EXECUTION);
     await expect(executeDeparture(actor(manager), departure.id, EXECUTION)).rejects.toMatchObject({ code: 'bad_transition' });
     await expect(cancelDeparture(actor(manager), departure.id)).rejects.toMatchObject({ code: 'bad_transition' });
+  });
+
+  it('refuses before the last day — ahead of an unready plan, before any write — and a supervisor is still refused as one (D-30)', async () => {
+    const { manager, sup, alex, beth, kept, departure, decide } = await practice();
+    const next = await book(kept.id, alex.id, '2026-10-06T14:00:00Z');
+    await decide(kept.id, 'transfer', beth.id);
+    const lastEvening = fixedClock(zonedToUtc('2026-09-29', 23 * 60 + 59));
+
+    // Ended is still undecided. The date is what answers.
+    await expect(executeDeparture(actor(manager), departure.id, lastEvening)).rejects.toMatchObject({
+      name: 'Conflict', code: 'before_last_day',
+    });
+    await expect(executeDeparture(actor(sup), departure.id, lastEvening)).rejects.toThrow(Forbidden);
+
+    expect(await prisma.user.findUniqueOrThrow({ where: { id: alex.id } })).toMatchObject({ active: true });
+    expect((await prisma.client.findUniqueOrThrow({ where: { id: kept.id } })).treatingClinicianId).toBe(alex.id);
+    expect((await prisma.appointment.findUniqueOrThrow({ where: { id: next.id } })).clinicianId).toBe(alex.id);
+    expect((await prisma.departure.findUniqueOrThrow({ where: { id: departure.id } })).status).toBe('planned');
+    // The supervisor's denial, and no row for the refusal the manager was given.
+    expect(await prisma.auditEvent.findMany({ where: { action: 'depart' }, select: { actorId: true, allowed: true } }))
+      .toEqual([{ actorId: sup.id, allowed: false }]);
+  });
+
+  it('executes from the first minute of the last day, and moves that day\'s sessions with the rest (D-30)', async () => {
+    const { manager, alex, beth, kept, ended, departure, decide } = await practice();
+    const thatMorning = await book(kept.id, alex.id, '2026-09-30T13:00:00Z');
+    const later = await book(kept.id, alex.id, '2026-10-06T14:00:00Z');
+    await decide(kept.id, 'transfer', beth.id);
+    await decide(ended.id, 'discharge');
+
+    await executeDeparture(actor(manager), departure.id, fixedClock(zonedToUtc(LAST_DAY, 0)));
+
+    for (const a of [thatMorning, later]) {
+      expect((await prisma.appointment.findUniqueOrThrow({ where: { id: a.id } })).clinicianId).toBe(beth.id);
+    }
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: alex.id } })).active).toBe(false);
   });
 });
 

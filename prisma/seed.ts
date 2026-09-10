@@ -1004,10 +1004,11 @@ async function main() {
     await submitForm(request.token, { ...zeros(), item_9: 2, difficulty: 'very' });
   }
 
-  // Noticed on the seed's today, three weeks' notice, every decision through
-  // the real door so each one is its own audit row.
-  const noticeClock = fixedClock(`${TODAY}T16:00:00Z`);
-  const lastDayOn = addDays(TODAY, 21);
+  // Three weeks' notice ending on the seed's today, so the plan can execute on
+  // any real date after it (D-30). Every decision through the real door, so
+  // each one is its own audit row.
+  const noticeClock = fixedClock(`${addDays(TODAY, -21)}T16:00:00Z`);
+  const lastDayOn = TODAY;
   const departure = await planDeparture(admin, { userId: maren.id, lastDayOn }, noticeClock);
   const receivers = [dev, kai, priya];
   for (const [i, c] of leaving.entries()) {
