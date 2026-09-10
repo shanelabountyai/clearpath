@@ -1,13 +1,23 @@
 # Next
 
-**Item:** the early-execution gap the demo found (WRITEUP §34). `executeDeparture`
-moves sessions from the last day on and closes the account whenever it runs.
-Clicked before the last day, it leaves every session between now and then on a
-deactivated clinician. The demo left 22. This is D-06's silent half-moved state,
-reached without a clash. Decision pending, asked at the end of the demo session:
-refuse execution before the last day, or move sessions from the earlier of now
-and the last day. Opus fits: this is transaction semantics and what the preview
-scan promises (D-22).
+**Item:** build D-30 (decided 2026-09-10): `executeDeparture` refuses before the
+last day. Found by the demo (WRITEUP §34): an early click closed the account and
+left 22 sessions on it. Opus fits: transaction semantics, and three specs lean on
+the order the refusals fire in.
+
+- The guard goes in `executeDeparture`, before the transaction, on the injected
+  clock (`localDateOf(clock.now()) < lastDayOn`). Add a `Conflict` code and its
+  sentence in `app/(staff)/departures/ui.tsx` `REFUSAL`. Add a unit test for the
+  refusal, plus one proving a last-day execution still moves everything.
+- **Check which refusal fires first.** `departure.spec.ts` executes Tom's
+  not-ready plan with a last day 30 days out and asserts `Nothing moved`, and
+  the new guard will now answer first. Check `departure.test.ts`'s execution
+  clocks against their last days too.
+- **The demo seed has to move:** notice on `TODAY - 21` on a fixed clock, last
+  day `TODAY` (2026-09-01), so any real date can execute it. Re-check the clash
+  plant (the first session on or after the last day) and the spec's
+  moved-session count.
+- Log D-30 in WRITEUP §34's finding paragraph as decided.
 
 ## What just landed (capstone demo)
 
