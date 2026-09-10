@@ -15,8 +15,10 @@ const { actor, resetDb } = await import('../src/test/harness');
 const { TEMPLATES } = await import('../src/forms/fixtures');
 const { publishTemplate, issueForm, submitForm } = await import('../src/forms/service');
 const { materialiseSeries } = await import('../src/scheduling/booking');
-const { createProgressNote, signProgressNote, coSignProgressNote, createProcessNote } =
-  await import('../src/notes/service');
+const {
+  createProgressNote, signProgressNote, coSignProgressNote, createProcessNote, closeProcessNote, amendProcessNote,
+} = await import('../src/notes/service');
+const { planDeparture, decideAssignment } = await import('../src/staff/departure');
 const { guarded } = await import('../src/auth/guard');
 const { addDays, localDateOf, zonedToUtc } = await import('../src/time');
 const { bookGroupSession } = await import('../src/scheduling/groups');
@@ -915,6 +917,122 @@ async function main() {
       async () => null,
     ).catch(() => undefined);
   }
+  // ── a clinician leaves (departure PRD, Success Metrics → Lagging) ──────
+  //
+  // The capstone fixture, built to the PRD's numbers: fifteen clients, three
+  // receivers, two discharges, one referral out, four unsigned drafts, two
+  // unread alerts, and one hour clash planted on purpose. Planned, not
+  // executed. `departure-demo.spec.ts` is the walkthrough, and the execution
+  // is the part worth watching.
+  //
+  // Its own therapist, at the end, drawing nothing from the PRNG. A caseload
+  // dealt by the loop above would reshuffle every fixture after it, and
+  // borrowing a seeded clinician would move counts other specs assert. The
+  // sessions sit at 9, 11 and 13, hours no standing slot uses, so the only
+  // clash any receiver has is the one planted here.
+  const maren = await mk('Maren Solberg', 'therapist');
+  for (const weekday of [1, 2, 3, 4, 5]) {
+    await prisma.availability.create({ data: { userId: maren.id, weekday, startMinute: 540, endMinute: 1020 } });
+  }
+  const leaving: { id: string; code: string }[] = [];
+  for (let i = 0; i < 15; i++) {
+    const n = 71 + i;
+    const client = await prisma.client.create({
+      data: {
+        code: `TC-0${n}`, firstName: 'Test', lastName: `Client 0${n} ${SURNAMES[i]}`,
+        dateOfBirth: new Date(Date.UTC(1970 + i, i % 12, 1 + i)),
+        email: `client${n}@example.test`, phone: `555-01${n}`,
+        emergencyContactName: `Emergency Contact ${n}`, emergencyContactPhone: `555-02${n}`,
+        emergencyContactRelation: 'Partner', treatingClinicianId: maren.id,
+        language: i === 3 ? 'es' : 'en', referralSource: REFERRAL_MIX[n % REFERRAL_MIX.length]!,
+      },
+    });
+    leaving.push({ id: client.id, code: client.code });
+    const series = await prisma.appointmentSeries.create({
+      data: {
+        clientId: client.id, clinicianId: maren.id, modality: 'telehealth',
+        weekday: 1 + (i % 5), startMinute: [540, 660, 780][Math.floor(i / 5)]!,
+        startDate: new Date(`${QUARTER_START}T12:00:00Z`),
+      },
+    });
+    await materialiseSeries(desk, series.id, { from: QUARTER_START, horizonDays: 92 + HORIZON_DAYS });
+  }
+  await prisma.appointment.updateMany({
+    where: { clinicianId: maren.id, startAt: { lt: zonedToUtc(TODAY, 0) } },
+    data: { status: 'completed', chargeFeeCents: settings.standardFeeCents },
+  });
+  await prisma.appointment.updateMany({
+    where: { clinicianId: maren.id, startAt: { gte: zonedToUtc(TODAY, 0), lt: zonedToUtc(addDays(TODAY, 7), 0) } },
+    data: { status: 'confirmed' },
+  });
+
+  // Three notes per client, newest first. Four of the newest stay unsigned:
+  // the holes the plan screen warns about and execution marks abandoned.
+  const author = actor(maren);
+  const DRAFTS = new Set([1, 5, 9, 12]);
+  for (const [i, c] of leaving.entries()) {
+    const sessions = await prisma.appointment.findMany({
+      where: { clientId: c.id, status: 'completed' }, orderBy: { startAt: 'desc' }, take: 3, select: { id: true },
+    });
+    for (const [k, s] of sessions.entries()) {
+      const note = await createProgressNote(author, {
+        appointmentId: s.id,
+        content: [
+          'Presenting: steady; the week had one hard evening and it was handled.',
+          'Intervention: reviewed the plan and rehearsed the next step.',
+          'Plan: continue weekly.',
+        ].join('\n\n'),
+      });
+      if (!(k === 0 && DRAFTS.has(i))) await signProgressNote(author, note.id);
+    }
+  }
+  // The private notes nobody may read once she has gone. One closed and amended,
+  // so the purge has an amendment to take with it (D-18).
+  for (const i of [0, 4, 8]) {
+    const pn = await createProcessNote(author, {
+      clientId: leaving[i]!.id,
+      content: 'Written before I left, and mine only: the progress is real, but it leans on me more than it should.',
+    });
+    if (i === 0) {
+      await closeProcessNote(author, pn.id);
+      await amendProcessNote(author, pn.id, 'Written before I left, added later: tell nobody this is why the ending worries me.');
+    }
+  }
+  // Two unread alerts, through the real screener path, on clients who transfer.
+  for (const i of [0, 4]) {
+    const request = await issueForm(desk, { clientId: leaving[i]!.id, templateKey: 'wellbeing-check-in' });
+    await submitForm(request.token, { ...zeros(), item_9: 2, difficulty: 'very' });
+  }
+
+  // Noticed on the seed's today, three weeks' notice, every decision through
+  // the real door so each one is its own audit row.
+  const noticeClock = fixedClock(`${TODAY}T16:00:00Z`);
+  const lastDayOn = addDays(TODAY, 21);
+  const departure = await planDeparture(admin, { userId: maren.id, lastDayOn }, noticeClock);
+  const receivers = [dev, kai, priya];
+  for (const [i, c] of leaving.entries()) {
+    noticeClock.advance(60_000);
+    await decideAssignment(admin, departure.id, i < 12
+      ? { clientId: c.id, disposition: 'transfer', receivingClinicianId: receivers[i % 3]!.id }
+      : i < 14
+        ? { clientId: c.id, disposition: 'discharge' }
+        : { clientId: c.id, disposition: 'referred_out', referredOutToId: hillside!.id },
+    noticeClock);
+  }
+
+  // The planted clash: Kai already holds the hour TC-081's first moved session
+  // would take. The scan shows it from notice; at execution Postgres refuses it.
+  const CLASH = 10;
+  const moved = await prisma.appointment.findFirstOrThrow({
+    where: { clientId: leaving[CLASH]!.id, startAt: { gte: zonedToUtc(lastDayOn, 0) } },
+    orderBy: { startAt: 'asc' },
+  });
+  const kaiClient = clients.find((c) => c.clinicianId === kai.id)!;
+  await prisma.appointment.create({
+    data: { clientId: kaiClient.id, clinicianId: kai.id, startAt: moved.startAt, endAt: moved.endAt, modality: 'telehealth' },
+  });
+  log(`${maren.name} leaves ${lastDayOn}: 15 clients (12 to ${dev.name}, ${kai.name} and ${priya.name}, 2 discharged, 1 referred out), 4 drafts, 2 unread alerts, 1 hour clash on ${leaving[CLASH]!.code}`);
+
   // The carrier, over the whole quarter. Everything already due goes out and
   // comes back `delivered`; the three failures seeded above are terminal, so
   // this cannot undo them, and messages scheduled into the future stay
@@ -940,6 +1058,8 @@ Sign in as any of these (there is no password — the switcher is a dev tool):
   Supervisor    ${rosa.name}
   Manager       ${manager.name}
   Auditor       ${auditorUser.name}
+
+${manager.name} has ${maren.name}'s departure planned, with one hour clash still in it.
 
 The demo: sign in as ${rosa.name}, co-sign one of ${priya.name}'s progress notes,
 then open the same client's process notes. Then sign in as ${auditorUser.name}

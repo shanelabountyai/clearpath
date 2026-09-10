@@ -2883,10 +2883,79 @@ red. Three clients get nothing:
 - **Message discharged clients.** Their cancelled sessions are a phone call.
 - **Filter the abandoned-note count by the report's dates.** A departure is rare
   and the number is cumulative. The caption says so.
-- **Seed a departure.** Still owed to the capstone demo, and still blocked on the
-  seed being shared by every e2e spec.
+- **Seed a departure.** Owed to the capstone demo, which landed in §34.
 - **Carry a real base URL into the link.** Every queued link in this codebase uses
   the stub's `localhost:3700`, because nothing sends.
+
+## 34. A departure you can watch
+
+The PRD's lagging metric is a demo, not a number: a therapist with fifteen
+clients, three receivers, two discharges, one referral out, four unsigned
+drafts, two unread alerts, and one hour clash planted on purpose. The run before
+the fix changes nothing, and the run after it succeeds. Past the window, the
+private notes are gone and the audit trail is not. Every piece already had a
+unit test. What was missing was all of them at once, on a practice with a
+history, through the production build.
+
+### The seed had to stay out of its own way
+
+The seed is shared by every e2e spec, and its PRNG sequence carries weight: one
+extra draw in the client loop reshuffles every fixture after it. Dealing the
+caseload out of that loop would have moved fixtures three files away, and
+borrowing a seeded clinician would have moved counts other specs assert (Tom
+Bergqvist's twelve, for one). So the leaver is a seventh therapist, Maren
+Solberg, created at the very end of the seed. She draws nothing from the PRNG.
+Her sessions sit at 9, 11 and 13. No standing slot uses those hours, so no
+receiver has a clash anywhere except the one planted on Kai Oyelaran. Every
+decision goes through `decideAssignment` on a fixed clock, and the notes and
+alerts go through the real services. The audit rows are the ones the
+application writes.
+
+### The walkthrough executes, and cannot be undone
+
+`departure-demo.spec.ts` is the first spec that deliberately leaves a mark.
+`departure.spec.ts` withdraws the notice it gives, but this one cannot: the
+execution is the point. `test:e2e` reseeds before every sweep. With one worker,
+the specs before it see a planned departure and the specs after it see an
+executed one, so a green sweep has tested both states. The steps:
+
+1. Execute with the clash in place. The refusal is in words, and psql confirms
+   all fifteen clients, the plan and the account are exactly as they were. Eleven
+   transfers were written before Postgres refused the twelfth.
+2. Send the clashing client to Dev Marchetti instead. The plan screen reads
+   "Nothing in the way", and the same plan executes: 5, 3 and 4 clients to the
+   three receivers, 3 inactive, 4 notes abandoned, 3 process notes unreachable,
+   both alerts moved with their clients, and the account closed.
+3. As the receiver, the whole signed history of a transferred client is
+   readable, and nothing the leaver wrote privately appears.
+4. The real `runProcessNotePurge`, on a clock seven years and a day ahead.
+   Three notes and the amendment are gone, `departure:process_note_destroyed`
+   appears three times, and the leaver's own audit rows are the same count as
+   before. All 45 progress notes are still there.
+
+### What it found: an early execution strands the weeks before the last day
+
+The first run's assertion expected no open sessions left on the leaver. There
+were 45. `executeDeparture` moves sessions from the last day on, and the weeks
+before it belong to the leaver, who is still working. The demo executes on the
+real date, twelve days before the seeded last day, so 22 of those sessions were
+still in the future, sitting on an account the same transaction had just closed.
+That is the silent half-moved state D-06 exists to prevent, reached by clicking
+Execute early rather than by a clash. Nothing refuses an execution before the
+last day. The spec now asserts what the code promises (nothing open from the
+last day on). Whether to refuse early execution or to move from the earlier of
+now and the last day is still an open product question.
+
+### What it deliberately does not do
+
+- **Call `purge:run`.** It sweeps enquiries too, on the same advanced clock, and
+  the intake specs after this one still read them. The spec calls the one sweep
+  it is about through `tsx`.
+- **Walk every role to the process-note panel.** The refusals are asserted cell by
+  cell in `permissions.test.ts` and in the confidentiality spec. After the purge
+  there is no row left to refuse, and that is what the spec asserts.
+- **Restore itself.** Running this file alone needs `npm run db:seed:e2e` first.
+  The doc comment says so.
 
 ## Decisions log
 
@@ -3081,6 +3150,7 @@ red. Three clients get nothing:
 | A form field in a page never takes the id `userId` | The dev switcher in the sidebar owns it on every staff page. The duplicate pointed "Who is leaving" at the identity switcher, and only a spec selecting by label noticed |
 | Refusals travel back as a `Conflict` code, never its message | The code is the page's whole vocabulary, and a URL is no place for anything a person typed or a record holds |
 | The receiving supervisor is checked with `may(… 'cosign' …)`, not a role | The first draft compared `role === 'supervisor'` and hard rule 1's grep failed the build. The matrix is the only place that knows who can co-sign |
+| The demo's leaver is a seventh therapist added at the end of the seed | The seed's PRNG sequence carries weight, and other specs assert seeded caseload counts. A clinician who draws nothing and holds hours no standing slot uses moves nothing else |
 
 ## What this project deliberately is not
 
