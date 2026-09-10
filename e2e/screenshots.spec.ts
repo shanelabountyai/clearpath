@@ -4,6 +4,9 @@ import { actAs, clientId, expect, sql, test, USERS } from './fixtures';
  * Not an assertion — the README's pictures, captured from the same seeded
  * practice the specs run against, so they cannot drift from the product
  * without a rebuild. `npm run shots`; skipped in the ordinary sweep.
+ *
+ * The run co-signs a real note, which is why it re-seeds first: the pictures
+ * are of the story actually happening, not of a pose.
  */
 test.describe('README screenshots', () => {
   test.skip(!process.env.SHOTS, 'capture only');
@@ -25,13 +28,76 @@ test.describe('README screenshots', () => {
     await expect(page.getByText(/[1-9]\d* sessions ·/)).toBeVisible();
     await page.screenshot({ path: `${shot}/calendar-front-desk.png` });
 
-    // The rule, stated where the notes would be, to the supervisor of the
-    // clinician who wrote them.
+    // The pair the design brief calls the portfolio shot: one client record,
+    // two people. Front desk first — the same URL, and no clinical section on
+    // it at all.
+    await page.goto(`/clients/${demoClient}`);
+    await expect(page.getByRole('heading', { name: 'Forms' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Progress notes' })).toHaveCount(0);
+    await page.screenshot({ path: `${shot}/client-record-front-desk.png`, fullPage: true });
+
+    // ── the storyboard, in order ──────────────────────────────────────────
+
+    // 1. The associate signs a progress note. The seed leaves this one in
+    //    draft precisely so the signing happens on camera.
+    await actAs(page, USERS.associate);
+    const draft = sql(
+      `select n.id from "ProgressNote" n
+         join "Client" c on c.id = n."clientId"
+        where c.code = 'TC-006' and n.status = 'draft'
+        limit 1`,
+    );
+    expect(draft, 'the seed must leave the demo client one draft note').toBeTruthy();
+    await page.goto(`/notes/${draft}`);
+    await expect(page.getByRole('button', { name: 'Sign' })).toBeVisible();
+    await page.screenshot({ path: `${shot}/note-draft-signing.png` });
+
+    // The same clinician, same client, seen by the person allowed everything:
+    // the clinician view of the record the front desk just saw.
+    await page.goto(`/clients/${demoClient}`);
+    await expect(page.getByRole('heading', { name: 'Progress notes' })).toBeVisible();
+    await page.screenshot({ path: `${shot}/client-record-clinician.png`, fullPage: true });
+
+    await page.goto(`/notes/${draft}`);
+    await page.getByRole('button', { name: 'Sign' }).click();
+    await expect(page.getByText('Pending co-signature')).toBeVisible();
+
+    // 2. It lands in the supervisor's queue — including the note just signed.
     await actAs(page, USERS.supervisor);
+    await page.goto('/cosign');
+    await expect(page.getByRole('heading', { name: 'Co-signature queue' })).toBeVisible();
+    // By the note's own link, not by client name — the seeded queue already
+    // holds another of this client's notes, and `.first()` picks whichever the
+    // ageing order puts on top.
+    const row = page.locator('li').filter({ has: page.locator(`a[href="/notes/${draft}"]`) });
+    await expect(row).toBeVisible();
+    await page.screenshot({ path: `${shot}/cosign-queue.png` });
+
+    // 3. The supervisor co-signs it.
+    await row.getByRole('button', { name: 'Co-sign' }).click();
+    await expect(page).toHaveURL(/\/cosign/);
+    await expect(row).toHaveCount(0);
+    await page.goto(`/notes/${draft}`);
+    await expect(page.getByText('Co-signed')).toBeVisible();
+    await page.screenshot({ path: `${shot}/note-cosigned.png` });
+
+    // 4. The rule, stated where the notes would be, to the supervisor of the
+    //    clinician who wrote them.
     await page.goto(`/clients/${demoClient}`);
     const locked = page.locator('section[aria-labelledby="locked-title"]');
     await expect(locked).toBeVisible();
     await locked.screenshot({ path: `${shot}/process-notes-locked.png` });
+
+    // Reaching for the note directly is the refusal that frame 5 has to show.
+    // Done here, last of the supervisor's actions, so it is the newest row in
+    // the log and lands in frame beside the co-signature rather than below it.
+    const processNote = sql(
+      `select n.id from "ProcessNote" n
+         join "Client" c on c.id = n."clientId"
+        where c.code = 'TC-006' limit 1`,
+    );
+    await page.goto(`/process-notes/${processNote}`);
+    await expect(page.getByText('This process note is not yours')).toBeVisible();
 
     // Administration reaches a clinical record only through a logged door.
     await actAs(page, USERS.manager);
@@ -39,7 +105,7 @@ test.describe('README screenshots', () => {
     await expect(page.getByRole('heading', { name: 'Break-glass access required' })).toBeVisible();
     await page.screenshot({ path: `${shot}/break-glass.png` });
 
-    // And the auditor sees the refusal without seeing what was refused.
+    // 5. And the auditor sees the refusal without seeing what was refused.
     await actAs(page, USERS.auditor);
     await page.goto('/audit?denied=1&resource=process_note');
     await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible();
@@ -49,6 +115,20 @@ test.describe('README screenshots', () => {
     // to choose. Masked, so a diff on this picture means the product moved.
     await page.screenshot({
       path: `${shot}/audit-log.png`,
+      mask: [page.locator('tbody td:first-child')],
+      maskColor: '#a8a29a',
+    });
+
+    // The whole of frame 5 in one frame: this client's log, unfiltered, so the
+    // co-signature that was allowed and the process-note read that was refused
+    // sit in the same table. There is no `action` filter — the point is that
+    // one log carries both, not that either can be isolated.
+    await page.goto(`/audit?clientId=${demoClient}`);
+    await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible();
+    await expect(page.getByText('allowed').first()).toBeVisible();
+    await expect(page.getByText('denied').first()).toBeVisible();
+    await page.screenshot({
+      path: `${shot}/audit-log-both.png`,
       mask: [page.locator('tbody td:first-child')],
       maskColor: '#a8a29a',
     });

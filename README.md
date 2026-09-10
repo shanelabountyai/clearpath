@@ -56,6 +56,18 @@ Two classes of clinical note, with different rules:
 A refusal is a sentence, not a 403: what the reader gets is the rule and where
 the official record is instead.
 
+The same client record, at the same URL, through two pairs of eyes. The front
+desk gets the operational tier — who, when, which room, whether consent is
+signed, whether forms came back:
+
+![Client record as the front desk sees it: identity, consent status, upcoming sessions and form history, under an Operational tier banner. No notes, no screeners, no attendance pattern.](docs/screenshots/client-record-front-desk.png)
+
+The treating clinician gets the same page with the clinical tier on it — progress
+notes, screener results, attendance — plus their own process notes, which the
+picture above has no version of at any permission level:
+
+![The same client record as the treating clinician sees it: the operational content plus progress notes, screeners, attendance and their own process notes, under a Clinical tier banner.](docs/screenshots/client-record-clinician.png)
+
 Every one of those cells is asserted in [`src/auth/permissions.test.ts`](src/auth/permissions.test.ts).
 Authorization happens in exactly one place — [`src/auth/permissions.ts`](src/auth/permissions.ts) —
 and a test greps the rest of `src/` to prove no endpoint re-implements a role check.
@@ -134,22 +146,65 @@ person — see **Known limitations**. Authorization is real either way.
 
 ### The 60-second demo
 
-1. Act as **Rosa Iyer** (supervisor) → **Co-sign queue** → co-sign one of Priya
-   Vance's progress notes.
-2. Open that client's record. Everything is there — attendance, screeners, the
-   note just signed — and where Priya's process notes would be there is a locked
-   panel stating the rule.
-3. Act as **Elena Sarkis** (practice manager) → open the same client → break
+One note, followed from the hand that writes it to the log that records who
+read it. The seed leaves client `TC-006` a draft note by Priya Vance so the
+first step is a real signature rather than a pose.
+
+1. Act as **Priya Vance** (pre-licensed associate) → open her draft progress
+   note on that client → **Sign**. Signing freezes the text; from here
+   corrections are amendments, appended under a frozen original.
+
+   ![An associate's draft progress note open for editing in a serif reading face, with Save draft and Sign buttons and the line "Signing freezes the text. Corrections after that append as amendments."](docs/screenshots/note-draft-signing.png)
+
+2. Because Priya is pre-licensed, that signature is not the end of it. Act as
+   **Rosa Iyer** (supervisor) → **Co-sign queue**: the note is already there.
+   Nobody routed it — the supervision map did.
+
+   ![The co-signature queue: supervisee notes with client name, code, author, session and signed dates, each with a "waiting" age badge and a Co-sign button, under a Clinical tier banner noting that supervisee process notes are not here and there is no view in which they would be.](docs/screenshots/cosign-queue.png)
+
+3. Co-sign it. It leaves the queue, and the note itself now reads as
+   countersigned.
+
+   ![The same progress note after countersignature, badged Co-signed.](docs/screenshots/note-cosigned.png)
+
+4. Still as Rosa, open that client's record. Everything clinical is there —
+   attendance, screeners, the note she just countersigned — and where Priya's
+   process notes would be there is a locked panel stating the rule. She
+   supervises the author and still does not get in.
+
+   Act as **Elena Sarkis** (practice manager) → open the same client → break
    glass with a reason → the record opens, flagged. The process notes stay shut.
 
    ![The practice manager's break-glass gate: a required reason field, and a note that break-glass reaches demographics and progress notes but not process notes — nothing does.](docs/screenshots/break-glass.png)
 
-4. Act as **Owen Delacroix** (auditor) → **Audit log** → both events are there,
-   the co-signature and the refusal.
+5. Act as **Owen Delacroix** (auditor) → **Audit log**, filtered to this client
+   → both events are in the one table: the co-signature that was allowed and
+   the process-note read that was refused. Ids only — no names, no note
+   content, no answers.
+
+   ![The audit log filtered to one client, showing allowed and denied rows side by side: the co-signature of a progress note and a supervisor's refused read of a process note. The When cells are boxed out in the capture.](docs/screenshots/audit-log-both.png)
+
+   One row in that picture is worth reading twice: `Rosa Iyer · read ·
+   process_note · allowed`. It is not the supervisor reading her supervisee's
+   private notes — [`listProcessNotes`](src/notes/service.ts) filters
+   `authorId = actor.id` in SQL and selects no `content` column at all, so what
+   she read was her *own* process notes for this client, of which she has none.
+   The log records the request and the outcome, never the rows returned; that is
+   the same rule as everywhere else — ids only, and no PHI in the audit trail.
+   An `allowed` here means "allowed to read her own", and the highlighted
+   refusal directly above it is what happened when she asked for one of
+   Priya's.
+
+   Filtered to denials of process notes alone, the same log answers the
+   narrower question — who has been turned away, and from what:
 
    ![The audit log filtered to denials of process notes, showing one row: a supervisor's read, denied. Ids only — no names, no note content, no answers. The When cell is boxed out in the capture: the audit table stamps `at` from the database clock, so it is the one value that moves between seed runs.](docs/screenshots/audit-log.png)
 
-`e2e/confidentiality.spec.ts` is that walkthrough as a test.
+[`e2e/confidentiality.spec.ts`](e2e/confidentiality.spec.ts) is that walkthrough
+as a test, and [`e2e/screenshots.spec.ts`](e2e/screenshots.spec.ts) is the same
+walk again with a camera — every picture on this page is captured from the
+seeded practice the suite runs against, by `npm run shots`, so none of them can
+drift from the product without a rebuild.
 
 The seed creates obviously-fake clients (`Test Client 001` …) across a scripted
 practice quarter: 70 clients on standing weekly or biweekly slots, a clinician's

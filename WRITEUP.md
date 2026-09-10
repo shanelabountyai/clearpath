@@ -2182,10 +2182,111 @@ Surgery " from both existing. Fuzzy matching a directory of six entries curated
 by the two people who ring them is a solution looking for a practice ten times
 this size.
 
+## 28. The picture that has to be able to fail
+
+The design brief asks for a five-frame storyboard: an associate signs a progress
+note, it reaches their supervisor's queue, the supervisor co-signs it, the
+supervisor is refused the same client's process note, and the auditor's log
+shows both events. It calls this "the project's whole argument in one take."
+
+The README had four pictures and none of them were those frames. The co-signature
+arc — the part where authority flows *upward* to a supervisor and stops dead at a
+private note — had no picture at all. What existed instead were four true
+statements captured separately: a calendar, a locked panel, a break-glass gate, a
+filtered audit view. Each one is evidence. None of them is a story, because
+nothing in the set establishes that they are the same note, the same client, or
+the same afternoon.
+
+### Capture is a test that renders
+
+The pictures are taken by `e2e/screenshots.spec.ts`, running against the same
+seeded practice the suite runs against, under `npm run shots`. That is not a
+convenience. A screenshot pasted into a README is a claim with no mechanism for
+becoming false: the product moves, the picture does not, and a year later the
+document is confidently describing software that no longer exists.
+
+Captured by a spec, the picture cannot drift without the capture breaking first —
+and this run proved it twice, in the two ways that matter.
+
+**The first failure was the capture disagreeing with the app.** The spec found
+the queue row by client name and took `.first()`. There are now two notes for
+that client in the queue, and `.first()` is whichever the ageing order puts on
+top — so it co-signed the wrong one and then waited five seconds for a
+`Co-signed` badge that was never going to appear. A prose README would have
+shown a queue screenshot and a co-signed screenshot and quietly implied they
+were the same note. The fix is to locate the row by the note's own link, and it
+went into `e2e/confidentiality.spec.ts` too, where the same `.first()` had the
+same latent hole: the assertion "the queue no longer contains this client" had
+been passing on a queue that happened to hold one such note, and would have gone
+on passing without the signature under test ever arriving.
+
+**The second failure was the picture disagreeing with the argument.** The audit
+frame is supposed to show a grant and a refusal in one table. Taken in the
+obvious order it showed the co-signature, and the refusal was below the fold —
+because the refusal in the log was the *seed's*, minutes older than everything
+the demo had just done. Ordering the direct process-note fetch last, after the
+locked panel, puts the demo's own refusal at the top of the log where the
+co-signature can be seen next to it. The frame now reads bottom-up as the story
+actually happened: Priya writes, updates, signs; Rosa co-signs; Rosa opens the
+record; Rosa asks for a process note and is refused.
+
+### The row that reads like the bug
+
+One row in that picture says `Rosa Iyer · Supervisor · read · process_note ·
+allowed`, two rows from a headline claiming supervisors never read process notes.
+
+It is not a leak, and checking rather than assuming is the whole point of having
+the picture. `listProcessNotes` filters `authorId = actor.id` in SQL and selects
+no `content` column at all; the client record renders that card for anyone who
+authors process notes, so what Rosa read was *her own* notes for this client, of
+which she has none. The card says "Nothing here yet." The locked panel about
+Priya's notes is a different component entirely.
+
+What the row exposes is a property of the audit log that is deliberate and easy
+to misread: **it records the request and the outcome, never the rows returned.**
+It cannot say "read her own" versus "read Priya's", because saying so would mean
+putting the subject of a process note into the audit trail, and the rule is ids
+only. So the log is honest and ambiguous at the same moment, and the ambiguity is
+the cost of the rule rather than a defect in it.
+
+The lazy response would have been to crop the row out of the picture. It stays,
+with a paragraph in the README explaining it, because a reader who notices it and
+finds no explanation has been handed a reason to distrust every other frame.
+
+### What the seed had to give up
+
+Frame one requires a note that is not yet signed. The seed's "the demo,
+guaranteed" block already existed because the pairing of a queued note and a
+process note was likely but not certain under the seeded PRNG; the same argument
+applies with more force to a draft, since 85% of notes get signed and the demo
+client would lose its draft to a seed tweak nobody connected to the README. The
+block now constructs three things instead of two, and the ordering carries the
+fiction: the most recent session's note is the unsigned one, because you write up
+the session you just had.
+
+### What this deliberately does not do
+
+**No visual regression assertion.** The capture proves the walk still works, not
+that the pixels are unchanged. A pixel diff on a seeded practice with a
+database-clock timestamp is a test that fails for reasons nobody wants to read;
+the one timestamp column is masked in the capture precisely so a *human* diff of
+the committed PNG means the product moved.
+
+**No dark-mode pair.** Every frame is captured in one theme. Doubling ten
+pictures to prove the tokens work in both is a claim better made by the tokens
+themselves than by twenty files in `docs/`.
+
 ## Decisions log
 
 | Decision | Why |
 |---|---|
+| The README's pictures are captured by a spec, not pasted | A screenshot has no mechanism for becoming false; captured by a spec it cannot drift without the capture breaking first |
+| Queue rows are located by the note's own link, never by client name | A client can have two notes in the queue, so `.first()` silently acts on whichever the ageing order puts on top — it co-signed the wrong note in the capture and hid a hole in the walkthrough spec |
+| The demo's refusal is triggered last, after the locked panel | Frame five has to show the grant and the refusal together; taken in the obvious order the only refusal in frame was the seed's, minutes older than the story |
+| The seed constructs the demo client's draft note explicitly | 85% of seeded notes get signed, so the frame-one draft would be lost to a seed tweak nobody connected to the README |
+| The ambiguous `read process_note · allowed` row stays in the picture | It is a supervisor reading her own empty list, and a reader who spots it and finds no explanation has reason to distrust every other frame |
+| The audit log records the request and outcome, never the rows returned | Distinguishing "read her own" from "read Priya's" would put the subject of a process note in the trail; the ambiguity is the cost of the ids-only rule, not a defect in it |
+| No pixel-diff assertion on the captures | A seeded practice with a database-clock timestamp fails for reasons nobody reads; the timestamp column is masked so a human diff of the PNG is the signal instead |
 | `Referrer` is one table for referrals in and referrals out | The same six surgeries seen from two sides; two tables would hold the relationship twice and let the spellings drift |
 | `public` holds no cell on `referrer` | An enquiry is one row on a retention clock; a directory entry is a permanent shared string every future call and report reads |
 | The source/entity agreement is a database CHECK, not a validator | The seed and any future writer bypass the service; a rule that lives only in the module everybody is supposed to call holds until somebody does not |

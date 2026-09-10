@@ -844,19 +844,34 @@ async function main() {
 
   // ── the demo, guaranteed ──────────────────────────────────────────────
   //
-  // The 60-second story needs one client who has both: an associate's progress
-  // note awaiting countersignature, and one of that associate's process notes.
-  // Left to the seed's dice this pairing is likely but not certain, so it is
-  // constructed explicitly.
+  // The 60-second story needs one client who has all three: an associate's
+  // progress note still in draft (the story opens on them signing it), a second
+  // already awaiting countersignature, and one of that associate's process
+  // notes. Left to the seed's dice this trio is likely but not certain, so it
+  // is constructed explicitly.
   const demoClient = clients.find((c) => c.clinicianId === priya.id);
   if (demoClient) {
-    const demoAppt = await prisma.appointment.findFirst({
+    const demoAppts = await prisma.appointment.findMany({
       where: { clientId: demoClient.id, status: 'completed', progressNote: null },
       orderBy: { startAt: 'desc' },
+      take: 2,
     });
-    if (demoAppt) {
+    // The most recent session's note is the one still unsigned — you write up
+    // the session you just had. The one before it is already in the queue.
+    const [draftAppt, queuedAppt] = demoAppts;
+    if (draftAppt) {
+      await createProgressNote(actor(priya), {
+        appointmentId: draftAppt.id,
+        content: [
+          'Presenting: fourth session. Sleep improved on the nights the wind-down happened.',
+          'Intervention: reviewed the diary; looked at what made Wednesday different.',
+          'Plan: continue weekly. Keep the diary one more week.',
+        ].join('\n\n'),
+      });
+    }
+    if (queuedAppt) {
       const note = await createProgressNote(actor(priya), {
-        appointmentId: demoAppt.id,
+        appointmentId: queuedAppt.id,
         content: [
           'Presenting: third session working on sleep and the pattern around Sunday evenings.',
           'Intervention: reviewed the sleep diary; agreed a wind-down routine to try this week.',
@@ -870,7 +885,7 @@ async function main() {
       content:
         'Mine only. I think the Sunday thing is about the job, not the sleep — but naming it too early last time made them retreat. Wait for them to say it.',
     });
-    log(`demo client ${demoClient.code}: a note awaiting co-signature and a process note`);
+    log(`demo client ${demoClient.code}: a draft note, one awaiting co-signature, and a process note`);
   }
 
   // ── three break-glass events, for the auditor to find ─────────────────

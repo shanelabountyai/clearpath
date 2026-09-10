@@ -3,28 +3,45 @@ import { actAs, clientId, expect, sql, test, USERS } from './fixtures';
 /**
  * The 60-second demo, as a test.
  *
- * A supervisor co-signs an associate's progress note, is refused the same
- * client's process note, and an auditor finds both events. If this passes, the
- * project's central claim holds end to end.
+ * An associate signs a progress note, it reaches their supervisor's queue, the
+ * supervisor co-signs it and is then refused the same client's process note,
+ * and an auditor finds both events. If this passes, the project's central claim
+ * holds end to end.
  */
 test.describe('the access story', () => {
-  test('a supervisor co-signs, is refused, and the auditor sees both', async ({ page }) => {
+  test('an associate signs, a supervisor co-signs and is refused, and the auditor sees both', async ({ page }) => {
     const demoClient = clientId('TC-006');
 
-    // 1. The associate's note is waiting in their supervisor's queue.
+    // 1. The associate signs their draft. Following the one note through is
+    //    what makes the queue step mean something — the seeded queue already
+    //    holds others, so a count would pass without this note ever arriving.
+    const draft = sql(
+      `select n.id from "ProgressNote" n
+         join "Client" c on c.id = n."clientId"
+        where c.code = 'TC-006' and n.status = 'draft'
+        limit 1`,
+    );
+    expect(draft, 'the seed leaves the demo client one draft note').toBeTruthy();
+    await actAs(page, USERS.associate);
+    await page.goto(`/notes/${draft}`);
+    await page.getByRole('button', { name: 'Sign' }).click();
+    await expect(page.getByText('Pending co-signature')).toBeVisible();
+
+    // 2. That note — not merely a note — is waiting in their supervisor's queue.
     await actAs(page, USERS.supervisor);
     await page.goto('/cosign');
     await expect(page.getByRole('heading', { name: 'Co-signature queue' })).toBeVisible();
-    const row = page.locator('li', { hasText: 'Client 006' }).first();
+    const row = page.locator('li').filter({ has: page.locator(`a[href="/notes/${draft}"]`) });
     await expect(row).toBeVisible();
+    await expect(row).toContainText('Client 006');
     await expect(row.getByText(/waiting/)).toBeVisible();
 
-    // 2. The supervisor co-signs it.
+    // 3. The supervisor co-signs it, and it leaves the queue.
     await row.getByRole('button', { name: 'Co-sign' }).click();
     await expect(page).toHaveURL(/\/cosign/);
-    await expect(page.locator('li', { hasText: 'Client 006' })).toHaveCount(0);
+    await expect(page.locator('li').filter({ has: page.locator(`a[href="/notes/${draft}"]`) })).toHaveCount(0);
 
-    // 3. The same supervisor opens the same client's record. They can read it —
+    // 4. The same supervisor opens the same client's record. They can read it —
     //    supervision is clinical responsibility — and the process notes are not
     //    there, with the rule stated rather than an error.
     await page.goto(`/clients/${demoClient}`);
@@ -32,12 +49,12 @@ test.describe('the access story', () => {
     await expect(page.getByText('Process notes by Priya Vance')).toBeVisible();
     await expect(page.getByText('not a permission you are missing')).toBeVisible();
 
-    // 4. Reaching for it directly is a 403, presented as a locked drawer.
+    // 5. Reaching for it directly is a 403, presented as a locked drawer.
     const processNote = sql(`select id from "ProcessNote" where "clientId" = '${demoClient}' limit 1`);
     await page.goto(`/process-notes/${processNote}`);
     await expect(page.getByText('This process note is not yours')).toBeVisible();
 
-    // 5. The auditor finds the denial and the co-signature.
+    // 6. The auditor finds the denial and the co-signature.
     await actAs(page, USERS.auditor);
     await page.goto('/audit?denied=1&resource=process_note');
     await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible();
