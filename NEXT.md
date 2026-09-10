@@ -1,49 +1,66 @@
 # Next
 
-**Item:** DESIGN — the five-frame demo storyboard, captured. Committed and
-pushed as `92d9f06`.
+**Item:** A fourth PRD — `prd-clinician-departure.md`, written. Document only,
+no code, gate untouched.
 
-- `e2e/screenshots.spec.ts` walks the brief's storyboard in order and captures
-  ten frames: the four that existed (refreshed) plus `note-draft-signing`,
-  `cosign-queue`, `note-cosigned`, `audit-log-both`, and the
-  `client-record-front-desk` / `client-record-clinician` pair.
-- Seed's "demo, guaranteed" block now builds a **draft** note as well as a
-  queued one, so frame one is a real signature. Same reasoning as the block's
-  existing comment: 85% of notes get signed, so the draft cannot be left to the
-  PRNG.
-- Queue rows located by `a[href="/notes/<id>"]`, never `.first()` on client
-  name. TC-006 has two notes in the queue and `.first()` picked the wrong one —
-  same latent hole was in `confidentiality.spec.ts`, now fixed.
-- `confidentiality.spec.ts` starts from the signature; test and pictures walk
-  the same path.
-- WRITEUP §28, seven decision-log rows, README 60-second demo rewritten to five
-  frames.
+## What it is
 
-## Gate at this commit
+Clinician departure: the caseload transfer, and the note nobody may sign. Chosen
+over records-release and a supervised-hours ledger because it stresses the two
+rules the whole codebase rests on — `process_note.read: 'author'` and
+append-only audit — at the exact point they break, which is the day the author
+leaves.
 
-Unit **2455/2455** (27 files). e2e **45 passed, 1 skipped** (`screenshots.spec.ts`,
-gated on `SHOTS=1`). Typecheck clean. Recapture with `npm run shots`.
+Four things in it are load-bearing, and three were verified against the code
+before being written down:
+
+1. **`User.active = false` is the entire current mechanism**, and it does two
+   things: `session.ts:45` blocks login, `session.ts:69` drops them from the
+   person picker. Nothing else moves — fifteen `Client.treatingClinicianId`
+   rows, live series, unsignable drafts, unreadable process notes, orphaned
+   alerts, open books.
+2. **`progress_note.read` is `authorOrSupervisor`, but `form_submission` is
+   `treatingOrSupervising`.** So the official record is the only clinical
+   resource on a client narrower than the record around it, and a receiving
+   clinician can read a client's risk scores but not their notes. Departure is
+   the first event that exposes it. D-04 widens the cell in the matrix, not in
+   the transfer.
+3. **`appointment_clinician_no_overlap` is an exclusion constraint**, so a bulk
+   caseload move can be refused by the database mid-transaction. The PRD
+   validates conflicts continuously from notice and rolls the whole departure
+   back at execution (D-06, D-07) rather than moving what fits.
+4. **`departure.create` closing a clinician's books** is the narrow, named path
+   that answers intake D-09's stated cost (NEXT.md loose thread #2 from last
+   session). Admin still cannot mark anyone *open* — the asymmetry is D-10.
+
+14 decisions, 11 P0s in four phases, five P1s, four P2s.
+
+## Gate
+
+Unchanged — markdown only. Last verified at `92d9f06`: unit **2455/2455** (27
+files), e2e **45 passed, 1 skipped**, typecheck clean. `*.md` is excluded by the
+Vercel `ignoreCommand`, so this push does not build.
 
 ## What's actually next
 
-**All three PRDs remain complete**, and the design brief's §5d storyboard is now
-done too. No queued item: ask what to pick up, or propose one.
+Nothing is queued. Two obvious continuations:
 
-Candidates raised last session and not taken:
+1. **Build Phase 1 of the departure PRD** — matrix cells and every denial, the
+   `progress_note.read` widening with its four claimants, the state machine.
+   Pure logic, TDD, per CLAUDE.md's ordering. Opus.
+2. **Ponytail audit of the finished repo** — the option not taken this session.
+   Opus.
 
-1. **Ponytail audit of the finished repo** — what to delete now every PRD is
-   ticked. Opus.
-2. **A fourth PRD** — the only option that grows the product rather than
-   finishing it. Opus.
+Open question the PRD itself flags as its weakest point: the new read rule's
+name. `recordReader` names a role; every other rule in `permissions.ts` names a
+relationship. Settle it in Phase 1, not before.
 
-Three loose threads, none urgent:
+Three loose threads from before, one now answered:
 
-1. Public form's throttle read-then-write can let one extra submission through
-   under a genuine race. Carries a `ponytail:` comment. Not worth a lock at
-   three an hour.
-2. A clinician on leave who left their books open is a wrong signal nobody else
-   can correct — D-09's stated cost, not a defect.
-3. Design brief §5b/§5c list components and screens with no picture (form
-   builder, vacation reschedule work-list, continuity queue, supervision map).
-   The storyboard was the one the brief called the argument; the rest are
-   inventory, and `docs/screenshots` is not a component library.
+1. Public form's throttle read-then-write race. Carries a `ponytail:` comment.
+   Still not worth a lock at three an hour.
+2. ~~A clinician on leave with their books left open~~ — the departure PRD's
+   P0-9/D-10 answers this for a *departure*. A leave of absence is P2 and still
+   has no mechanism.
+3. Design brief §5b/§5c components with no picture. Still inventory, still not a
+   component library.
