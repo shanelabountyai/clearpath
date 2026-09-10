@@ -131,6 +131,13 @@ export async function coSignProgressNote(actor: Actor, noteId: string, opts: { c
   const { note, target } = await progressContext(noteId);
   if (note.status === 'draft') throw new Conflict('The author has not signed this note yet', 'not_signed');
   if (note.status === 'cosigned') throw new Conflict('This note is already co-signed', 'already_cosigned');
+  // P0-4b. A co-signature countersigns somebody's signature, and an abandoned
+  // note has none — the author left before making one. Co-signing here would
+  // put a second name on a record nobody ever attested to, which is the exact
+  // false attestation `sign: 'author'` refuses to allow in the first place.
+  if (note.status === 'abandoned') {
+    throw new Conflict('This note was never signed and never will be', 'note_abandoned');
+  }
 
   const now = (opts.clock ?? systemClock).now();
   return guarded(
@@ -167,6 +174,12 @@ export async function getProgressNote(actor: Actor, noteId: string) {
 export async function amendProgressNote(actor: Actor, noteId: string, content: string) {
   const { note, target } = await progressContext(noteId);
   if (note.status === 'draft') throw new Conflict('Edit the draft instead of amending it', 'still_draft');
+  // Amendment is how a *signed* record is corrected without rewriting it. An
+  // abandoned note is not a record — it is the hole where one should have been
+  // — and appending to it would grow content on a note nobody signed.
+  if (note.status === 'abandoned') {
+    throw new Conflict('An abandoned note cannot be amended', 'note_abandoned');
+  }
 
   return guarded(
     { actor, action: 'update', resource: 'progress_note', resourceId: noteId, clientId: note.clientId, target },

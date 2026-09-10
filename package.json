@@ -32,7 +32,8 @@
     "reminders:run": "dotenv -e .env -- tsx scripts/reminders-run.ts",
     "nonresponse:run": "dotenv -e .env -- tsx scripts/nonresponse-run.ts",
     "delivery:run": "dotenv -e .env -- tsx scripts/delivery-run.ts",
-    "inbound:simulate": "dotenv -e .env -- tsx scripts/inbound-simulate.ts"
+    "inbound:simulate": "dotenv -e .env -- tsx scripts/inbound-simulate.ts",
+    "purge:run": "dotenv -e .env -- tsx scripts/purge-run.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

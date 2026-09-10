@@ -44,6 +44,7 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
         actions={
           note.status === 'draft' ? <Badge tone="warning">Draft</Badge>
             : note.status === 'signed' ? <Badge tone="info" glyph="✍">Pending co-signature</Badge>
+            : note.status === 'abandoned' ? <Badge tone="danger" glyph="⊘">Unsigned — author departed</Badge>
             : <Badge tone="success" glyph="✓">Co-signed</Badge>
         }
       />

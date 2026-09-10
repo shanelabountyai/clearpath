@@ -2429,6 +2429,217 @@ was there yesterday and both are now narrower than the policy. The policy is the
 thing that had to be decided in one reviewable place first; the two queries that
 serve it are a Phase 3 edit with the transfer they exist for.
 
+## 30. Making the wrong row impossible to write
+
+Phase 1 of the departure was pure logic: a permission column, a widened read
+rule, a three-state machine. None of it could be stored. This phase is the
+schema underneath it, and the interesting part is how little of it is columns.
+
+### A plan, and a row per client
+
+`Departure` is `userId`, `noticeAt`, `lastDayOn`, `status`, `plannedById`,
+`executedAt?`. Two dates rather than one, because the gap between them is the
+entire design: notice closes the clinician's books, execution closes the
+account, and the thirty days in between are what the practice needs to decide
+fifteen dispositions and clear the hour clashes.
+
+`DepartureAssignment` is one row per client — `disposition`, plus a receiving
+clinician or a referral destination, plus who decided and when. The rejected
+alternative was a single `receivingClinicianId` on `Departure`, which would have
+made the common case one field and the real case impossible: real caseloads
+split, some clients following the clinical fit, some following the hour, some
+ending.
+
+### The rules Prisma has no syntax for
+
+Five of this phase's decisions are constraints, not columns, and each one exists
+because the application-level version of it is a validator somebody can route
+around with a hand-rolled write.
+
+**One open departure per person, and not one ever.** A plain `@unique` on
+`userId` says a person may only ever leave once, which forbids the P2
+returning-clinician case — rehired eighteen months later, leaving again in
+2031. What is actually true is that a person may not have *two plans in flight*,
+so the index is partial:
+
+```sql
+CREATE UNIQUE INDEX "departure_one_open_per_user" ON "Departure"("userId")
+  WHERE "status" = 'planned';
+```
+
+Terminal rows fall outside it. The test asserts both halves — a second plan is
+refused, and the same second plan succeeds the moment the first is cancelled —
+because an index that only ever gets tested in the refusing direction is an
+index nobody has checked the shape of.
+
+**A transfer with nobody receiving it.** Goal 2 of the PRD is that every client
+has an explicit disposition with no default and no silent remainder. A
+`transfer` row with a null `receivingClinicianId` is precisely the silent
+remainder wearing a decision's clothes, and a receiver named on a `discharge` is
+a colleague who is taking nobody. The constraint is biconditional because both
+directions are wrong:
+
+```sql
+CHECK (("receivingClinicianId" IS NOT NULL) = ("disposition" = 'transfer'))
+```
+
+The referral destination is *not* biconditional, and the asymmetry is
+deliberate: a destination on a discharge describes a referral that did not
+happen, while a `referred_out` with no destination is an honest row about a
+practice down the road that is not in the contact list. It follows
+`inquiry_referred_out_has_a_reason` exactly.
+
+**An execution with no date.** `("status" = 'executed') = ("executedAt" IS NOT
+NULL)`, in the register `inquiry_discard_is_complete` set. A departure marked
+executed with no timestamp is an event with no date, and an `executedAt` on a
+planned row says the caseload moved before anybody pressed the button. Both
+would be read straight past by every report.
+
+### The note nobody may sign
+
+`ProgressNoteStatus` gains `abandoned`, and adding it turned out to need two
+migrations rather than one. Postgres permits `ALTER TYPE … ADD VALUE` inside a
+transaction but forbids *using* the new value in the same one — and the CHECK
+constraint below is exactly that use. Prisma runs each migration in a
+transaction, so the enum value ships alone in
+`20260910161613_progress_note_abandoned` and everything that mentions it
+follows in the next. That is the documented shape of this, not a stylistic
+choice, and it is worth writing down because the failure is a migration that
+passes review and fails on deploy.
+
+The status carries its cause:
+
+```sql
+CHECK (("status" = 'abandoned') = ("abandonedByDepartureId" IS NOT NULL))
+```
+
+A note in that status naming no departure is a draft somebody closed by hand.
+A departure named on a note in any other status is a claim the record cannot
+support.
+
+The transition rule went into `progress_note_content_frozen`, the trigger that
+already owned this column, rather than a second trigger racing it:
+
+```sql
+IF NEW.status = 'abandoned' AND OLD.status <> 'draft' THEN
+  RAISE EXCEPTION 'only a draft can be abandoned (was %)', OLD.status;
+END IF;
+IF OLD.status = 'abandoned' AND NEW.status <> 'abandoned' THEN
+  RAISE EXCEPTION 'an abandoned note is terminal; its author is gone';
+END IF;
+```
+
+The first clause is the one that matters. Without it, `abandoned` is a way to
+retire an inconvenient signature — take a signed note, mark it abandoned, and
+the record now says a session ended without an attestation that was in fact
+made. Everything else about this feature is designed to keep a hole visible;
+that clause is what stops the same status being used to make one.
+
+**Three places the new value would have lied.** Adding a value to an enum is a
+one-line diff whose blast radius is every exhaustive branch that was not
+exhaustive. `coSignProgressNote` refused `draft` and refused `cosigned` and let
+everything else through, so an abandoned note was co-signable — a second name on
+a record nobody ever signed, which is the exact false attestation `sign:
+'author'` exists to prevent. `amendProgressNote` refused only `draft`, so a
+supervisor could append content to a note that was never a record. And both note
+badges ended in `return <Badge tone="success">Co-signed</Badge>`, so an
+abandoned note would have rendered on the client record as co-signed. None of
+those were caught by a type error; a string enum widened underneath them and
+every `if` chain kept compiling.
+
+### The window that ends the private notes
+
+`ProcessNote.unreachableSince` records when the only permitted reader stopped
+existing. It grants nobody anything — `read: 'author'` was already true and
+already unsatisfiable — and it is what the destruction window counts from.
+
+The window is `PracticeSettings.processNoteAfterDepartureDays`, shipping at
+seven years. The PRD is explicit that it is not defending the number, and the
+reason for erring long is asymmetric: in several jurisdictions those notes are
+the clinician's own defence in a complaint made two years later, so destroying
+too early is a much worse failure than holding too long.
+
+The invariant is not the window:
+
+```sql
+CREATE OR REPLACE FUNCTION "process_note_delete_only_after_departure"() …
+  IF OLD."unreachableSince" IS NULL THEN
+    RAISE EXCEPTION 'a process note can only be destroyed after its author departed';
+```
+
+Second deletion rule in this codebase, written the same way as the first
+(`inquiry_delete_only_discarded`), because hard rule 5's principle generalises:
+the retention *window* is application policy, and the invariant that a reachable
+private note may not be destroyed at all is not.
+
+**The hole `ON DELETE SET NULL` would have left.** `NoteAmendment.processNoteId`
+was `SetNull`, which sounds harmless and is not: an amendment carries its own
+`content`, so a nulled parent link is the text of a private note surviving the
+note it belonged to. The sweep would have destroyed the row and kept the words.
+It is now `Cascade`.
+
+That immediately collided with the append-only trigger on `NoteAmendment` —
+which, it turns out, meant deleting a process note with amendments had *always*
+failed, `SetNull` included, because a FK's own UPDATE fires the same trigger.
+So the rule is now stated with exactly one hole in it:
+
+```sql
+IF TG_OP = 'DELETE' AND OLD."processNoteId" IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM "ProcessNote" p
+                   WHERE p.id = OLD."processNoteId" AND p."unreachableSince" IS NULL)
+THEN RETURN OLD; END IF;
+RAISE EXCEPTION 'NoteAmendment is append-only (attempted %)', TG_OP;
+```
+
+The inversion is the whole lesson, and the first version got it backwards. I
+wrote `EXISTS (… unreachableSince IS NOT NULL)` — permit this delete if the
+parent is a process note that is already unreachable — on the assumption that a
+cascade deletes children before the parent. It does not. Referential cascade is
+an **AFTER**-delete action on the parent row, so by the time the child's trigger
+runs the process note is already gone and no `EXISTS` on it can ever be true.
+The test failed with `NoteAmendment is append-only (attempted DELETE)` from
+inside the sweep, which is the correct failure and a legible one.
+
+Phrased as the absence of a *reachable* parent, the condition is true in both
+orders: the parent still present and unreachable, or the parent already deleted
+— which it can only be behind `process_note_delete_only_after_departure`, so
+the hole does not widen. An amendment to a reachable process note stays
+undeletable, a progress-note amendment stays undeletable, and every UPDATE is
+refused exactly as before. There is a test for each.
+
+### The sweep, and the door it deliberately does not use
+
+`runProcessNotePurge(clock)` is driven from executed departures, not from the
+notes. That is not an optimisation — it is the only query shape that can name
+`authorId` in the SQL, which is hard rule 2, asserted structurally by a grep in
+`notes/service.test.ts` that fails the build on any `processNote` query without
+it. Driving it from `unreachableSince` alone would have needed a `findMany` with
+no author in it, and the build would have said so. The constraint produced the
+better design: the sweep cannot reach a note whose author is still here whatever
+that column says, and the database refuses it a second time.
+
+It logs with `auditEvent`, not `guarded`, and that is the point rather than a
+shortcut. There is no cell in the matrix that lets anybody but the author touch
+a process note — `SYSTEM_ACTOR` included, admin included, break-glass included —
+and inventing one so that a sweep could pass through the front door would be the
+widening this entire feature exists to refuse. A retention window expiring is
+not an actor exercising a power. The audit row still lands in the same
+transaction as the deletion, per hard rule 4, carrying ids and a reason code,
+and the sweep never selects `content` on the way past.
+
+### The trail of somebody who no longer works here
+
+The last thing a departure does is `User.active = false`, and `active` is the
+flag every person picker in the app filters on. If that filter ever reached the
+audit path, the trail of exactly the person most likely to be under review would
+silently blank — an empty screen, never an error.
+
+Two assertions, because the risk lives in two places: `queryAuditLog` still
+returns a deactivated actor's rows, and — structurally — the audit page's
+`user.findMany` has nothing in it. The second is a grep, because the failure
+mode is a filter somebody adds later for tidiness, and no behavioural test of a
+page that renders correctly today would ever notice.
+
 ## Decisions log
 
 | Decision | Why |
@@ -2443,6 +2654,16 @@ serve it are a Phase 3 edit with the transfer they exist for.
 | Both departure endings are terminal | An executed departure moved a caseload; a withdrawn notice given again is genuinely a second notice on a second date, and the audit log should show two |
 | The README's pictures are captured by a spec, not pasted | A screenshot has no mechanism for becoming false; captured by a spec it cannot drift without the capture breaking first |
 | Queue rows are located by the note's own link, never by client name | A client can have two notes in the queue, so `.first()` silently acts on whichever the ageing order puts on top — it co-signed the wrong note in the capture and hid a hole in the walkthrough spec |
+| One open departure per person, as a partial unique index | A plain unique says a person may only ever leave once, which forbids the P2 returning-clinician case; what is actually true is that two plans may not be in flight |
+| A transfer must name its receiver, biconditionally | A `transfer` with no receiving clinician is the silent remainder goal 2 refuses, and a receiver on a discharge names a colleague taking nobody |
+| A referral destination is only one-directional | A destination on a discharge describes a referral that did not happen; a `referred_out` with none is an honest row about a practice not in the contact list |
+| `abandoned` is reachable only from `draft`, in the trigger | Without that clause the status becomes a way to retire an inconvenient signature — the one hole this feature must never be able to make |
+| The enum value ships in its own migration | Postgres forbids using a newly added enum value in the same transaction, and Prisma wraps each migration in one — the CHECK that names it would fail on deploy, not in review |
+| `NoteAmendment.processNoteId` becomes `Cascade`, and append-only grows one hole | An amendment carries its own content, so `SetNull` destroyed the note and kept the words; the hole is stated as what it is — a child of an already-unreachable note |
+| The process-note window ships at seven years | Erring long and erring short are not symmetric: those notes are the clinician's own defence in a complaint made two years later |
+| The sweep is driven from executed departures, not from `unreachableSince` | It is the only shape that can name `authorId` in the SQL, which hard rule 2's grep enforces — and it makes reaching a still-present author's note impossible rather than unlikely |
+| The sweep logs with `auditEvent`, never `guarded` | No cell in the matrix lets anybody but the author touch a process note, and inventing one so a sweep could use the front door is the widening the feature exists to refuse |
+| The audit page's user lookup is asserted to have no filter | `active = false` is the last thing a departure does, and a tidy-minded filter there would blank the trail of the person most likely to be under review |
 | The demo's refusal is triggered last, after the locked panel | Frame five has to show the grant and the refusal together; taken in the obvious order the only refusal in frame was the seed's, minutes older than the story |
 | The seed constructs the demo client's draft note explicitly | 85% of seeded notes get signed, so the frame-one draft would be lost to a seed tweak nobody connected to the README |
 | The ambiguous `read process_note · allowed` row stays in the picture | It is a supervisor reading her own empty list, and a reader who spots it and finds no explanation has reason to distrust every other frame |

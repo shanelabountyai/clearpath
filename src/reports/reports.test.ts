@@ -8,6 +8,7 @@ import { cancelAppointment, setStatus, waiveFee } from '../scheduling/lifecycle'
 import { continuityQueue, staleInquiries, unconfirmedSoon, vacationImpact, waitlistMatches, waitlistOpenings } from '../scheduling/worklists';
 import { createInquiry, discardInquiry } from '../clients/inquiry';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
+import { callArgs, readSource } from '../test/source';
 import { queryAuditLog, toCsv } from './audit';
 import { confirmationReport, utilizationReport, weeklyVolume, weekStart } from './utilization';
 import { median, referralReport } from './intake';
@@ -730,5 +731,44 @@ describe('the referral report', () => {
     expect(median([])).toBeNull();
     expect(median([3, 1, 2])).toBe(2);
     expect(median([4, 1, 3, 2])).toBe(2.5);
+  });
+});
+
+/**
+ * P0-11 of the departure PRD: the trail of somebody who has left.
+ *
+ * `User.active = false` is what departure sets last, and it is the flag every
+ * person picker in the app filters on. A join that filtered it in the audit
+ * path too would silently blank the trail of exactly the person most likely to
+ * be under review — a bug that shows up as an empty screen, never as an error.
+ */
+describe('the audit log of a person who no longer works here', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await settings();
+  });
+  afterAll(() => prisma.$disconnect());
+
+  it('still returns their rows once they are deactivated', async () => {
+    const alex = await makeUser('therapist');
+    const priya = await makeUser('auditor');
+    const client = await makeClient(alex.id);
+
+    await guarded(
+      { actor: actor(alex), action: 'read', resource: 'client', clientId: client.id, target: { clinicianId: alex.id } },
+      async () => null,
+    );
+    await prisma.user.update({ where: { id: alex.id }, data: { active: false } });
+
+    const { rows } = await queryAuditLog(actor(priya), { actorId: alex.id });
+    expect(rows).toHaveLength(1);
+  });
+
+  it('renders their name: the audit page looks up every user, active or not', () => {
+    // Structural, because the failure is a filter nobody adds a test for. The
+    // page's only `user.findMany` must stay unfiltered.
+    const src = readSource('app/(staff)/audit/page.tsx');
+    const call = callArgs(src, src.indexOf('user.findMany') + 'user.findMany'.length);
+    expect(call).not.toContain('active');
   });
 });

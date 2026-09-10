@@ -61,6 +61,11 @@ model User {
   inquiriesRequested        Inquiry[]           @relation("inquiryRequested")
   inquiriesAssigned         Inquiry[]           @relation("inquiryAssigned")
 
+  departures          Departure[]           @relation("departingUser")
+  departuresPlanned   Departure[]           @relation("departurePlanner")
+  caseloadReceived    DepartureAssignment[] @relation("departureReceiver")
+  dispositionsDecided DepartureAssignment[] @relation("departureDecider")
+
   /// P2: whether this clinician is taking somebody new right now — the
   /// declared half of the capacity signal, and theirs alone to set. It is a
   /// signal and never a gate: front desk still assigns to a closed clinician
@@ -131,8 +136,8 @@ model Client {
   /// what lets the practice manager run the referral report without reading a
   /// clinical answer. The two are never reconciled. Null is honest: it means
   /// nobody recorded it, not "other".
-  referralSource     ReferralSource?
-  referralNote       String?
+  referralSource ReferralSource?
+  referralNote   String?
 
   appointments  Appointment[]
   series        AppointmentSeries[]
@@ -144,12 +149,14 @@ model Client {
   outbox        OutboxMessage[]
   waitlist      WaitlistEntry[]
 
-  createdAt          DateTime            @default(now())
-  portalLinks        PortalLink[]
-  rescheduleRequests RescheduleRequest[]
-  inboundReplies     InboundReply[]
+  createdAt            DateTime              @default(now())
+  portalLinks          PortalLink[]
+  rescheduleRequests   RescheduleRequest[]
+  inboundReplies       InboundReply[]
   /// The call this client started as, where there was one.
-  inquiry            Inquiry?
+  inquiry              Inquiry?
+  /// The decisions made about this client when a clinician left.
+  departureAssignments DepartureAssignment[]
 
   @@index([treatingClinicianId])
 }
@@ -172,38 +179,50 @@ model PracticeSettings {
   /// A no-show is its own policy. Ships at the late-cancel figure so the field
   /// changes no behaviour on the day it lands; the practice raises it without a
   /// code change. Integer cents.
-  noShowFeeCents         Int     @default(9000)
+  noShowFeeCents           Int     @default(9000)
   /// Lead time for the day-of confirmation stage.
-  dayOfLeadHours         Int     @default(3)
+  dayOfLeadHours           Int     @default(3)
   /// Below this much notice there was no time to ask, and after this much of
   /// the session has passed, silence is an answer.
-  graceMinutes           Int     @default(20)
+  graceMinutes             Int     @default(20)
   /// Gates only the automatic `no_show` transition and its fee. With it off,
   /// non-response is still recorded — the evidence is never optional.
-  autoNoShowOnNoResponse Boolean @default(true)
+  autoNoShowOnNoResponse   Boolean @default(true)
   /// The number a client is asked to ring when the practice cannot answer them
   /// where they wrote. Client-facing, so it is the practice's own line — the
   /// auto-reply that carries it is the one message allowed to name an outside
   /// service's number as well (P1-3).
-  practicePhone          String  @default("(555) 010-0199")
+  practicePhone            String  @default("(555) 010-0199")
   /// P1-2. After this many consecutive confirmations a client drops to the
   /// day-before stage alone, until they miss one. Zero turns the cap off.
   /// A weekly client otherwise receives three messages a week, indefinitely,
   /// and the failure mode is not cost — it is the reminder stopping being read.
-  confirmationStreakCap  Int     @default(4)
+  confirmationStreakCap    Int     @default(4)
   /// How long a discarded inquiry survives before the purge destroys it. The
   /// window is application policy and lives here; the invariant that only a
   /// discarded row may be destroyed at all is a database trigger. 90 days is a
   /// legal question with a placeholder answer. The window for every discard
   /// reason but the two below, which want their own clock.
-  inquiryRetentionDays   Int     @default(90)
+  inquiryRetentionDays     Int     @default(90)
   /// `spam` never had a real caller behind it; there is nothing worth even 90
   /// days of holding.
-  spamRetentionDays      Int     @default(7)
+  spamRetentionDays        Int     @default(7)
   /// `referred_out` is the one discard that becomes a business record — proof
   /// the practice acted on a call it could not take — so it outlives the
   /// general window by an order of magnitude.
-  referredOutRetentionDays Int   @default(365)
+  referredOutRetentionDays Int     @default(365)
+
+  /// P0-10: how long a departed clinician's process notes survive being
+  /// unreachable before the sweep destroys them.
+  ///
+  /// Seven years, which is long, and the PRD is explicit that it is not
+  /// defending the number: what happens to a departing clinician's private
+  /// process notes is a professional and jurisdictional question, not an
+  /// engineering one. In several jurisdictions those notes are the clinician's
+  /// own defence in a complaint made two years later, so the failure mode of a
+  /// short window is far worse than that of a long one. The settings page says
+  /// this, in the same register as `inquiryRetentionDays`.
+  processNoteAfterDepartureDays Int @default(2555)
 
   /// P2: whether the public enquiry form accepts anything at all.
   ///
@@ -211,11 +230,11 @@ model PracticeSettings {
   /// unauthenticated write endpoint — a deployment turns it on deliberately.
   /// It is also the kill switch: a practice being flooded closes the door from
   /// the settings row, with no deploy and no code change.
-  publicInquiryEnabled     Boolean @default(false)
+  publicInquiryEnabled Boolean @default(false)
   /// How many enquiries one submitter may send in an hour before the form
   /// stops accepting. Low on purpose: a person enquiring twice has changed
   /// their mind, and a person enquiring four times is not a person.
-  publicInquiryPerHour     Int     @default(3)
+  publicInquiryPerHour Int     @default(3)
 }
 
 model Room {
@@ -432,11 +451,11 @@ enum ReminderStage {
 /// run over the same window sees the row and skips, so a cadence cannot double
 /// -send by being run twice.
 model AppointmentReminder {
-  id              String        @id @default(cuid())
+  id              String         @id @default(cuid())
   appointmentId   String
-  appointment     Appointment   @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  appointment     Appointment    @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
   stage           ReminderStage
-  dueAt           DateTime      @db.Timestamptz(3)
+  dueAt           DateTime       @db.Timestamptz(3)
   sentAt          DateTime?
   /// The proof the practice asked — and, since delivery receipts, the proof it
   /// arrived. A real relation rather than a loose id, because a dangling id is
@@ -472,6 +491,12 @@ enum ProgressNoteStatus {
   draft
   signed
   cosigned
+  /// P0-4b: a draft whose author left before signing it. Terminal, reachable
+  /// only from `draft`, and it grants nobody anything — `sign` stays `author`,
+  /// and the author is gone. The content is retained at exactly the tier a
+  /// draft was already readable at; the row simply stops pretending it is on
+  /// its way somewhere. Enforced by `progress_note_content_frozen`.
+  abandoned
 }
 
 /// The official clinical record. Author + supervisor-of-author + break-glass.
@@ -492,6 +517,13 @@ model ProgressNote {
   coSignedById String?
   coSignedBy   User?     @relation("noteCoSigner", fields: [coSignedById], references: [id])
   coSignedAt   DateTime?
+
+  /// Why this note stopped being a draft without being signed (P0-4b). Set in
+  /// the departure transaction, and the reason `abandoned` is a fact with a
+  /// cause attached rather than a status somebody set by hand. A CHECK keeps
+  /// the two from disagreeing in either direction.
+  abandonedByDepartureId String?
+  abandonedByDeparture   Departure? @relation(fields: [abandonedByDepartureId], references: [id], onDelete: Restrict)
 
   amendments NoteAmendment[]
 
@@ -520,12 +552,21 @@ model ProcessNote {
   /// become immutable once the author closes them, and amend appends.
   closedAt DateTime?
 
+  /// P0-10: when this note's only reader stopped existing. Nothing about the
+  /// permission changes — `read: 'author'` was already true and is already
+  /// unsatisfiable — this column records *when* that became true, which is
+  /// what the destruction window counts from and what
+  /// `process_note_delete_only_after_departure` checks before allowing a row
+  /// to be destroyed at all.
+  unreachableSince DateTime?
+
   amendments NoteAmendment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([authorId, clientId])
+  @@index([unreachableSince])
 }
 
 enum NoteKind {
@@ -540,8 +581,15 @@ model NoteAmendment {
 
   progressNoteId String?
   progressNote   ProgressNote? @relation(fields: [progressNoteId], references: [id])
+  /// `Cascade`, not the `SetNull` an optional relation takes by default. An
+  /// amendment carries its own `content`, so a nulled `processNoteId` is the
+  /// text of a private note surviving the note it belonged to — the one place
+  /// `SetNull` would have quietly defeated the P0-10 destruction. Deleting an
+  /// amendment is still refused everywhere else: see
+  /// `note_amendment_append_only`, which permits it only as the child of a
+  /// process note that is already unreachable.
   processNoteId  String?
-  processNote    ProcessNote?  @relation(fields: [processNoteId], references: [id])
+  processNote    ProcessNote?  @relation(fields: [processNoteId], references: [id], onDelete: Cascade)
 
   authorId String
   author   User   @relation(fields: [authorId], references: [id])
@@ -946,8 +994,11 @@ model Referrer {
 
   createdAt DateTime @default(now())
 
-  referredIn  Inquiry[] @relation("inquiryReferrer")
-  referredOut Inquiry[] @relation("inquiryReferredOut")
+  referredIn            Inquiry[]             @relation("inquiryReferrer")
+  referredOut           Inquiry[]             @relation("inquiryReferredOut")
+  /// The other direction, from the other end of a career: a client sent here
+  /// when their clinician left.
+  departuresReferredOut DepartureAssignment[] @relation("departureReferredOut")
 
   @@unique([practice, name])
   @@index([active])
@@ -1025,7 +1076,7 @@ model Inquiry {
   /// Operational free text at the front-desk tier — the same tier as
   /// `WaitlistEntry.note`, and the honest weak point of this design. The purge
   /// is what bounds how long whatever ends up here survives.
-  note           String?
+  note            String?
 
   status        InquiryStatus         @default(open)
   discardReason InquiryDiscardReason?
@@ -1073,4 +1124,111 @@ model InquiryThrottle {
   windowStartedAt DateTime
 
   @@index([windowStartedAt])
+}
+
+// ─────────────────────────────── departure ───────────────────────────────
+
+/// Both endings are terminal. See `src/staff/departure.ts`, which owns the
+/// transitions; this enum only says what the column may hold.
+enum DepartureStatus {
+  planned
+  executed
+  cancelled
+}
+
+/// What happens to one client on a leaving caseload (P0-1).
+///
+/// Codes, in the idiom of `FeeWaiveReason` and `InquiryDiscardReason`, and for
+/// the same reason: this value reaches the audit log as `departure:<code>`, and
+/// the audit log is read by the one role that may not open a record.
+enum DepartureDisposition {
+  transfer
+  discharge
+  referred_out
+}
+
+/// A departure is a plan before it is an event (P0-1).
+///
+/// `noticeAt` and `lastDayOn` are two different facts and both matter: the gap
+/// between them is the thirty days the practice has to decide fifteen
+/// dispositions and clear the hour clashes. Notice closes the clinician's
+/// books; execution closes the account (P0-9).
+///
+/// A person may leave twice in a career but not twice at once, which is a
+/// partial unique index on `planned` rather than a unique on `userId` — see
+/// `departure_one_open_per_user` in the migration. Prisma has no syntax for it.
+model Departure {
+  id String @id @default(cuid())
+
+  /// The person leaving. `Restrict`, like every other reference to `User`: the
+  /// row is a permanent fact about the audit trail and six other tables
+  /// already say so.
+  userId String
+  user   User   @relation("departingUser", fields: [userId], references: [id], onDelete: Restrict)
+
+  noticeAt  DateTime
+  /// A date, not an instant. The last day is a day everywhere it is used —
+  /// which appointments move, how many days a draft has left — and a timestamp
+  /// would make that a timezone question it has no business being.
+  lastDayOn DateTime @db.Date
+
+  status DepartureStatus @default(planned)
+
+  /// Who recorded the notice. Admin or supervisor; `depart` is admin alone.
+  plannedById String
+  plannedBy   User   @relation("departurePlanner", fields: [plannedById], references: [id], onDelete: Restrict)
+
+  /// Set when the caseload actually moved. A `departure_execution_is_complete`
+  /// CHECK keeps this and `status` from disagreeing.
+  executedAt DateTime?
+
+  assignments DepartureAssignment[]
+  /// The drafts this departure closed (P0-4b). Not a transfer of authorship —
+  /// the relation names *why* a note stopped being on its way somewhere.
+  abandoned   ProgressNote[]
+
+  createdAt DateTime @default(now())
+
+  @@index([status, lastDayOn])
+  @@index([userId])
+}
+
+/// One client, one decision (P0-1, goal 2). No default and no silent remainder:
+/// the departure will not execute while a client on the caseload has no row.
+///
+/// Deliberately not a single `receivingClinicianId` on `Departure`. Real
+/// caseloads split — some clients follow the clinical fit, some follow the
+/// hour, some end — and one column would have made the common case one field
+/// and the real case impossible.
+model DepartureAssignment {
+  id String @id @default(cuid())
+
+  departureId String
+  departure   Departure @relation(fields: [departureId], references: [id], onDelete: Cascade)
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
+
+  disposition DepartureDisposition
+
+  /// Required for `transfer` and forbidden otherwise — a CHECK says so, in the
+  /// register `inquiry_referrer_only_for_gp` set. A transfer with no receiver
+  /// is an undecided row pretending to be decided, and that is the exact state
+  /// this table exists to make impossible.
+  receivingClinicianId String?
+  receivingClinician   User?   @relation("departureReceiver", fields: [receivingClinicianId], references: [id], onDelete: Restrict)
+
+  /// Where they went instead. The same `Referrer` a caller arrives from — the
+  /// second direction the intake PRD's D-11 promised, and the reason that
+  /// table is one table.
+  referredOutToId String?
+  referredOutTo   Referrer? @relation("departureReferredOut", fields: [referredOutToId], references: [id], onDelete: Restrict)
+
+  decidedById String
+  decidedBy   User     @relation("departureDecider", fields: [decidedById], references: [id], onDelete: Restrict)
+  decidedAt   DateTime @default(now())
+
+  @@unique([departureId, clientId])
+  @@index([clientId])
+  @@index([receivingClinicianId])
 }

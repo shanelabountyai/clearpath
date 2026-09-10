@@ -442,5 +442,8 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
 function NoteStatus({ status }: { status: string }) {
   if (status === 'draft') return <Badge tone="warning">Draft</Badge>;
   if (status === 'signed') return <Badge tone="info" glyph="✍">Pending co-signature</Badge>;
+  // P0-4b: falling through to "Co-signed" would have the record claim a
+  // signature that does not exist. The hole is meant to be visible.
+  if (status === 'abandoned') return <Badge tone="danger" glyph="⊘">Unsigned — author departed</Badge>;
   return <Badge tone="success" glyph="✓">Co-signed</Badge>;
 }
