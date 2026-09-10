@@ -2276,10 +2276,171 @@ the committed PNG means the product moved.
 pictures to prove the tokens work in both is a claim better made by the tokens
 themselves than by twenty files in `docs/`.
 
+## 29. The record follows the client; the notes never do
+
+A clinician gives four weeks' notice. On the last day the practice needs the
+fifteen clients on their caseload to have a new therapist, and it needs that
+therapist to be able to read what the last one wrote.
+
+What Clearpath could do about that before this phase, stated accurately:
+`User.active = false`. That flag blocks a login and drops the person from a
+picker. Fifteen `Client` rows still named them as the treating clinician, every
+draft note they left was permanently unsignable, and the most sensitive content
+in the database — their process notes — had exactly one permitted reader, who
+could no longer log in.
+
+None of that was a bug. Each of those is a rule this project argued for and got
+right. A departure is simply the first event that asks all of them the same
+question at once.
+
+### The outlier nobody had noticed
+
+Look at the clinical matrix as it stood. `client`, `fee`,
+`attendance_history` and `form_submission` are all `treatingOrSupervising` —
+the clinician who treats this person, and the supervisor responsible for them.
+`form_submission` is screener answers and risk scores, which is clinical data
+by any reading.
+
+`progress_note.read` was `authorOrSupervisor`.
+
+So the official record — the one document that exists to say what care was
+given — was the *only* clinical resource on a client's record narrower than the
+record around it. A clinician taking over a caseload could read their new
+client's PHQ-9 scores and could not read a word of the notes explaining them.
+
+That was coherent for exactly as long as a client's clinician never changed,
+which is a thing this codebase had never made happen. The widening is one cell:
+
+```ts
+progress_note: {
+  read: 'authorSupervisorOrTreating',   // was: 'authorOrSupervisor'
+  create: 'treating',
+  update: 'author',
+  sign: 'author',
+}
+```
+
+Three claimants, unioned: whoever wrote it, the supervisor responsible for that
+author, and the clinician who carries the client *now*.
+
+**The name is deliberately clumsy.** `recordReader` was the elegant candidate,
+and it was rejected: it names a role, and every other rule in the file names a
+relationship — `author`, `treating`, `recipient`, `self`. At the call site the
+only useful question is *who exactly*, which an enumeration answers and an
+abstraction hides. The name also travels: `Decision.rule` goes into the audit
+row, so the auditor reading why a note was opened gets the enumeration too.
+
+And it is honest about what this cost. The widening is not scoped to
+transferred clients — there is no such thing yet. Any clinician may now read
+the progress notes of any client they treat, whoever wrote them. That is
+strictly more clinical access than yesterday, granted to every clinician at
+once, which is exactly why it is a numbered decision and a matrix cell rather
+than a grant handed out inside a transfer. Doing it inside the transfer would
+have been narrower and worse: the answer to *who can read this note* would have
+moved out of the one file that is supposed to answer it.
+
+### The same sentence, twice, in opposite directions
+
+`process_note` is untouched. `read: 'author'`. Admin has no entry; break-glass
+does not reach it; the receiving clinician is refused.
+
+This is the pair the whole project has been building toward, and departure is
+what finally makes it *visible*. One client, one clinician, one moment:
+
+```ts
+const inherited = { authorId: alex, authorSupervisorId: sam, clinicianId: beth };
+can(beth, 'read', 'progress_note', inherited).allowed;  // true
+can(beth, 'read', 'process_note',  inherited).allowed;  // false
+```
+
+The record transfers because it is *the practice's record of care*. The private
+notes do not because they were never part of it. Same sentence, both answers —
+and it is a sharper demonstration than any denial test in isolation, because
+here the opposite rule is applied to the neighbouring table for the same reader
+at the same instant.
+
+### `depart` is its own action
+
+`Action` gained `'depart'`; `Resource` gained `'departure'`. Admin already held
+`user.update`, which is where roles and supervision live, and deactivating an
+account is a `user.update`. The temptation was to stop there.
+
+Executing a departure deactivates an account, moves fifteen clinical records to
+new readers, abandons one body of notes and schedules the destruction of
+another. Same row underneath, three orders of magnitude of blast radius — and
+this file's standing argument, third time of asking after `waive` and
+`discard`, is that **a power nobody named is a power nobody reviewed.**
+
+The column that resulted is more interesting than the action:
+
+| role | departure |
+|---|---|
+| admin | `read` `create` `update` `depart` |
+| supervisor | `read` `update` |
+| front_desk | `read` |
+| therapist / associate | `read: self` |
+| auditor / client / public | — |
+
+A supervisor shapes the plan and cannot execute it: proposing who takes which
+client is exactly the judgement supervision exists for, and pulling the trigger
+deactivates an account, which is the practice manager's act. Front desk reads
+it because they answer the phone to "who will I be seeing?", and holds nothing
+else because who receives a caseload is a clinical-fit judgement. A clinician
+reads `self` — your own leaving is a thing you are entitled to see recorded
+correctly, and a colleague's dispositions are not yours.
+
+**There is no break-glass cell anywhere in the column,** and a test asserts the
+absence by running every role and action twice, with and without a reason
+typed, and requiring the two answers to match. A departure plan holds a client
+list at the demographic tier and no clinical content. There is nothing here to
+break glass for, and a cell that exists "just in case" is one somebody
+eventually uses.
+
+`create` also carries something the intake work wrote down as a cost and could
+not pay: recording a departure closes the departing clinician's books. Intake's
+D-09 refused admin `capacity.update` on the grounds that a manager who can mark
+a clinician *open* has replaced the clinician's judgement with the practice's
+preference — and it noted, in writing, that a clinician leaving with their books
+open is a wrong signal nobody else can correct. `departure.create` closes them
+and can never open them. The asymmetry is the decision: closing never overstates
+what somebody can carry, and it is derived from a dated employment fact rather
+than typed as an opinion.
+
+### What the test file grew
+
+Adding a resource and an action to this codebase is not a two-line change,
+because `permissions.test.ts` enumerates every role × resource × action cell and
+probes it three ways. One new resource and one new action took the matrix from
+896 cells to 1,088, and the suite from 2,455 tests to 2,861. Every one of those
+new cells had to be declared allowed-for-somebody or denied-for-everybody in a
+spec written from the PRD rather than read back off the matrix.
+
+That is the test doing the job it was built for. The correct response to it
+going red is to fill the cells, never to narrow the test.
+
+### What has not happened yet
+
+Stated plainly, because a rule that no call site can satisfy is a comment:
+**the widening is not yet reachable at runtime.** `notes/service.ts` builds its
+authorization target from the note (`authorId`, `authorSupervisorId`) and never
+resolves the client's current treating clinician, and `listProgressNotes` scopes
+its SQL to the author and their supervisees. Both are correct for the rule that
+was there yesterday and both are now narrower than the policy. The policy is the
+thing that had to be decided in one reviewable place first; the two queries that
+serve it are a Phase 3 edit with the transfer they exist for.
+
 ## Decisions log
 
 | Decision | Why |
 |---|---|
+| `progress_note.read` widens to include the treating clinician | It was the one clinical resource narrower than the record around it — a clinician could read their new client's risk scores and not the notes explaining them |
+| The widening is a matrix cell, not a grant inside the transfer | The answer to "who can read this note" has to stay in the one file that is supposed to answer it; a transfer-time grant would have been narrower and unreviewable |
+| The rule is called `authorSupervisorOrTreating`, not `recordReader` | Every other rule names a relationship; the name also lands in the audit row, so at both call sites the useful question is *who exactly* |
+| `process_note` is untouched by all of it | The record transfers because it is the practice's record of care; the private notes do not because they were never part of it — one sentence, both answers |
+| `depart` is its own action, not `user.update` | Admin already holds `user.update`; this one moves fifteen clinical records to new readers and schedules a destruction. Third time after `waive` and `discard`: a power nobody named is a power nobody reviewed |
+| A supervisor may `update` a departure and never `depart` | Proposing who takes which client is what supervision is for; deactivating an account is the practice manager's act |
+| No break-glass cell anywhere in the `departure` column | It holds a client list at the demographic tier and no clinical content — and a cell that exists "just in case" is one somebody eventually uses |
+| Both departure endings are terminal | An executed departure moved a caseload; a withdrawn notice given again is genuinely a second notice on a second date, and the audit log should show two |
 | The README's pictures are captured by a spec, not pasted | A screenshot has no mechanism for becoming false; captured by a spec it cannot drift without the capture breaking first |
 | Queue rows are located by the note's own link, never by client name | A client can have two notes in the queue, so `.first()` silently acts on whichever the ageing order puts on top — it co-signed the wrong note in the capture and hid a hole in the walkthrough spec |
 | The demo's refusal is triggered last, after the locked panel | Frame five has to show the grant and the refusal together; taken in the obvious order the only refusal in frame was the seed's, minutes older than the story |

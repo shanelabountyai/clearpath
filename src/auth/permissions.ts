@@ -64,7 +64,21 @@ export type Resource =
    * — which is why a submission that says "my GP sent me" stays a bare code
    * with no detail, and somebody rings back to find out which surgery.
    */
-  | 'referrer';
+  | 'referrer'
+  /**
+   * A dated plan for a clinician leaving, and the client-by-client dispositions
+   * under it.
+   *
+   * Its own resource rather than a shape of `user`, for the reason `capacity`
+   * is: `user` is roles and supervision relationships, and this row moves a
+   * caseload to new readers, closes one body of notes and ends another. Same
+   * table underneath, three orders of magnitude of blast radius.
+   *
+   * It holds a client list at the demographic tier and no clinical content, so
+   * there is no break-glass cell anywhere in its column — there is nothing here
+   * to break glass for.
+   */
+  | 'departure';
 
 /**
  * `waive` is its own action rather than an `update` on `fee`, because reversing
@@ -76,7 +90,14 @@ export type Resource =
  * one resource and reads wrong anywhere else — whereas a generic `delete` is a
  * verb a later reviewer would reach for on a table that must never lose a row.
  */
-export type Action = 'read' | 'create' | 'update' | 'sign' | 'cosign' | 'waive' | 'discard';
+export type Action =
+  | 'read' | 'create' | 'update' | 'sign' | 'cosign' | 'waive' | 'discard'
+  /**
+   * Execute a departure: deactivate the account, and move the caseload behind
+   * it. Third in the line `waive` and `discard` started — admin already holds
+   * `user.update`, and this is not that button with a different label.
+   */
+  | 'depart';
 
 export const ROLES: readonly Role[] = [
   'front_desk', 'therapist', 'associate', 'supervisor', 'admin', 'auditor', 'client', 'public',
@@ -85,9 +106,10 @@ export const RESOURCES: readonly Resource[] = [
   'client', 'fee', 'appointment', 'attendance_history', 'progress_note',
   'process_note', 'form_template', 'form_request', 'form_submission',
   'alert', 'portal_link', 'audit_log', 'user', 'inquiry', 'capacity', 'referrer',
+  'departure',
 ];
 export const ACTIONS: readonly Action[] = [
-  'read', 'create', 'update', 'sign', 'cosign', 'waive', 'discard',
+  'read', 'create', 'update', 'sign', 'cosign', 'waive', 'discard', 'depart',
 ];
 
 export interface Actor {
@@ -154,6 +176,32 @@ const RULES = {
   treating: (a: Actor, t: Target) =>
     t.clinicianId !== undefined && a.id === t.clinicianId,
   /**
+   * The official record's readers: whoever wrote it, the supervisor responsible
+   * for that author, and the clinician who carries the client *now*.
+   *
+   * A clumsy name on purpose. `recordReader` was the elegant candidate and it
+   * names a role; every other rule in this file names a relationship, and at the
+   * call site the only useful question is "who exactly" — so the enumeration
+   * wins (D-15). It is also the shape of the rule: three claimants, unioned, no
+   * fourth arriving quietly.
+   *
+   * Why it exists at all: `client`, `fee`, `attendance_history` and
+   * `form_submission` are all `treatingOrSupervising`, so until this rule the
+   * progress note — the official record — was the ONE clinical resource on a
+   * client narrower than the record around it, and a clinician taking over a
+   * caseload could read that client's risk scores but not their notes. A
+   * clinician departing is simply the first event that asks.
+   *
+   * Deliberately NOT the supervisor of the *treating* clinician: this widens
+   * clinical read access across every note in the database at once, and three
+   * named claimants is what D-04 argued for. `process_note` is untouched by all
+   * of it and stays `author`, which is the whole point of the pair.
+   */
+  authorSupervisorOrTreating: (a: Actor, t: Target) =>
+    isAuthor(a, t) ||
+    supervises(a, t) ||
+    (t.clinicianId !== undefined && a.id === t.clinicianId),
+  /**
    * The treating clinician, or the supervisor responsible for their practice.
    *
    * Supervision is clinical responsibility, not just a signature: a supervisor
@@ -204,7 +252,10 @@ const CLINICIAN: RoleMatrix = {
   appointment: { read: 'always', create: 'always', update: 'always' },
   attendance_history: { read: 'treatingOrSupervising' },
   progress_note: {
-    read: 'authorOrSupervisor',
+    // Widened from `authorOrSupervisor` by D-04: the clinician who carries the
+    // client now reads what the previous one wrote, because they are the one
+    // clinically responsible for what happens next.
+    read: 'authorSupervisorOrTreating',
     // Writing is the treating clinician's alone. A supervisor countersigns the
     // record; they do not author into somebody else's.
     create: 'treating',
@@ -232,6 +283,11 @@ const CLINICIAN: RoleMatrix = {
   // their own call should be able to name the surgery that sent the person,
   // and curating the practice's contact list afterwards is operations.
   referrer: { read: 'always', create: 'always' },
+  // Your own departure and nobody else's. `self` is already the rule that means
+  // "this row is about you and has no meaning apart from you" — a clinician is
+  // entitled to see their own leaving recorded correctly, and a colleague's
+  // caseload dispositions are not theirs to read.
+  departure: { read: 'self' },
 };
 
 /**
@@ -254,6 +310,10 @@ const MATRIX: Record<Role, RoleMatrix> = {
     capacity: { read: 'always' },
     // Owns the phone, so owns the phone book.
     referrer: { read: 'always', create: 'always', update: 'always' },
+    // Answers "who will I be seeing?" and must stop booking new work into a
+    // departing clinician the afternoon notice is given. Reads only: who
+    // receives which client is a clinical-fit judgement.
+    departure: { read: 'always' },
   },
 
   therapist: CLINICIAN,
@@ -262,6 +322,11 @@ const MATRIX: Record<Role, RoleMatrix> = {
   supervisor: {
     ...CLINICIAN,
     progress_note: { ...CLINICIAN.progress_note, cosign: 'supervisorOfAuthor' },
+    // Proposing who takes which client is exactly the judgement supervision
+    // exists for, so `update` on any departure, not just their own. Never
+    // `depart`: executing one deactivates an account, and that is the practice
+    // manager's act.
+    departure: { read: 'always', update: 'always' },
     // process_note deliberately inherits `read: author` — a supervisor reading a
     // supervisee's process note is a 403, and the denial is audit-logged.
   },
@@ -297,6 +362,13 @@ const MATRIX: Record<Role, RoleMatrix> = {
     // relationship they run, not a clinical judgement somebody else has to
     // make about themselves.
     referrer: { read: 'always', create: 'always', update: 'always' },
+    // The only holder of `depart`, and the reason it is not `user.update`
+    // directly above: same row underneath, but this one moves a caseload to new
+    // readers, abandons one body of notes and schedules the destruction of
+    // another. `create` is also what closes a departing clinician's books —
+    // the one narrow path by which anybody but the clinician touches capacity,
+    // and it only ever closes (D-10).
+    departure: { read: 'always', create: 'always', update: 'always', depart: 'always' },
   },
 
   auditor: {

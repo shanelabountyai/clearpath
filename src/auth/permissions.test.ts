@@ -31,6 +31,8 @@ const ALLOWED: Record<Role, Set<string>> = {
     inquiry: 'read create update discard',
     capacity: 'read',
     referrer: 'read create update',
+    // Answers the phone to "who will I be seeing?". Reads only.
+    departure: 'read',
   }),
   therapist: spec({
     client: 'read update',
@@ -49,6 +51,8 @@ const ALLOWED: Record<Role, Set<string>> = {
     // Exactly the `inquiry` shape: name the surgery on a call you took, and
     // leave curating the list to the people who run the practice.
     referrer: 'read create',
+    // `self`: your own leaving, never a colleague's.
+    departure: 'read',
   }),
   associate: spec({
     client: 'read update',
@@ -65,6 +69,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     inquiry: 'read create',
     capacity: 'read update',
     referrer: 'read create',
+    departure: 'read',
   }),
   supervisor: spec({
     client: 'read update',
@@ -81,6 +86,8 @@ const ALLOWED: Record<Role, Set<string>> = {
     inquiry: 'read create',
     capacity: 'read update',
     referrer: 'read create',
+    // Reads any departure and proposes the dispositions; never executes one.
+    departure: 'read update',
   }),
   admin: spec({
     client: 'read update', // break-glass only
@@ -100,6 +107,9 @@ const ALLOWED: Record<Role, Set<string>> = {
     // with is a business relationship they run, not a judgement about a
     // clinician that only that clinician can make.
     referrer: 'read create update',
+    // The only holder of `depart`. Deliberately not `user.update`, which they
+    // already have: same row, three orders of magnitude of blast radius.
+    departure: 'read create update depart',
   }),
   auditor: spec({ audit_log: 'read' }),
   // The tokenized door, and nothing else in the matrix. `update` is confirm and
@@ -139,6 +149,10 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
     inquiry: 'read create',
     capacity: 'read',
     referrer: 'read create',
+    // `always`, both of them — a supervisor reads and shapes any departure,
+    // not only one they hold a relationship to. Absent from the therapist and
+    // associate blocks above because theirs is `self`.
+    departure: 'read update',
   }),
   admin: spec({
     fee: 'read update waive',
@@ -151,6 +165,7 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
     inquiry: 'read create update discard',
     capacity: 'read',
     referrer: 'read create update',
+    departure: 'read create update depart',
   }),
   auditor: ALLOWED.auditor,
   // Never unconditional: without a row that is theirs, a token decides `never`.
@@ -232,6 +247,10 @@ describe('process notes are author-only, forever', () => {
     }).allowed).toBe(false);
   });
 
+  it('the practice manager is denied, with or without a reason typed', () => {
+    expect(can({ id: ME, role: 'admin' }, 'read', 'process_note', note).allowed).toBe(false);
+  });
+
   it('break-glass is denied and still flagged for the audit log', () => {
     const d = can(
       { id: ME, role: 'admin', breakGlass: { reason: 'welfare check' } },
@@ -286,6 +305,138 @@ describe('progress notes', () => {
       'read', 'progress_note', supervisee,
     );
     expect(d).toEqual({ allowed: true, rule: 'breakGlass', breakGlass: true });
+  });
+});
+
+describe('the official record follows the client (D-04)', () => {
+  it('the author reads their own, whoever treats the client now', () => {
+    const d = can({ id: ME, role: 'therapist' }, 'read', 'progress_note', {
+      authorId: ME, authorSupervisorId: OTHER, clinicianId: OTHER,
+    });
+    expect(d.allowed).toBe(true);
+    // The rule name goes in the audit row, so it is part of the contract.
+    expect(d.rule).toBe('authorSupervisorOrTreating');
+  });
+
+  it('the clinician who carries the client now reads what the last one wrote', () => {
+    expect(can({ id: ME, role: 'therapist' }, 'read', 'progress_note', {
+      authorId: OTHER, authorSupervisorId: OTHER, clinicianId: ME,
+    }).allowed).toBe(true);
+  });
+
+  it('the supervisor of the author still reads it', () => {
+    expect(can({ id: ME, role: 'supervisor' }, 'read', 'progress_note', {
+      authorId: OTHER, authorSupervisorId: ME, clinicianId: OTHER,
+    }).allowed).toBe(true);
+  });
+
+  it('a clinician who neither wrote it, supervises it, nor treats the client does not', () => {
+    for (const role of ['therapist', 'associate', 'supervisor'] as Role[]) {
+      const [actor, target] = stranger(role);
+      expect(can(actor, 'read', 'progress_note', target).allowed).toBe(false);
+    }
+  });
+
+  it('widens reading only — writing, signing and co-signing are where they were', () => {
+    const inherited: Target = { authorId: OTHER, authorSupervisorId: OTHER, clinicianId: ME };
+    const beth: Actor = { id: ME, role: 'therapist' };
+    // She may write her OWN note about this client, and may not touch his.
+    expect(can(beth, 'create', 'progress_note', inherited).allowed).toBe(true);
+    expect(can(beth, 'update', 'progress_note', inherited).allowed).toBe(false);
+    expect(can(beth, 'sign', 'progress_note', inherited).allowed).toBe(false);
+    expect(can(beth, 'cosign', 'progress_note', inherited).allowed).toBe(false);
+  });
+
+  it('gives the practice manager and front desk nothing new', () => {
+    const inherited: Target = { authorId: OTHER, authorSupervisorId: OTHER, clinicianId: ME };
+    expect(can({ id: ME, role: 'admin' }, 'read', 'progress_note', inherited).allowed).toBe(false);
+    expect(can({ id: ME, role: 'front_desk' }, 'read', 'progress_note', inherited).allowed).toBe(false);
+  });
+
+  it('and the private notes give the same reader the opposite answer', () => {
+    // The single assertion this whole feature exists to make: one client, one
+    // clinician, one moment — the practice's record of care transfers, and the
+    // therapist's private working notes never did belong to it.
+    const inherited: Target = { authorId: OTHER, authorSupervisorId: OTHER, clinicianId: ME };
+    const beth: Actor = { id: ME, role: 'therapist' };
+    expect(can(beth, 'read', 'progress_note', inherited).allowed).toBe(true);
+    expect(can(beth, 'read', 'process_note', inherited).allowed).toBe(false);
+  });
+});
+
+describe('departure is its own resource, and `depart` its own action', () => {
+  const plan: Target = { subjectUserId: OTHER };
+
+  it('the practice manager plans it and is the only one who executes it', () => {
+    const ray: Actor = { id: ME, role: 'admin' };
+    for (const action of ['read', 'create', 'update', 'depart'] as Action[]) {
+      expect(can(ray, action, 'departure', plan).allowed).toBe(true);
+    }
+  });
+
+  it('nobody else may execute one — not even with every relationship claimed', () => {
+    for (const role of ROLES.filter((r) => r !== 'admin')) {
+      const [actor, target] = insider(role);
+      expect(can(actor, 'depart', 'departure', target).allowed, role).toBe(false);
+    }
+  });
+
+  it('a supervisor shapes the plan and cannot pull the trigger', () => {
+    const sam: Actor = { id: ME, role: 'supervisor' };
+    expect(can(sam, 'read', 'departure', plan).allowed).toBe(true);
+    expect(can(sam, 'update', 'departure', plan).allowed).toBe(true);
+    expect(can(sam, 'create', 'departure', plan).allowed).toBe(false);
+    expect(can(sam, 'depart', 'departure', plan).allowed).toBe(false);
+  });
+
+  it('front desk reads it to answer the phone, and writes none of it', () => {
+    const dana: Actor = { id: ME, role: 'front_desk' };
+    expect(can(dana, 'read', 'departure', plan).allowed).toBe(true);
+    for (const action of ACTIONS.filter((a) => a !== 'read')) {
+      expect(can(dana, action, 'departure', plan).allowed, action).toBe(false);
+    }
+  });
+
+  it('a clinician reads their own leaving and never a colleague’s', () => {
+    for (const role of ['therapist', 'associate'] as Role[]) {
+      const alex: Actor = { id: ME, role };
+      expect(can(alex, 'read', 'departure', { subjectUserId: ME }).allowed).toBe(true);
+      expect(can(alex, 'read', 'departure', { subjectUserId: OTHER }).allowed).toBe(false);
+      // And a missing subject is never a match, the way `capacity` is not.
+      expect(can(alex, 'read', 'departure', {}).allowed).toBe(false);
+    }
+  });
+
+  it('holds no break-glass cell anywhere — there is no clinical content in it', () => {
+    for (const role of ROLES) {
+      for (const action of ACTIONS) {
+        const withGlass: Actor = { id: ME, role, breakGlass: { reason: 'caseload review' } };
+        const without: Actor = { id: ME, role };
+        const t: Target = { subjectUserId: OTHER };
+        expect(
+          can(withGlass, action, 'departure', t).allowed,
+          `${role}:${action}`,
+        ).toBe(can(without, action, 'departure', t).allowed);
+      }
+    }
+  });
+
+  it('is not reachable by the auditor, the client link, or the public form', () => {
+    for (const role of ['auditor', 'client', 'public'] as Role[]) {
+      for (const action of ACTIONS) {
+        const [actor, target] = insider(role);
+        expect(can(actor, action, 'departure', target).allowed, `${role}:${action}`).toBe(false);
+      }
+    }
+  });
+
+  it('`depart` reaches nothing but a departure', () => {
+    for (const resource of RESOURCES.filter((r) => r !== 'departure')) {
+      for (const role of ROLES) {
+        const [actor, target] = insider(role);
+        expect(can(actor, 'depart', resource, target).allowed, `${role}:${resource}`).toBe(false);
+      }
+    }
   });
 });
 

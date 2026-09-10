@@ -1,66 +1,62 @@
 # Next
 
-**Item:** A fourth PRD — `prd-clinician-departure.md`, written. Document only,
-no code, gate untouched.
+**Item:** Phase 2 of the departure PRD — the schema. `Departure`,
+`DepartureAssignment`, `abandoned`, `unreachableSince`, the trigger, the audit
+rows. Opus.
 
-## What it is
+## What just landed (Phase 1, committed)
 
-Clinician departure: the caseload transfer, and the note nobody may sign. Chosen
-over records-release and a supervised-hours ledger because it stresses the two
-rules the whole codebase rests on — `process_note.read: 'author'` and
-append-only audit — at the exact point they break, which is the day the author
-leaves.
+Pure logic only, per CLAUDE.md's TDD order. Three things:
 
-Four things in it are load-bearing, and three were verified against the code
-before being written down:
+1. **`departure` resource + `depart` action** (P0-3). Matrix column: admin
+   `read create update depart`, supervisor `read update`, front desk `read`,
+   therapist/associate `read: self`, auditor/client/public nothing. **No
+   break-glass cell anywhere** — asserted by running every role × action twice,
+   with and without a reason typed, and requiring the two answers to match.
+2. **`progress_note.read` widened** to `authorSupervisorOrTreating` (P0-5,
+   D-04) — author, supervisor-of-author, current treating clinician. Deliberately
+   NOT the supervisor of the treating clinician. `process_note` untouched, and
+   the paired assertion (same reader, same client, opposite answers) is in
+   `permissions.test.ts`.
+3. **`src/staff/departure.ts`** (P0-2) — `planned → executed | cancelled`, both
+   terminal, `assertTransition` throwing `Conflict('…', 'bad_transition')`,
+   the same code `scheduling/lifecycle.ts` uses.
 
-1. **`User.active = false` is the entire current mechanism**, and it does two
-   things: `session.ts:45` blocks login, `session.ts:69` drops them from the
-   person picker. Nothing else moves — fifteen `Client.treatingClinicianId`
-   rows, live series, unsignable drafts, unreadable process notes, orphaned
-   alerts, open books.
-2. **`progress_note.read` is `authorOrSupervisor`, but `form_submission` is
-   `treatingOrSupervising`.** So the official record is the only clinical
-   resource on a client narrower than the record around it, and a receiving
-   clinician can read a client's risk scores but not their notes. Departure is
-   the first event that exposes it. D-04 widens the cell in the matrix, not in
-   the transfer.
-3. **`appointment_clinician_no_overlap` is an exclusion constraint**, so a bulk
-   caseload move can be refused by the database mid-transaction. The PRD
-   validates conflicts continuously from notice and rolls the whole departure
-   back at execution (D-06, D-07) rather than moving what fits.
-4. **`departure.create` closing a clinician's books** is the narrow, named path
-   that answers intake D-09's stated cost (NEXT.md loose thread #2 from last
-   session). Admin still cannot mark anyone *open* — the asymmetry is D-10.
+D-15 recorded in the PRD, its Open Question struck: the rule is
+`authorSupervisorOrTreating`, not `recordReader`. WRITEUP §29 written as it
+landed, with eight decisions-log rows.
 
-14 decisions, 11 P0s in four phases, five P1s, four P2s.
+## The one thing to fix early, and it is not cosmetic
+
+**The widening is not reachable at runtime yet.** Two call sites are narrower
+than the policy now says:
+
+- `src/notes/service.ts:29` `progressContext()` builds its target from the note
+  alone (`authorId`, `authorSupervisorId`) and never resolves the client's
+  current `treatingClinicianId`. This is the shared helper behind read, update,
+  sign, cosign and amend — one edit covers all five.
+- `src/notes/service.ts:179` `listProgressNotes()` scopes its SQL to
+  `authorId: { in: [self, ...supervisees] }`.
+
+Both are correct for yesterday's rule. `clients/repository.ts:250` already
+passes `clinicianId` and needs nothing. WRITEUP §29's last section says this
+out loud; do not let it rot. It is a Phase 3 edit in the PRD's phasing, but it
+is the smallest thing that makes D-04 true rather than commented.
 
 ## Gate
 
-Unchanged — markdown only. Last verified at `92d9f06`: unit **2455/2455** (27
-files), e2e **45 passed, 1 skipped**, typecheck clean. `*.md` is excluded by the
-Vercel `ignoreCommand`, so this push does not build.
+**Green at this commit.** Unit **2861/2861** (28 files, 35.7s), typecheck clean.
+No lint script in this repo. e2e not run — nothing UI-facing changed and the
+new rule is unreachable at runtime, so there is no behaviour for a spec to see;
+run it before Phase 3 lands, not before Phase 2.
 
-## What's actually next
+Cell count went 896 → 1,088, suite 2,455 → 2,861. That is the matrix test doing
+its job; fill cells, never narrow it.
 
-Nothing is queued. Two obvious continuations:
+## Loose threads
 
-1. **Build Phase 1 of the departure PRD** — matrix cells and every denial, the
-   `progress_note.read` widening with its four claimants, the state machine.
-   Pure logic, TDD, per CLAUDE.md's ordering. Opus.
-2. **Ponytail audit of the finished repo** — the option not taken this session.
-   Opus.
-
-Open question the PRD itself flags as its weakest point: the new read rule's
-name. `recordReader` names a role; every other rule in `permissions.ts` names a
-relationship. Settle it in Phase 1, not before.
-
-Three loose threads from before, one now answered:
-
-1. Public form's throttle read-then-write race. Carries a `ponytail:` comment.
-   Still not worth a lock at three an hour.
-2. ~~A clinician on leave with their books left open~~ — the departure PRD's
-   P0-9/D-10 answers this for a *departure*. A leave of absence is P2 and still
-   has no mechanism.
-3. Design brief §5b/§5c components with no picture. Still inventory, still not a
-   component library.
+1. Public form's throttle read-then-write race. `ponytail:` comment. Still not
+   worth a lock at three an hour.
+2. A clinician on *leave* (not departing) with their books left open — still no
+   mechanism, still P2.
+3. Design brief §5b/§5c components with no picture. Still inventory.
