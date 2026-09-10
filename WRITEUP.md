@@ -2964,6 +2964,56 @@ unready is told about the date. The seed now gives notice three weeks before its
 - **Restore itself.** Running this file alone needs `npm run db:seed:e2e` first.
   The doc comment says so.
 
+## 35. Three an hour, ten at once
+
+§25 put an hourly ceiling on the public form and left a `ponytail:` comment on
+how it claimed a slot: read the row, then write it. The comment priced the gap
+at one extra submission and called that not worth a lock. A test that sends ten
+at once from one address measured it instead. All ten got through a limit of
+three.
+
+The comment's arithmetic pictured two requests in flight. A script sends ten,
+and for a submitter nobody has counted yet, every one of them finds no row and
+writes a fresh window with a count of one. The ceiling held for a person
+clicking twice and not for the thing it was built to stop.
+
+### One statement, and the lock it takes
+
+`claimSlot` is now a single `INSERT … ON CONFLICT (id) DO UPDATE … WHERE`. The
+conflict path takes the row lock, so a burst queues on the row and each request
+sees the count the one before it left. The `WHERE` is the refusal: a full window
+that has not expired fails it, nothing is written, and `$executeRaw` reports no
+row affected. The window reset moved into the same statement, as a `CASE` on
+whether the window is spent. No migration: the table's primary key was already
+the constraint the statement needed.
+
+It is the answer `appointment_clinician_no_overlap` gave booking. When two
+requests can disagree about what the database holds, the database decides, once.
+
+### The zone the column does not have
+
+`windowStartedAt` is a zone-less `timestamp(3)` holding UTC, and the local
+session runs in `America/Chicago`. Prisma's own queries convert. Raw SQL is where
+a five-hour shift would come from, so the first draft pinned each instant with
+`::timestamptz AT TIME ZONE 'UTC'`. Then the tests ran with the pinning removed
+and all of them still passed, so the pinning had no guard and possibly no
+purpose. One assertion settles it: the window a claim starts, read back through
+Prisma (which the purge also compares with), is the clock's instant. It passes
+with the pinning and without it. The driver already sends a `Date` as the UTC
+instant, so the pinning came out and the assertion stayed. It is what fails if a
+driver upgrade ever changes that.
+
+### What it deliberately does not do
+
+- **Count refusals.** A refused attempt writes nothing, as before. A bot that
+  keeps knocking is held at the limit rather than pushed further out, and the
+  audit log already records every knock.
+- **Slide the window.** Still a fixed hour, and the purge sweeps spent rows
+  exactly as it did.
+- **Span instances without a secret.** With no `CLEARPATH_THROTTLE_SECRET`,
+  each instance keys its own hashes. That `ponytail:` stays. It is a deployment
+  setting, not a race.
+
 ## Decisions log
 
 | Decision | Why |
@@ -3159,6 +3209,7 @@ unready is told about the date. The seed now gives notice three weeks before its
 | The receiving supervisor is checked with `may(… 'cosign' …)`, not a role | The first draft compared `role === 'supervisor'` and hard rule 1's grep failed the build. The matrix is the only place that knows who can co-sign |
 | The demo's leaver is a seventh therapist added at the end of the seed | The seed's PRNG sequence carries weight, and other specs assert seeded caseload counts. A clinician who draws nothing and holds hours no standing slot uses moves nothing else |
 | Execution is refused before the last day, inside the guard and ahead of the other blockers (D-30) | Sessions move from the last day on and the account closes whenever execution runs, so an early click left the weeks between on a clinician who could no longer sign in. Before the guard, a supervisor's early attempt would have come back as a date refusal with no denial row |
+| The throttle claims a slot in one `INSERT … ON CONFLICT DO UPDATE … WHERE` | Read-then-write let ten simultaneous requests through a limit of three, not the one extra its comment priced. The row lock queues a burst, and the table's primary key was already the constraint it needed |
 
 ## What this project deliberately is not
 

@@ -195,12 +195,30 @@ describe('the hourly ceiling', () => {
     expect(await inquiries()).toHaveLength(4);
   });
 
+  it('holds under a burst, not only one request at a time', async () => {
+    // Ten at once from one address, which is what a script does. A read-then-write
+    // claim let every one of them see an empty window and all ten through.
+    const results = await Promise.allSettled(Array.from({ length: 10 }, () => send()));
+
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(3);
+    for (const r of results) if (r.status === 'rejected') expect(r.reason).toMatchObject({ code: 'too_many' });
+    expect(await inquiries()).toHaveLength(3);
+  });
+
   it('never stores the address it counted', async () => {
     await send();
     const [row] = await prisma.inquiryThrottle.findMany();
     expect(row?.id).not.toContain(ADDRESS);
     expect(row?.id).toBe(submitterKey(ADDRESS));
     expect(submitterKey(ADDRESS)).not.toBe(submitterKey('198.51.100.4'));
+  });
+
+  it('starts the window at the instant the clock gave, whatever zone the session is in', async () => {
+    // The claim is raw SQL into a zone-less column, where Prisma is not there to
+    // convert. Read back through Prisma, which the purge also compares with.
+    await send();
+    const [row] = await prisma.inquiryThrottle.findMany();
+    expect(row?.windowStartedAt).toEqual(new Date(T0));
   });
 
   it('lets the purge sweep spent windows away', async () => {

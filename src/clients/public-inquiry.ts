@@ -3,6 +3,7 @@ import { auditEvent } from '../auth/guard';
 import type { Actor } from '../auth/permissions';
 import { HOUR, systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
+import { Prisma } from '../generated/prisma/client';
 import { Conflict } from '../errors';
 import { createInquiry, type ReferralSource } from './inquiry';
 
@@ -87,27 +88,25 @@ export const submitterKey = (address: string): string =>
  * enquiry is written so a submission that fails on its way to the database
  * still costs its author an attempt.
  *
- * ponytail: read-then-write, so two simultaneous requests can both see the same
- * count and let one extra through. For a form whose limit is three an hour that
- * is not worth a lock; if it ever matters, the fix is an atomic `increment` with
- * the window reset moved into SQL.
+ * One statement, because the first version was two. It read the row and then
+ * wrote it, and ten requests fired together all read an empty window and all ten
+ * got through a limit of three. `ON CONFLICT DO UPDATE` takes the row lock, so a
+ * burst queues on it and each request sees the count the one before it left. A
+ * refusal is the `WHERE` failing, which writes nothing and affects no row.
  */
 async function claimSlot(key: string, limit: number, clock: Clock): Promise<boolean> {
   const now = clock.now();
-  const row = await prisma.inquiryThrottle.findUnique({ where: { id: key } });
+  const spent = Prisma.sql`t."windowStartedAt" <= ${new Date(now.getTime() - HOUR)}`;
 
-  if (!row || row.windowStartedAt.getTime() + HOUR <= now.getTime()) {
-    await prisma.inquiryThrottle.upsert({
-      where: { id: key },
-      create: { id: key, count: 1, windowStartedAt: now },
-      update: { count: 1, windowStartedAt: now },
-    });
-    return true;
-  }
-
-  if (row.count >= limit) return false;
-  await prisma.inquiryThrottle.update({ where: { id: key }, data: { count: { increment: 1 } } });
-  return true;
+  const claimed = await prisma.$executeRaw`
+    INSERT INTO "InquiryThrottle" AS t (id, count, "windowStartedAt")
+    VALUES (${key}, 1, ${now})
+    ON CONFLICT (id) DO UPDATE SET
+      count = CASE WHEN ${spent} THEN 1 ELSE t.count + 1 END,
+      "windowStartedAt" = CASE WHEN ${spent} THEN EXCLUDED."windowStartedAt" ELSE t."windowStartedAt" END
+    WHERE ${spent} OR t.count < ${limit}
+  `;
+  return claimed === 1;
 }
 
 const trim = (v: string | null | undefined, max: number): string =>
