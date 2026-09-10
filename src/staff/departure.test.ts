@@ -7,9 +7,13 @@ import {
 } from '../notes/service';
 import type { Role } from '../auth/permissions';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
+import { getClient } from '../clients/repository';
+import { indiscreetTerms } from '../messaging/outbox';
+import { whenLong } from '../strings';
 import {
-  TRANSITIONS, assertTransition, canTransition, cancelDeparture, decideAssignment, departureBlockers,
-  executeDeparture, getDeparturePlan, ownDrafts, planDeparture, runProcessNotePurge, setReceivingSupervisor,
+  TRANSITIONS, abandonedNotesByDeparture, assertTransition, canTransition, cancelDeparture, decideAssignment,
+  departureBlockers, departureWorklist, executeDeparture, getDeparturePlan, ownDrafts, planDeparture,
+  previewProcessNotePurge, runProcessNotePurge, setReceivingSupervisor,
   type DepartureStatus,
 } from './departure';
 
@@ -875,5 +879,133 @@ describe('the decisions, and the screens that read them (Phase 4)', () => {
     expect(own?.daysLeft).toBe(10);
     expect(own?.drafts.map((d) => d.id)).toEqual([older.id, newer.id]);
     expect(await ownDrafts(actor(beth))).toBeNull();
+  });
+});
+
+describe('what the practice sees around a departure (Phase 5)', () => {
+  const unsigned = async (clientId: string, authorId: string, iso: string) => prisma.progressNote.create({
+    data: { appointmentId: (await book(clientId, authorId, iso, 'completed')).id, clientId, authorId, content: 'Unsigned.' },
+  });
+
+  it('puts every open plan on the work-list as counts, with no client in it, and asks a clinician nothing (P1-1)', async () => {
+    const { alex, beth, kept, ended, departure, decide } = await practice();
+    await book(kept.id, alex.id, '2026-10-06T14:00:00Z');
+    await book((await makeClient(beth.id)).id, beth.id, '2026-10-06T14:30:00Z');
+    await decide(kept.id, 'transfer', beth.id);
+    await unsigned(ended.id, alex.id, '2026-09-15T15:00:00Z');
+    const desk = await makeUser('front_desk');
+
+    // `toEqual` on the whole row is the assertion that no client id rides along.
+    expect(await departureWorklist(actor(desk), fixedClock('2026-09-20T15:00:00Z'))).toEqual([{
+      id: departure.id, name: 'Alex', lastDayOn: new Date('2026-09-30T00:00:00Z'), daysLeft: 10,
+      blocking: { undecided: 1, hour_clash: 1 }, unsignedNotes: 1,
+    }]);
+    await expect(departureWorklist(actor(beth))).rejects.toThrow(Forbidden);
+  });
+
+  it('marks a transferred record with who from, who to and when — for front desk, and only once it happened (P1-2)', async () => {
+    const { manager, beth, kept, ended, departure, decide } = await practice();
+    const desk = await makeUser('front_desk');
+    await decide(kept.id, 'transfer', beth.id);
+    await decide(ended.id, 'discharge');
+    expect((await getClient(actor(desk), kept.id)).departureAssignments).toEqual([]);
+
+    await executeDeparture(actor(manager), departure.id, EXECUTION);
+
+    const [marker, ...rest] = (await getClient(actor(desk), kept.id)).departureAssignments;
+    expect(rest).toEqual([]);
+    expect(marker).toMatchObject({ receivingClinician: { name: 'Beth' }, departure: { executedAt: EXECUTION.now(), user: { name: 'Alex' } } });
+    // Names and a date. No disposition, no reason, nothing else the plan decided.
+    expect(Object.keys(marker!).sort()).toEqual(['departure', 'id', 'receivingClinician']);
+    expect((await getClient(actor(desk), ended.id)).departureAssignments).toEqual([]);
+  });
+
+  it('tells a transferred client from which session, behind their own door — never who, never why (P1-3)', async () => {
+    const { manager, alex, beth, kept, ended, departure, decide } = await practice();
+    const spanish = await makeClient(alex.id, { language: 'es' });
+    const quiet = await makeClient(alex.id);
+    await prisma.client.update({ where: { id: quiet.id }, data: { reminderPreference: 'none' } });
+    const unbooked = await makeClient(alex.id);
+    const next = await book(kept.id, alex.id, '2026-10-06T14:00:00Z');
+    await book(kept.id, alex.id, '2026-10-13T14:00:00Z');
+    await book(spanish.id, alex.id, '2026-10-07T15:00:00Z');
+    await book(quiet.id, alex.id, '2026-10-08T15:00:00Z');
+    await book(ended.id, alex.id, '2026-10-09T15:00:00Z');
+    for (const c of [kept, spanish, quiet, unbooked]) await decide(c.id, 'transfer', beth.id);
+    await decide(ended.id, 'discharge');
+
+    await executeDeparture(actor(manager), departure.id, EXECUTION);
+
+    const sent = await prisma.outboxMessage.findMany({ where: { templateKey: 'clinician_changed' } });
+    // Not the discharge — ending a relationship is a conversation — not `none`,
+    // and not a client with nothing booked, who has no schedule to be told about.
+    expect(sent.map((m) => m.clientId).sort()).toEqual([kept.id, spanish.id].sort());
+    expect(await prisma.outboxMessage.count()).toBe(2);
+
+    const toKept = sent.find((m) => m.clientId === kept.id)!;
+    const door = await prisma.portalLink.findFirstOrThrow({ where: { clientId: kept.id } });
+    expect(toKept.body).toContain(`/p/${door.token}`);
+    expect(toKept.body).toContain(whenLong('en', next.startAt));
+    expect(toKept.scheduledFor).toEqual(EXECUTION.now());
+    expect(sent.find((m) => m.clientId === spanish.id)!.body).toMatch(/^A partir del miércoles 2026-10-07/);
+    for (const m of sent) {
+      expect(m.body).not.toMatch(/Beth|Alex/);
+      expect(indiscreetTerms(`${m.subject} ${m.body}`)).toEqual([]);
+    }
+    // `none` means none: not even a door minted for a message that will never go.
+    expect(await prisma.portalLink.count({ where: { clientId: quiet.id } })).toBe(0);
+  });
+
+  it('queues nothing for a departure that did not happen (P1-3)', async () => {
+    const { manager, alex, beth, kept, ended, departure, decide } = await practice();
+    // Decided first, so its message is already queued when the second transfer hits the constraint.
+    await book(ended.id, alex.id, '2026-10-05T14:00:00Z');
+    await decide(ended.id, 'transfer', beth.id);
+    await book(kept.id, alex.id, '2026-10-06T14:00:00Z');
+    await book((await makeClient(beth.id)).id, beth.id, '2026-10-06T14:30:00Z');
+    await decide(kept.id, 'transfer', beth.id);
+
+    await expect(executeDeparture(actor(manager), departure.id, EXECUTION)).rejects.toMatchObject({ code: 'hour_clash' });
+    expect(await prisma.outboxMessage.count()).toBe(0);
+    expect(await prisma.portalLink.count()).toBe(0);
+  });
+
+  it('counts the notes nobody signed, by departure, for the practice manager without breaking glass (P1-4)', async () => {
+    const { manager, alex, kept, ended, departure, decide } = await practice();
+    await unsigned(kept.id, alex.id, '2026-09-28T15:00:00Z');
+    await unsigned(ended.id, alex.id, '2026-09-29T15:00:00Z');
+    await decide(kept.id, 'discharge');
+    await decide(ended.id, 'discharge');
+    expect(await abandonedNotesByDeparture(actor(manager))).toEqual([]);
+
+    await executeDeparture(actor(manager), departure.id, EXECUTION);
+
+    expect(await abandonedNotesByDeparture(actor(manager))).toEqual([
+      { id: departure.id, name: 'Alex', lastDayOn: new Date('2026-09-30T00:00:00Z'), abandoned: 2 },
+    ]);
+  });
+
+  it('previews what the sweep will destroy and from when, as counts, and agrees with the sweep (P1-5)', async () => {
+    await resetDb();
+    await settings();
+    const { leaver, manager, departure } = await departed();
+    const client = await makeClient(leaver.id);
+    await processNoteOf(leaver.id, client.id, T0);
+    await processNoteOf(leaver.id, client.id, T0);
+    const days = (await prisma.practiceSettings.findUniqueOrThrow({ where: { id: 1 } })).processNoteAfterDepartureDays;
+    const due = new Date(T0.getTime() + days * DAY);
+    const dayBefore = fixedClock(new Date(due.getTime() - DAY));
+
+    // Whole-row equality: no client and no content in the preview.
+    expect(await previewProcessNotePurge(actor(manager), dayBefore)).toEqual([
+      { departureId: departure.id, name: leaver.name, notes: 2, dueNow: 0, destroyedFrom: due },
+    ]);
+    expect(await runProcessNotePurge(dayBefore)).toEqual([]);
+
+    expect((await previewProcessNotePurge(actor(manager), fixedClock(due)))[0]).toMatchObject({ dueNow: 2 });
+    expect(await runProcessNotePurge(fixedClock(due))).toHaveLength(2);
+    expect(await previewProcessNotePurge(actor(manager), fixedClock(due))).toEqual([]);
+
+    await expect(previewProcessNotePurge(actor(leaver))).rejects.toThrow(Forbidden);
   });
 });

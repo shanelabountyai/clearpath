@@ -2801,8 +2801,6 @@ already ran, so neither costs a request.
 
 ### What it deliberately does not do
 
-- **P1.** No departure work-list, continuity marker, outbound message, abandoned
-  note count or purge preview. Phase 5.
 - **Validate the receiving supervisor at notice.** `setReceivingSupervisor`
   refuses a receiver who could not co-sign; `planDeparture` still takes one
   unchecked, the form only offers supervisors, and the blocker scan catches a
@@ -2812,6 +2810,83 @@ already ran, so neither costs a request.
   in `afterAll` as well as in the last test.
 - **Refuse a disposition outside the enum politely.** A hand-rolled POST with
   one is a Prisma error, as it is on the enquiry form.
+
+## 33. What the practice sees around a departure
+
+Phase 4 built the plan screen. Phase 5 is the P1 list: five small surfaces around
+the plan, each one a read, plus one write inside the transaction. Most of it is
+rendering. The work was deciding what each surface may say, and the answer was
+nearly always a count.
+
+### The work-list that is not a second plan screen
+
+P1-1 asked for one screen that answers "is this departure ready?", and the plan
+screen already does that. So `departureWorklist` is a section on `/worklists`:
+each open notice, soonest last day first, with the blockers counted by kind, the
+leaver's unsigned notes, the days left, and a link to the plan. It runs the same
+`blockersOf` the plan uses, so the two cannot disagree, and it returns no client
+id at all. The test asserts the whole row with `toEqual`, so a client id added
+later fails it (D-28, which is D-25 applied to the whole list). Unsigned notes
+sit beside the blockers rather than among them. They never stop an execution;
+they become notes nobody may sign, so the countdown is what matters. The page
+asks `may` before reading, because a clinician's `self` cell would otherwise
+write a denial row on every visit.
+
+### The message that does not say who
+
+P1-3's example body read *"From 1 October your appointments are with Beth
+Okoro."* No client message in this codebase names a clinician, and for a reason
+the deny-list cannot enforce: a therapist's full name is one search away from
+what kind of practice this is, and the practice has a separate messaging name
+precisely so that a lock screen does not say that. The portal already shows who
+each session is with, behind the client's own link. So `clinician_changed` says
+the date of the first session that moved, that the day and time stay the same,
+and links to the portal (D-27). The name is one tap away, and never in the body.
+
+It is queued inside `executeDeparture`, never sent there. It commits with the
+transfer or rolls back with it, and the test that proves this decides a clean
+transfer before the clashing one, so a message is already queued when the
+constraint refuses. Moved into its own transaction as a mutation, that test goes
+red. Three clients get nothing:
+
+- **`reminderPreference = 'none'`.** Not even a portal link is minted for them,
+  because a door created for a message that will never go is a live token nobody
+  asked for (mutation-checked).
+- **A transferred client with nothing booked.** There is no schedule to tell
+  them about, and a message about a change with no date is a message about the
+  change itself.
+- **Discharged and referred-out clients.** Their sessions are cancelled and
+  nothing is sent. Learning from a text that a therapeutic relationship has
+  ended is exactly what the PRD's scope note says software must not do.
+
+### The marker, and the count, and the preview
+
+- **P1-2.** `getClient` carries the executed transfers: from, to, and the date,
+  under the same `client.read` and the same audit row as the rest of the
+  demographics. The key set is asserted, so no disposition or reason reaches
+  front desk. A plan that has not executed marks nothing (mutation-checked).
+- **P1-4.** `abandonedNotesByDeparture` is a count per executed departure on the
+  practice report, zeros included, on `departure.read`. The practice manager holds
+  `progress_note.read` only under break-glass, and a number about a colleague
+  leaving is not a read of anybody's record.
+- **P1-5.** `previewProcessNotePurge` sits on `/practice` under the setting it
+  depends on. For each departure it gives a count, how many the next run takes,
+  and the date the rest go. It names no client: the only person who could say
+  which clients they wrote privately about has left, and the preview should not
+  say it for them (D-29). It reads the window through the same helper as
+  `runProcessNotePurge` and keys on `authorId` the same way. The test runs the
+  preview and the sweep on the day before and the day of, and they agree.
+
+### What it deliberately does not do
+
+- **Name the clinician in a client message.** D-27, above.
+- **Message discharged clients.** Their cancelled sessions are a phone call.
+- **Filter the abandoned-note count by the report's dates.** A departure is rare
+  and the number is cumulative. The caption says so.
+- **Seed a departure.** Still owed to the capstone demo, and still blocked on the
+  seed being shared by every e2e spec.
+- **Carry a real base URL into the link.** Every queued link in this codebase uses
+  the stub's `localhost:3700`, because nothing sends.
 
 ## Decisions log
 
@@ -3000,6 +3075,9 @@ already ran, so neither costs a request.
 | Plan names ride on `departure.read`, not `client.read` (D-24) | Admin's client read is break-glass; P0-3 already put a client list at the demographic tier in this cell. Names and codes only, asserted by key set |
 | The unread-alert blocker is a count, never a client (D-25) | Front desk reads plans, and an unread risk alert on a named client belongs to one clinician. The fix is the leaver reading it, which needs no name |
 | A decision is refused at the door; execution moves only who is still on the caseload (D-26) | Phase 3 repointed whatever it was handed, so a client reassigned during the thirty days would have been taken back on the last day |
+| The transfer message links to the portal and never names the clinician (D-27) | A therapist's full name is searchable and the deny-list cannot catch a name; the portal already shows it behind the client's own link |
+| The departure work-list is counts and a link, not a second readiness screen (D-28) | The plan screen already answers readiness and is the one place clients are named; counts keep a shared page from naming anybody |
+| The process-note purge preview names departures, never clients (D-29) | Which clients a departed clinician wrote privately about is something only that clinician could have said |
 | A form field in a page never takes the id `userId` | The dev switcher in the sidebar owns it on every staff page. The duplicate pointed "Who is leaving" at the identity switcher, and only a spec selecting by label noticed |
 | Refusals travel back as a `Conflict` code, never its message | The code is the page's whole vocabulary, and a URL is no place for anything a person typed or a record holds |
 | The receiving supervisor is checked with `may(… 'cosign' …)`, not a role | The first draft compared `role === 'supervisor'` and hard rule 1's grep failed the build. The matrix is the only place that knows who can co-sign |

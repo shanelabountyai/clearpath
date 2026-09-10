@@ -1,62 +1,53 @@
 # Next
 
-**Item:** Phase 5 of the departure PRD — P1. P1-1 the departure work-list,
-P1-2 the continuity marker on the client record, P1-3 the scheduling message,
-P1-4 the abandoned-note count on the practice report, P1-5 the process-note
-purge preview. Sonnet for P1-1/P1-4/P1-5 (reads and rendering); Opus for P1-3,
-because it sends an outbound message off a clinical event and hard rule 3's
-deny-list is the whole risk.
+**Item:** the departure PRD's capstone demo — a seeded departure. It is the one
+thing the PRD still owes: a therapist with 15 clients, 3 receivers, 2
+discharges, 1 referred out, 4 drafts, 2 unread alerts, 1 planted hour clash
+(Success Metrics → Lagging). Sonnet fits: seed data and one e2e walkthrough.
+If you'd rather leave the demo, pick from the loose threads below.
 
-## What just landed (Phase 4)
+## What just landed (Phase 5, P1)
 
-- **`src/staff/departure.ts`:** `decideAssignment`, `setReceivingSupervisor`
-  (both `departure.update`, one audit row each), `listDepartures`,
-  `getDeparturePlan`, `ownDrafts`. `planDeparture` maps P2002 →
-  `Conflict('already_departing')` and refuses a past last day.
-- **Bug fixed from Phase 3:** execution and the blocker scan read assignments
-  through the *live* caseload. A client reassigned during the notice period is
-  no longer taken back on the last day. Mutation-checked.
-- **Screens:** `/departures` (list + record notice), `/departures/[id]` (plan,
-  decisions, blockers, execute, withdraw, the leaver's own drafts). Nav link on
-  `departure.read`. Departing marker in the person picker; a strip for the
-  leaver on every page. `processNoteAfterDepartureDays` on `/practice`.
-- PRD D-24 … D-26; WRITEUP §32; Phase 4 marked landed.
+- **P1-1** `departureWorklist`: a "Somebody is leaving" section on `/worklists`.
+  Counts by blocker kind, the leaver's unsigned notes, days left, a link to the
+  plan. No client id leaves the function (D-28). The page asks `may` first.
+- **P1-2** `getClient` carries executed transfers (from, to, date). The page
+  subtitle renders them. The key set is asserted.
+- **P1-3** `clinician_changed` (en/es), queued inside `executeDeparture`. The
+  body gives the first moved session's date and a portal link, **never the
+  clinician's name** (D-27, your call). Nothing is sent for `none` (no link is
+  minted either), for a client with nothing booked, or for a discharge or
+  referral. Assignments now execute in `decidedAt` order.
+- **P1-4** `abandonedNotesByDeparture` on `/reports`, all-time, zeros included.
+- **P1-5** `previewProcessNotePurge` on `/practice`, per departure, no clients
+  (D-29). It shares `processNoteWindowDays` with the sweep.
+- PRD D-27 … D-29, Phase 5 marked landed. WRITEUP §33.
 
-## What Phase 5 must know
+## What the demo must know
 
-1. **The plan screen already answers most of P1-1.** Don't build a second
-   readiness screen; a `/worklists` section linking to open plans is likely
-   enough. Decide that first.
-2. **Names on a departure ride on `departure.read` (D-24); the unread-alert
-   blocker is a count only (D-25).** P1-2's marker lives on the client record,
-   under `client.read` — names and a date, no reason.
-3. **P1-3 fires from `executeDeparture`**, which is one 30s transaction with a
-   `ponytail:` budget. Queue into `OutboxMessage` inside it; never send inside it.
-4. **`e2e/departure.spec.ts` uses Tom Bergqvist** and withdraws in `afterAll`.
-   The capstone demo still needs a seeded departure, and the seed is shared by
-   every spec.
-5. Next's route announcer is a `role="alert"`. Filter alert locators by text.
+1. The seed is shared by every e2e spec. `departure.spec.ts` uses Tom Bergqvist
+   and withdraws in `afterAll`. A seeded *executed* departure deactivates its
+   leaver, so pick somebody no spec logs in as.
+2. A seeded **planned** departure makes the `/worklists` section appear for
+   every spec that visits that page. Filter locators by heading text.
+3. Next's route announcer is `role="alert"`. Filter alert locators by text.
 
 ## Gate
 
-**Green at this commit.** Unit **2914/2914** (28 files), typecheck clean. e2e
-**49 passed + 1 skipped = 50**, against the production build. No lint script.
-`npm run db:status` green on all three local databases.
-
-Two e2e runs failed on the way, both for real reasons and both fixed: a
-duplicate `id="userId"` pointed a label at the dev switcher, and the refusal
-locator also matched Next's route announcer.
+**Green at this commit.** Unit **2920/2920** (28 files, 6 new), typecheck clean.
+e2e **49 passed + 1 skipped = 50**, against the production build. The P1-2 and
+P1-3 tests were mutation-checked: queue outside the transaction, drop the
+`none` guard, mark before execution. Each one went red.
 
 ## Loose threads
 
-1. **The kill-on-alarm pattern missed the runner.** `pkill -f "$PWD.*playwright test "`
-   matched nothing — the runner's command line does not carry the project path —
-   so only the server died and the rest of the sweep failed at ~100ms each.
-   `pkill -f "playwright test"` works but is not scoped to this project; the
-   global convention's recipe needs a scoped form that actually matches.
-2. Public form's throttle read-then-write race. `ponytail:` comment.
-3. A clinician on *leave* (not departing) — still P2.
+1. **Kill-on-alarm pattern.** `pkill -f "$PWD.*playwright test "` matches
+   nothing, because the runner's command line has no project path. The global
+   recipe needs a scoped form that matches. Not hit this session.
+2. Public form's throttle read-then-write race (`ponytail:` comment).
+3. A clinician on *leave* (not departing) is still P2.
 4. Design brief §5b/§5c components with no picture. Still inventory.
-5. Load average was 29–45 from other work all session. Check `uptime` before
-   reading a stack trace.
-6. `executeDeparture`'s `ponytail:` 30s transaction budget.
+5. `executeDeparture`'s `ponytail:` 30s transaction budget. P1-3 adds about 4
+   queries per transferred client with a booked session.
+6. Queued links use the stub's `http://localhost:3700`, like every other
+   message. A real base URL is owed when anything actually sends.

@@ -63,7 +63,7 @@ describe('the discretion lint', () => {
 });
 
 describe('a language is templates and a deny-list, or it is not a language', () => {
-  it('gives every language both halves, and all six bodies', () => {
+  it('gives every language both halves, and every body', () => {
     for (const language of LANGUAGES) {
       expect(DENY_LISTS[language].length, language).toBeGreaterThan(20);
       expect(Object.keys(CLIENT_TEMPLATES[language]).sort(), language)

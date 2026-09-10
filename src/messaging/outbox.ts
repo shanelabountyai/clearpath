@@ -1,6 +1,6 @@
 import { prisma, type Tx } from '../db';
 import { systemClock } from '../clock';
-import { LANGUAGES, whenLabel as localizedWhen, type Language } from '../strings';
+import { LANGUAGES, whenLabel as localizedWhen, whenLong, type Language } from '../strings';
 
 /**
  * Everything the practice sends a client, and the rule that governs it.
@@ -135,7 +135,8 @@ export type TemplateKey =
   | 'form_request'
   | 'portal_link'
   | 'appointment_cancelled'
-  | 'inbound_unparsed_reply';
+  | 'inbound_unparsed_reply'
+  | 'clinician_changed';
 
 type Build = (c: ClientMessageContext) => { subject?: string; body: string };
 
@@ -147,8 +148,8 @@ const whenLabel = (language: Language, startAt: Date | undefined, fallback: stri
  * lint-gated on send.
  *
  * `Record<Language, Record<TemplateKey, Build>>` is the whole enforcement
- * mechanism: a new language does not compile until it answers for all six
- * bodies, and it does not pass its tests until `DENY_LISTS` answers for it too.
+ * mechanism: a new language does not compile until it answers for every
+ * body, and it does not pass its tests until `DENY_LISTS` answers for it too.
  */
 export const CLIENT_TEMPLATES: Record<Language, Record<TemplateKey, Build>> = {
   en: {
@@ -201,6 +202,21 @@ export const CLIENT_TEMPLATES: Record<Language, Record<TemplateKey, Build>> = {
       subject: 'We got your message',
       body: `${practice} received your message, but this number is not monitored for replies. Please call us on ${phone} and we will pick it up from there. If you need urgent help right now, call or text 988, or call 911.`,
     }),
+    /**
+     * P1-3: a transferred client's sessions are with somebody new (D-27).
+     *
+     * The date, and that nothing else about the hour changes — and not the
+     * name. A clinician's full name is one search away from what kind of
+     * practice this is, the deny-list cannot catch a name, and a lock screen is
+     * exactly where the messaging name exists to keep that from landing. The
+     * portal already shows who each session is with, behind the client's own
+     * door, so that is where the name stays. And never why: telling somebody
+     * the person they see is leaving is a conversation, not a text.
+     */
+    clinician_changed: ({ practice, startAt, link }) => ({
+      subject: 'Your appointments',
+      body: `From ${startAt ? whenLong('en', startAt) : 'the day of your next appointment'}, your appointments at ${practice} are with someone new, on the same day and at the same time. See who: ${link}. The link is personal to you — please do not forward it.`,
+    }),
   },
   es: {
     appointment_reminder: ({ practice, startAt, link }) => ({
@@ -232,6 +248,10 @@ export const CLIENT_TEMPLATES: Record<Language, Record<TemplateKey, Build>> = {
     inbound_unparsed_reply: ({ practice, phone }) => ({
       subject: 'Recibimos su mensaje',
       body: `${practice} recibió su mensaje, pero este número no se revisa para respuestas. Por favor llámenos al ${phone} y lo atenderemos desde ahí. Si necesita ayuda urgente ahora mismo, llame o envíe un mensaje de texto al 988, o llame al 911.`,
+    }),
+    clinician_changed: ({ practice, startAt, link }) => ({
+      subject: 'Sus citas',
+      body: `A partir del ${startAt ? whenLong('es', startAt) : 'día de su próxima cita'}, sus citas en ${practice} serán con otra persona, el mismo día y a la misma hora. Vea con quién: ${link}. El enlace es personal — por favor no lo reenvíe.`,
     }),
   },
 };

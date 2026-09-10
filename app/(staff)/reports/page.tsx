@@ -5,6 +5,8 @@ import { addDays, localDateOf } from '../../../src/time';
 import { Card, money, PageHeader } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
 import { withDenial } from '@/src/ui/denied';
+import { abandonedNotesByDeparture } from '@/src/staff/departure';
+import { dayLabel } from '../departures/ui';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,11 +18,12 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
   const to = q.to ?? localDateOf(systemClock.now());
   const from = q.from ?? addDays(to, -90);
 
-  const [report, weeks, confirmations, referrals] = await Promise.all([
+  const [report, weeks, confirmations, referrals, abandoned] = await Promise.all([
     utilizationReport(actor, { from, to }),
     weeklyVolume(actor, { from, to }),
     confirmationReport(actor, { from, to }),
     referralReport(actor, { from, to }),
+    abandonedNotesByDeparture(actor),
   ]);
 
   const maxWeekly = Math.max(1, ...weeks.map((w) => w.sessions));
@@ -303,6 +306,28 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
                 ))}
               </ul>
             </div>
+          )}
+        </Card>
+
+        <Card>
+          <h2 className="mb-1 font-semibold">Notes nobody signed</h2>
+          <p className="mb-3 max-w-prose text-caption text-subtle">
+            Sessions whose clinician left before signing the note, by departure, whatever the
+            dates above. Nobody else may sign them, so each is a permanent gap in a client&rsquo;s
+            record &mdash; and this number is how the practice finds out whether showing a
+            leaver their unsigned notes is working.
+          </p>
+          {abandoned.length === 0 ? (
+            <p className="text-body text-muted">Nobody has left.</p>
+          ) : (
+            <ul className="space-y-1 text-body">
+              {abandoned.map((d) => (
+                <li key={d.id} className="flex items-baseline justify-between gap-2">
+                  <span className="text-muted">{d.name}, last day {dayLabel(d.lastDayOn)}</span>
+                  <span className="font-mono text-caption">{d.abandoned}</span>
+                </li>
+              ))}
+            </ul>
           )}
         </Card>
       </div>

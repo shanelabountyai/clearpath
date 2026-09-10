@@ -4,6 +4,8 @@ import type { Actor, Role } from '../auth/permissions';
 import { DAY, systemClock, type Clock } from '../clock';
 import { prisma, type Tx } from '../db';
 import { Conflict, NotFound } from '../errors';
+import { queueToClient } from '../messaging/outbox';
+import { ensurePortalLink } from '../portal/service';
 import { conflictKind } from '../scheduling/booking';
 import { TRANSITIONS as SESSION_TRANSITIONS, type Status as SessionStatus } from '../scheduling/lifecycle';
 import { SYSTEM_ACTOR } from '../scheduling/reminders';
@@ -47,6 +49,11 @@ export function assertTransition(from: DepartureStatus, to: DepartureStatus): vo
   }
 }
 
+/** The destruction window, read in one place so the sweep and its preview cannot disagree. */
+const processNoteWindowDays = async () =>
+  (await prisma.practiceSettings.findUnique({ where: { id: 1 }, select: { processNoteAfterDepartureDays: true } }))
+    ?.processNoteAfterDepartureDays ?? 2555;
+
 /**
  * P0-10: destroy the process notes of a clinician who left, once the window
  * has passed.
@@ -75,10 +82,7 @@ export function assertTransition(from: DepartureStatus, to: DepartureStatus): vo
  * carrying ids and a reason code and nothing else.
  */
 export async function runProcessNotePurge(clock: Clock = systemClock): Promise<string[]> {
-  const settings = await prisma.practiceSettings.findUnique({ where: { id: 1 } });
-  const cutoff = new Date(
-    clock.now().getTime() - (settings?.processNoteAfterDepartureDays ?? 2555) * DAY,
-  );
+  const cutoff = new Date(clock.now().getTime() - (await processNoteWindowDays()) * DAY);
 
   const departures = await prisma.departure.findMany({
     where: { status: 'executed' },
@@ -114,6 +118,48 @@ export async function runProcessNotePurge(clock: Clock = systemClock): Promise<s
     }
   }
   return destroyed;
+}
+
+/**
+ * P1-5: what the sweep will destroy and when, before it fires — the intake
+ * PRD's P1-4, for the most sensitive table in the schema.
+ *
+ * Counts and dates per departure, never a client and never a line of content.
+ * The only person who could read these notes has left, and a preview listing
+ * which clients they wrote privately about would tell the practice manager
+ * something the author never did. On `departure.read`, because no cell anywhere
+ * lets anybody but the author near a process note, and this reads a
+ * departure's consequences rather than the notes (D-29). Same window and the
+ * same author-keyed query as `runProcessNotePurge`, so the two cannot disagree
+ * about what is due.
+ */
+export async function previewProcessNotePurge(actor: Actor, clock: Clock = systemClock) {
+  const days = await processNoteWindowDays();
+  const cutoff = new Date(clock.now().getTime() - days * DAY);
+
+  return guarded({ actor, action: 'read', resource: 'departure' }, async (tx) => {
+    const departures = await tx.departure.findMany({
+      where: { status: 'executed' },
+      select: { id: true, userId: true, user: { select: { name: true } } },
+      orderBy: { executedAt: 'asc' },
+    });
+    const rows = await Promise.all(departures.map(async (d) => {
+      const [held, dueNow] = await Promise.all([
+        tx.processNote.aggregate({
+          where: { authorId: d.userId, unreachableSince: { not: null } },
+          _count: true,
+          _min: { unreachableSince: true },
+        }),
+        tx.processNote.count({ where: { authorId: d.userId, unreachableSince: { lte: cutoff } } }),
+      ]);
+      const since = held._min.unreachableSince;
+      return {
+        departureId: d.id, name: d.user.name, notes: held._count, dueNow,
+        destroyedFrom: since && new Date(since.getTime() + days * DAY),
+      };
+    }));
+    return rows.filter((r) => r.notes > 0);
+  });
 }
 
 // ─────────────────── who a plan may name (hard rule 1) ───────────────────
@@ -485,6 +531,61 @@ export async function listDepartures(actor: Actor) {
     }));
 }
 
+/**
+ * P1-1: the open plans, and what still stands between each one and its last
+ * day — the line on the work-lists page that says which plan to open.
+ *
+ * Not a second readiness screen. The plan screen is that, and it is where
+ * clients are named; this returns counts, so no client id leaves the function
+ * and nothing on a shared page can name one (D-25, applied to the whole list).
+ * Unsigned notes are counted beside the blockers rather than among them: they
+ * never stop an execution, they become notes nobody may sign (P0-4b), and the
+ * days left are the point (D-28).
+ */
+export async function departureWorklist(actor: Actor, clock: Clock = systemClock) {
+  const today = localDateOf(clock.now());
+  return guarded({ actor, action: 'read', resource: 'departure' }, async (tx) => {
+    const open = await tx.departure.findMany({
+      where: { status: 'planned' },
+      select: { ...DEPARTURE_ROW, user: { select: { name: true } } },
+      orderBy: { lastDayOn: 'asc' },
+    });
+    return Promise.all(open.map(async (d) => {
+      const [blockers, unsignedNotes] = await Promise.all([
+        blockersOf(tx, d),
+        tx.progressNote.count({ where: { authorId: d.userId, status: 'draft' } }),
+      ]);
+      const blocking: Partial<Record<DepartureBlocker['kind'], number>> = {};
+      for (const b of blockers) blocking[b.kind] = (blocking[b.kind] ?? 0) + 1;
+      return {
+        id: d.id, name: d.user.name, lastDayOn: d.lastDayOn,
+        daysLeft: daysBetween(today, d.lastDayOn.toISOString().slice(0, 10)),
+        blocking, unsignedNotes,
+      };
+    }));
+  });
+}
+
+/**
+ * P1-4: how many sessions each departure left with no signed note.
+ *
+ * The only honest measure of whether showing a leaver their drafts (P0-4a)
+ * works, and a practice that cannot see the number will not fix it. A count by
+ * departure on `departure.read`: the practice manager holds `progress_note.read`
+ * only under break-glass, and a number about a colleague leaving is not a read
+ * of anybody's record. Departures that left none are listed too — zero is the
+ * result worth seeing.
+ */
+export async function abandonedNotesByDeparture(actor: Actor) {
+  const rows = await guarded({ actor, action: 'read', resource: 'departure' }, (tx) =>
+    tx.departure.findMany({
+      where: { status: 'executed' },
+      select: { id: true, lastDayOn: true, user: { select: { name: true } }, _count: { select: { abandoned: true } } },
+      orderBy: { lastDayOn: 'desc' },
+    }));
+  return rows.map((d) => ({ id: d.id, name: d.user.name, lastDayOn: d.lastDayOn, abandoned: d._count.abandoned }));
+}
+
 const CLIENT_NAME = { id: true, code: true, firstName: true, lastName: true } as const;
 
 /**
@@ -639,7 +740,12 @@ export async function executeDeparture(actor: Actor, departureId: string, clock:
         // take the client from their new clinician; skipping it takes nothing.
         const assignments = await tx.departureAssignment.findMany({
           where: { departureId: d.id, client: caseloadOf(d.userId) },
-          select: { clientId: true, disposition: true, receivingClinicianId: true },
+          select: {
+            clientId: true, disposition: true, receivingClinicianId: true,
+            client: { select: { reminderPreference: true } },
+          },
+          // In the order they were decided, so the audit rows read the way the plan was made.
+          orderBy: { decidedAt: 'asc' },
         });
 
         for (const a of assignments) {
@@ -647,6 +753,9 @@ export async function executeDeparture(actor: Actor, departureId: string, clock:
           const receiver = a.receivingClinicianId;
 
           if (receiver) {
+            const firstMoved = await tx.appointment.findFirst({
+              where: future, orderBy: { startAt: 'asc' }, select: { startAt: true },
+            });
             await tx.client.update({ where: { id: a.clientId }, data: { treatingClinicianId: receiver } });
             // The write the exclusion constraint may refuse — after the client
             // row on purpose, so a clash proves the rollback rather than
@@ -656,6 +765,17 @@ export async function executeDeparture(actor: Actor, departureId: string, clock:
               where: { clientId: a.clientId, clinicianId: d.userId, active: true },
               data: { clinicianId: receiver },
             });
+            // P1-3. Queued, never sent, so it commits or rolls back with the
+            // move it describes. Only a client with a session that moved has a
+            // schedule to be told about, and `none` means none — not even a
+            // door minted for a message that will never go (D-27).
+            if (firstMoved && a.client.reminderPreference !== 'none') {
+              const door = await ensurePortalLink(a.clientId, clock, tx);
+              await queueToClient({
+                clientId: a.clientId, templateKey: 'clinician_changed', scheduledFor: now,
+                startAt: firstMoved.startAt, link: `http://localhost:3700/p/${door.token}`,
+              }, tx);
+            }
           } else {
             await tx.client.update({ where: { id: a.clientId }, data: { status: 'inactive' } });
             await tx.appointment.updateMany({

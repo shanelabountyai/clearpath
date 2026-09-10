@@ -73,6 +73,18 @@ export async function getClient(actor: Actor, clientId: string) {
         select: {
           ...DEMOGRAPHICS,
           treatingClinician: { select: { id: true, name: true, role: true, supervisorId: true } },
+          // P1-2: who this client was transferred from and to, and when. Names
+          // and a date at the demographic tier, so front desk can answer the
+          // phone — never the disposition, and nothing else a plan decided.
+          departureAssignments: {
+            where: { disposition: 'transfer', departure: { status: 'executed' } },
+            select: {
+              id: true,
+              receivingClinician: { select: { name: true } },
+              departure: { select: { executedAt: true, user: { select: { name: true } } } },
+            },
+            orderBy: { departure: { executedAt: 'desc' } },
+          },
         },
       });
       return { ...client, consents: await consentStatus(clientId) };

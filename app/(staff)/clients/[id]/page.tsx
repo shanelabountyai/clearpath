@@ -90,6 +90,12 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
           <>
             <span className="font-mono">{client.code}</span> · treating clinician{' '}
             {client.treatingClinician.name}
+            {client.departureAssignments.map((t) => (
+              <span key={t.id} className="block">
+                Transferred from {t.departure.user.name} to {t.receivingClinician?.name},{' '}
+                {localDateOf(t.departure.executedAt!)}
+              </span>
+            ))}
           </>
         }
       />

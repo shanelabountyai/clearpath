@@ -9,6 +9,9 @@ import { localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/t
 import { Badge, Card, CONFIRMATION_META, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
 import { withDenial } from '@/src/ui/denied';
+import { may } from '@/src/auth/guard';
+import { departureWorklist } from '@/src/staff/departure';
+import { dayLabel, plural } from '../departures/ui';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,6 +42,9 @@ async function WorkListsPage() {
   const openings = await waitlistOpenings(actor).catch(() => []);
   const rescheduleAsks = await openRescheduleRequests(actor).catch(() => []);
   const wroteBack = await openInboundReplies(actor).catch(() => []);
+  // Asked rather than caught: a clinician's `self` cell would refuse this read on
+  // every visit, and a denial on the record per page load buries the real ones.
+  const leaving = may({ actor, action: 'read', resource: 'departure' }) ? await departureWorklist(actor) : [];
 
   return (
     <>
@@ -88,6 +94,49 @@ async function WorkListsPage() {
             </Card>
           )}
         </section>
+
+        {leaving.length > 0 && (
+          <section>
+            <h2 className="mb-2 text-subhead font-semibold">Somebody is leaving</h2>
+            <p className="mb-3 max-w-prose text-body text-muted">
+              Every notice still running, soonest last day first, with what stands between the
+              plan and that day. Counts only: the plan is where clients are named and where each
+              item gets fixed. Unsigned notes do not stop a departure &mdash; they become notes
+              nobody may ever sign, so the days left are the point.
+            </p>
+            <Card className="p-0">
+              <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                {leaving.map((d) => {
+                  const b = d.blocking;
+                  const items = [
+                    b.undecided && `${plural(b.undecided, 'client')} undecided`,
+                    b.receiver_unavailable && `${plural(b.receiver_unavailable, 'transfer')} nobody can take`,
+                    b.hour_clash && `${plural(b.hour_clash, 'session')} clashing`,
+                    b.unread_alert && plural(b.unread_alert, 'unread alert'),
+                    b.supervisee_unassigned && `${plural(b.supervisee_unassigned, 'associate')} unsupervised`,
+                  ].filter((x): x is string => !!x);
+                  return (
+                    <li key={d.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body">
+                      <span>
+                        <Link href={`/departures/${d.id}`} className="font-medium text-accent hover:underline">{d.name}</Link>
+                        <span className="ml-2 text-muted">
+                          last day {dayLabel(d.lastDayOn)} ·{' '}
+                          {d.daysLeft < 0 ? 'passed' : d.daysLeft === 0 ? 'today' : `${plural(d.daysLeft, 'day')} left`}
+                        </span>
+                      </span>
+                      <span className="flex flex-wrap items-center gap-2">
+                        {items.length === 0
+                          ? <Badge tone="success" glyph="✓">ready to execute</Badge>
+                          : items.map((i) => <Badge key={i} tone="danger" glyph="!">{i}</Badge>)}
+                        {d.unsignedNotes > 0 && <Badge tone="warning">{plural(d.unsignedNotes, 'unsigned note')}</Badge>}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
+          </section>
+        )}
 
         <section>
           <h2 className="mb-2 text-subhead font-semibold">Clients who wrote back — call them</h2>

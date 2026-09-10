@@ -4,6 +4,9 @@ import { guarded } from '../../../src/auth/guard';
 import { Badge, Card, Field, PageHeader, money } from '../../../src/ui/primitives';
 import { ROLE_LABEL } from '../../../src/ui/shell';
 import { withDenial } from '@/src/ui/denied';
+import { previewProcessNotePurge } from '@/src/staff/departure';
+import { localDateOf } from '@/src/time';
+import { plural } from '../departures/ui';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +31,7 @@ async function PracticePage() {
   );
 
   const supervisors = data.users.filter((u) => u.supervisees.length > 0);
+  const sweep = await previewProcessNotePurge(actor);
 
   return (
     <>
@@ -173,6 +177,20 @@ async function PracticePage() {
                 one.</strong> The default is long on purpose: a window that turns out too long can
                 be shortened, and one that turns out too short cannot be undone.
               </p>
+              {/* P1-5: the window, made visible before it fires. Counts and a
+                  date per departure — never which clients the notes were about. */}
+              {sweep.length > 0 && (
+                <ul aria-label="What the process-note sweep will destroy" className="mt-2 space-y-1 text-caption">
+                  {sweep.map((s) => (
+                    <li key={s.departureId}>
+                      <span className="font-medium">{s.name}</span>: {plural(s.notes, 'process note')},{' '}
+                      {s.dueNow > 0
+                        ? <strong>{s.dueNow} destroyed on the next run</strong>
+                        : <>destroyed from {localDateOf(s.destroyedFrom!)}</>}
+                    </li>
+                  ))}
+                </ul>
+              )}
               {/* The kill switch, said out loud on the page that holds it. A
                   practice being flooded should not have to find an engineer. */}
               <p className="mt-3 text-caption text-subtle">
