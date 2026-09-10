@@ -140,6 +140,9 @@ async function PracticePage() {
                 <Field label="Referred-out retention">
                   {data.settings.referredOutRetentionDays} days &mdash; a record the practice acted, not a dead lead
                 </Field>
+                <Field label="Process notes after a departure">
+                  {data.settings.processNoteAfterDepartureDays} days &mdash; then destroyed
+                </Field>
                 <Field label="Public enquiry form">
                   {data.settings.publicInquiryEnabled
                     ? <Badge tone="success">Open &mdash; /enquire accepts enquiries</Badge>
@@ -158,6 +161,17 @@ async function PracticePage() {
                 not an engineering one.</strong> The default here is a placeholder chosen so
                 the sweep has something to run against; a real practice sets it from its own
                 retention obligations, and this software cannot give it that advice.
+              </p>
+              {/* The same honesty, about the most sensitive table in the schema.
+                  P0-10 asks for this sentence on the page that holds the number. */}
+              <p className="mt-3 text-caption text-subtle">
+                A process note has one reader, the clinician who wrote it. When that clinician
+                leaves it has none, and it is kept {data.settings.processNoteAfterDepartureDays} days
+                before it is destroyed &mdash; in some places those notes are the clinician&rsquo;s
+                own record if a complaint arrives years later.{' '}
+                <strong>How long is a professional and jurisdictional question, not an engineering
+                one.</strong> The default is long on purpose: a window that turns out too long can
+                be shortened, and one that turns out too short cannot be undone.
               </p>
               {/* The kill switch, said out loud on the page that holds it. A
                   practice being flooded should not have to find an engineer. */}

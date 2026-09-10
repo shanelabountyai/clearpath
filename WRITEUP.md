@@ -2741,6 +2741,78 @@ reason for making it.
   `ponytail:` comment names `createMany` as the upgrade if a real caseload
   ever gets near that.
 
+## 32. The screen, and what it may say
+
+Phase 3 wrote the transaction and left three things for the screen: nothing
+wrote a decision yet, the blockers came back as ids, and the practice manager's
+path to a client's name is break-glass. The screen is mostly forms. The
+interesting parts are the name it may show, the name it may not, and the hole
+the first decision form opened in Phase 3's transaction.
+
+### The name it may show
+
+The plan is a list of clients, and the person who executes it holds
+`client.read: breakGlass`. Resolving names through the client resource would
+mean a practice manager breaking glass on a routine Tuesday, which is D-21's
+wall met again from the read side. P0-3 had already answered it: a departure
+plan is a client list at the demographic tier, the tier the calendar shows the
+same manager through `appointment.read`. So `getDeparturePlan` returns names
+and codes on `departure.read`, in one read with one audit row (D-24). It
+returns nothing else. The test asserts the key set, so a date of birth added
+for convenience later fails the build rather than widening a cell.
+
+### The name it may not
+
+An `unread_alert` blocker carries a client id, and the screen does not use it.
+Front desk reads plans, and "this client has an unread risk alert" is a
+clinical signal about a named person, routed by hard rule 9 to exactly one
+clinician. So the screen gives a count, and says the leaver needs to read their
+alerts before they go (D-25). That is also the correct fix: the one person who
+knows why the alert fired is still here.
+
+### The hole the form opened
+
+`decideAssignment` is the only writer of `DepartureAssignment`, under
+`departure.update`, one audit row per decision with the disposition as a code.
+Deciding again replaces the decision, and the log keeps both. It refuses inside
+the guard, so a caller the matrix turns away learns nothing about the caseload:
+a client not on the leaver's active caseload, and a transfer to somebody who
+could not carry the client. "Could carry" is asked of the matrix — would it let
+this person write a note for a client of their own — because hard rule 1
+forbids asking a role name.
+
+Writing that first refusal exposed a Phase 3 bug. `executeDeparture` repointed
+every assignment it was handed. A client front desk moved to another clinician
+during the thirty days would be taken back from that clinician on the last day,
+with an audit row saying it was the plan. Execution and the blocker scan now
+read assignments through the live caseload (D-26). The test was run against
+the old query and went red.
+
+### The note only you can fix
+
+Everything else on a departure can be fixed by somebody else later. An unsigned
+draft can only be fixed by its author, before they leave. So a departing
+clinician gets a strip on every page naming their last day, linking to their own
+plan, where `ownDrafts` lists their drafts oldest first with the days left. It
+is two rows through `guardedAll`: the departure under `self`, the drafts under
+the `progress_note.read` an author already holds. No new cell. The strip and the
+person picker's "leaving, last day …" marker come from the query the picker
+already ran, so neither costs a request.
+
+### What it deliberately does not do
+
+- **P1.** No departure work-list, continuity marker, outbound message, abandoned
+  note count or purge preview. Phase 5.
+- **Validate the receiving supervisor at notice.** `setReceivingSupervisor`
+  refuses a receiver who could not co-sign; `planDeparture` still takes one
+  unchecked, the form only offers supervisors, and the blocker scan catches a
+  hand-rolled POST before execution.
+- **Seed a departure.** The capstone demo needs one and the seed is shared by
+  every e2e spec. `departure.spec.ts` records its own notice and withdraws it,
+  in `afterAll` as well as in the last test.
+- **Refuse a disposition outside the enum politely.** A hand-rolled POST with
+  one is a Prisma error, as it is on the enquiry form.
+
 ## Decisions log
 
 | Decision | Why |
@@ -2925,6 +2997,11 @@ reason for making it.
 | The constraint decides hour clashes at execution; the scan is only the preview (D-22) | A read-then-write check has a window, and `booking.ts` already measured it. The scan and the constraint use the same `tstzrange &&`, so they cannot disagree about what a clash is |
 | One blocker list, not `departureConflicts` (D-20) | P0-7 and P0-8 each add a blocking item. Readiness is one question, and a screen that asks four functions will eventually ask three |
 | Notice stores the capacity value it overwrote (D-23) | Cancelling without it guesses `true`, which reopens a clinician who had closed their own books, a signal D-10 says the manager may only close |
+| Plan names ride on `departure.read`, not `client.read` (D-24) | Admin's client read is break-glass; P0-3 already put a client list at the demographic tier in this cell. Names and codes only, asserted by key set |
+| The unread-alert blocker is a count, never a client (D-25) | Front desk reads plans, and an unread risk alert on a named client belongs to one clinician. The fix is the leaver reading it, which needs no name |
+| A decision is refused at the door; execution moves only who is still on the caseload (D-26) | Phase 3 repointed whatever it was handed, so a client reassigned during the thirty days would have been taken back on the last day |
+| A form field in a page never takes the id `userId` | The dev switcher in the sidebar owns it on every staff page. The duplicate pointed "Who is leaving" at the identity switcher, and only a spec selecting by label noticed |
+| Refusals travel back as a `Conflict` code, never its message | The code is the page's whole vocabulary, and a URL is no place for anything a person typed or a record holds |
 | The receiving supervisor is checked with `may(… 'cosign' …)`, not a role | The first draft compared `role === 'supervisor'` and hard rule 1's grep failed the build. The matrix is the only place that knows who can co-sign |
 
 ## What this project deliberately is not

@@ -5,6 +5,7 @@ import { requiresSecondFactor, type Role } from '../../src/auth/permissions';
 import { endBreakGlass, switchUser } from '../actions';
 import { Wordmark } from '@/src/ui/logo';
 import { BreakGlassBar } from '@/src/ui/primitives';
+import { dayLabel } from './departures/ui';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,6 +17,7 @@ export const dynamic = 'force-dynamic';
 export default async function StaffLayout({ children }: { children: React.ReactNode }) {
   const session = await currentSession();
   const users = await switchableUsers();
+  const leaving = users.find((u) => u.id === session?.user.id)?.departures[0];
 
   return (
     <>
@@ -40,6 +42,17 @@ export default async function StaffLayout({ children }: { children: React.ReactN
 
             <div className="min-w-0 flex-1">
               {session.actor.breakGlass && <BreakGlassBar reason={session.actor.breakGlass.reason} endAction={endBreakGlass} />}
+              {leaving && (
+                // P0-4a's way in. Everything else about leaving can be fixed by
+                // somebody else later; an unsigned note can only be fixed by you, now.
+                <Link
+                  href={`/departures/${leaving.id}`}
+                  className="block border-b px-5 py-2 text-caption font-medium hover:underline"
+                  style={{ borderColor: 'var(--border)', background: 'var(--warning-soft)', color: 'var(--warning)' }}
+                >
+                  Your last day is {dayLabel(leaving.lastDayOn)}. Notes you have not signed by then cannot be signed by anybody — see what is still open.
+                </Link>
+              )}
               <main className="mx-auto max-w-[1200px] px-5 py-6">{children}</main>
             </div>
           </div>
@@ -48,7 +61,13 @@ export default async function StaffLayout({ children }: { children: React.ReactN
   );
 }
 
-type SwitchUser = { id: string; name: string; role: Role; supervisor: { name: string } | null };
+type SwitchUser = {
+  id: string; name: string; role: Role; supervisor: { name: string } | null;
+  departures: { id: string; lastDayOn: Date }[];
+};
+
+const leavingNote = (u: SwitchUser) =>
+  u.departures[0] ? ` · leaving, last day ${dayLabel(u.departures[0].lastDayOn)}` : '';
 
 function SignInPanel({ users }: { users: SwitchUser[] }) {
   return (
@@ -104,6 +123,7 @@ function SignInPanel({ users }: { users: SwitchUser[] }) {
                 <span className="text-caption text-muted">
                   {ROLE_LABEL[u.role]}
                   {u.supervisor ? ` · supervised by ${u.supervisor.name}` : ''}
+                  {leavingNote(u)}
                 </span>
               </button>
             </form>
@@ -135,7 +155,7 @@ function UserSwitcher({ users, currentId }: { users: SwitchUser[]; currentId: st
       >
         {users.map((u) => (
           <option key={u.id} value={u.id}>
-            {u.name} — {ROLE_LABEL[u.role]}
+            {u.name} — {ROLE_LABEL[u.role]}{leavingNote(u)}
           </option>
         ))}
       </select>

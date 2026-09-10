@@ -345,7 +345,7 @@ export async function clinicianCapacity(actor: Actor) {
       const clinicians = await tx.user.findMany({
         where: { active: true, role: { in: ['therapist', 'associate', 'supervisor'] } },
         select: {
-          id: true, name: true, acceptingNewClients: true,
+          id: true, name: true, role: true, acceptingNewClients: true,
           _count: {
             select: {
               clients: { where: { status: 'active' } },
@@ -359,6 +359,7 @@ export async function clinicianCapacity(actor: Actor) {
       return clinicians.map((c) => ({
         id: c.id,
         name: c.name,
+        role: c.role,
         accepting: c.acceptingNewClients,
         caseload: c._count.clients,
         queued: c._count.inquiriesAssigned,

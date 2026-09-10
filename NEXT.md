@@ -1,59 +1,62 @@
 # Next
 
-**Item:** Phase 4 of the departure PRD — the UI. The plan screen with the
-blocker list, P0-4a's unsigned-drafts list, the `processNoteAfterDepartureDays`
-settings field, and the "departing, last day …" marker in the person picker
-(P0-9's second notice effect). Then P1. Sonnet for the screens; Opus for the
-assignment-decision action, because it writes `DepartureAssignment` under
-`departure.update` and P0-11 wants one audit row per decision.
+**Item:** Phase 5 of the departure PRD — P1. P1-1 the departure work-list,
+P1-2 the continuity marker on the client record, P1-3 the scheduling message,
+P1-4 the abandoned-note count on the practice report, P1-5 the process-note
+purge preview. Sonnet for P1-1/P1-4/P1-5 (reads and rendering); Opus for P1-3,
+because it sends an outbound message off a clinical event and hard rule 3's
+deny-list is the whole risk.
 
-## What just landed (Phase 3)
+## What just landed (Phase 4)
 
-- **The widening fix Phase 1 left behind.** `progressContext()` now resolves
-  the client's `treatingClinicianId`; `listProgressNotes()` returns the whole
-  record to the treating clinician. Mutation-checked: removing the join turns
-  the D-04 test red.
-- **Migration `20260910163704_departure_supervision_and_capacity`.**
-  `Departure.receivingSupervisorId`, `Departure.acceptingNewClientsAtNotice`,
-  `coSignedById` → `RESTRICT`, CHECK `departure_supervisor_is_not_the_leaver`.
-- **`src/staff/departure.ts`:** `planDeparture`, `cancelDeparture`,
-  `departureBlockers`, `executeDeparture`.
-- WRITEUP §31; PRD D-20 … D-23; Phase 3 marked landed.
+- **`src/staff/departure.ts`:** `decideAssignment`, `setReceivingSupervisor`
+  (both `departure.update`, one audit row each), `listDepartures`,
+  `getDeparturePlan`, `ownDrafts`. `planDeparture` maps P2002 →
+  `Conflict('already_departing')` and refuses a past last day.
+- **Bug fixed from Phase 3:** execution and the blocker scan read assignments
+  through the *live* caseload. A client reassigned during the notice period is
+  no longer taken back on the last day. Mutation-checked.
+- **Screens:** `/departures` (list + record notice), `/departures/[id]` (plan,
+  decisions, blockers, execute, withdraw, the leaver's own drafts). Nav link on
+  `departure.read`. Departing marker in the person picker; a strip for the
+  leaver on every page. `processNoteAfterDepartureDays` on `/practice`.
+- PRD D-24 … D-26; WRITEUP §32; Phase 4 marked landed.
 
-## What Phase 4 must know
+## What Phase 5 must know
 
-1. **There is no service function that writes a `DepartureAssignment` yet.**
-   Tests create them with Prisma directly. Phase 4 builds `decideAssignment`
-   under `departure.update`, with an audit row per decision (P0-11's "one per
-   assignment decided").
-2. **`departureBlockers` returns ids, never names.** The plan screen resolves
-   clients through the client resource. Admin's client read is break-glass, so
-   check what the plan screen can actually render for the practice manager
-   before designing it — this is the same wall D-21 hit.
-3. **`planDeparture` does not map the partial-unique violation.** A second
-   notice for somebody already planned surfaces as a raw Prisma P2002. Map it
-   to a `Conflict` when the form exists.
-4. **Hour clashes at execution are a `Conflict('hour_clash')`**, decided by the
-   constraint; the other blockers are `Conflict('departure_not_ready')`. The
-   screen should render both.
+1. **The plan screen already answers most of P1-1.** Don't build a second
+   readiness screen; a `/worklists` section linking to open plans is likely
+   enough. Decide that first.
+2. **Names on a departure ride on `departure.read` (D-24); the unread-alert
+   blocker is a count only (D-25).** P1-2's marker lives on the client record,
+   under `client.read` — names and a date, no reason.
+3. **P1-3 fires from `executeDeparture`**, which is one 30s transaction with a
+   `ponytail:` budget. Queue into `OutboxMessage` inside it; never send inside it.
+4. **`e2e/departure.spec.ts` uses Tom Bergqvist** and withdraws in `afterAll`.
+   The capstone demo still needs a seeded departure, and the seed is shared by
+   every spec.
+5. Next's route announcer is a `role="alert"`. Filter alert locators by text.
 
 ## Gate
 
-**Green at this commit.** Unit **2904/2904** (28 files), typecheck clean. e2e
-**45 passed + 1 skipped = 46**, against the production build. No lint script.
+**Green at this commit.** Unit **2914/2914** (28 files), typecheck clean. e2e
+**49 passed + 1 skipped = 50**, against the production build. No lint script.
 `npm run db:status` green on all three local databases.
 
-The first unit run failed one test, correctly: hard rule 1's grep caught a
-`role === 'supervisor'` in `departure.ts`. It now asks `may(… 'cosign' …)`.
+Two e2e runs failed on the way, both for real reasons and both fixed: a
+duplicate `id="userId"` pointed a label at the dev switcher, and the refusal
+locator also matched Next's route announcer.
 
 ## Loose threads
 
-1. Public form's throttle read-then-write race. `ponytail:` comment. Still not
-   worth a lock at three an hour.
-2. A clinician on *leave* (not departing) — still P2.
-3. Design brief §5b/§5c components with no picture. Still inventory.
-4. **Another project's test sweep will make this one look broken.**
-   `alongside/backend` was sweeping through all of Phase 3 at load average
-   25–35. Check `uptime` and `pgrep -fl vitest` before reading a stack trace.
-5. `executeDeparture` has a `ponytail:` 30s transaction budget with per-row
-   audit writes; `createMany` if a real caseload ever measures near it.
+1. **The kill-on-alarm pattern missed the runner.** `pkill -f "$PWD.*playwright test "`
+   matched nothing — the runner's command line does not carry the project path —
+   so only the server died and the rest of the sweep failed at ~100ms each.
+   `pkill -f "playwright test"` works but is not scoped to this project; the
+   global convention's recipe needs a scoped form that actually matches.
+2. Public form's throttle read-then-write race. `ponytail:` comment.
+3. A clinician on *leave* (not departing) — still P2.
+4. Design brief §5b/§5c components with no picture. Still inventory.
+5. Load average was 29–45 from other work all session. Check `uptime` before
+   reading a stack trace.
+6. `executeDeparture`'s `ponytail:` 30s transaction budget.

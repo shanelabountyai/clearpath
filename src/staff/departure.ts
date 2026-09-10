@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { auditEvent, guarded, may } from '../auth/guard';
-import type { Actor } from '../auth/permissions';
+import { auditEvent, guarded, guardedAll, may } from '../auth/guard';
+import type { Actor, Role } from '../auth/permissions';
 import { DAY, systemClock, type Clock } from '../clock';
 import { prisma, type Tx } from '../db';
 import { Conflict, NotFound } from '../errors';
 import { conflictKind } from '../scheduling/booking';
 import { TRANSITIONS as SESSION_TRANSITIONS, type Status as SessionStatus } from '../scheduling/lifecycle';
 import { SYSTEM_ACTOR } from '../scheduling/reminders';
-import { zonedToUtc, type LocalDate } from '../time';
+import { daysBetween, localDateOf, zonedToUtc, type LocalDate } from '../time';
 
 /**
  * A departure is a plan before it is an event.
@@ -116,6 +116,32 @@ export async function runProcessNotePurge(clock: Clock = systemClock): Promise<s
   return destroyed;
 }
 
+// ─────────────────── who a plan may name (hard rule 1) ───────────────────
+
+/**
+ * Could this person carry a client? Asked of the matrix rather than of a role
+ * name: treating somebody is writing their record, so the question is whether
+ * the matrix would let them write a note for a client of their own.
+ */
+const mayTreat = (u: { id: string; role: Role }) => may({
+  actor: { id: u.id, role: u.role }, action: 'create', resource: 'progress_note',
+  target: { clinicianId: u.id },
+});
+
+/**
+ * Could this person take a departing supervisor's associates? A receiver the
+ * matrix would never let co-sign leaves every associate with a co-signature
+ * nobody can give (P0-8). Asked of the matrix, so it stays right if who may
+ * co-sign ever changes.
+ */
+export const maySupervise = (u: { id: string; role: Role }) => may({
+  actor: { id: u.id, role: u.role }, action: 'cosign', resource: 'progress_note',
+  target: { authorSupervisorId: u.id },
+});
+
+/** The caseload a departure is about: who the leaver treats today, not who they treated when the plan was made. */
+const caseloadOf = (userId: string) => ({ treatingClinicianId: userId, status: 'active' as const });
+
 // ─────────────────────── the two moments (P0-9) ───────────────────────
 
 /**
@@ -139,32 +165,46 @@ export async function planDeparture(
     select: { acceptingNewClients: true },
   });
   if (!leaver) throw new NotFound('User');
+  // String order is date order for ISO dates. The CHECK refuses it too; this is
+  // the sentence a person sees instead of a constraint name.
+  if (!(input.lastDayOn >= localDateOf(clock.now()))) {
+    throw new Conflict('A last day cannot be before the notice', 'last_day_past');
+  }
 
   // Decided here for the reason `convertInquiry` decides its client id: the
   // audit row names the departure, and a row that does not exist yet cannot be
   // named.
   const id = randomUUID();
-  return guarded(
-    {
-      actor, action: 'create', resource: 'departure', resourceId: id,
-      target: { subjectUserId: input.userId },
-    },
-    async (tx) => {
-      const departure = await tx.departure.create({
-        data: {
-          id,
-          userId: input.userId,
-          plannedById: actor.id,
-          noticeAt: clock.now(),
-          lastDayOn: new Date(`${input.lastDayOn}T00:00:00Z`),
-          receivingSupervisorId: input.receivingSupervisorId ?? null,
-          acceptingNewClientsAtNotice: leaver.acceptingNewClients,
-        },
-      });
-      await tx.user.update({ where: { id: input.userId }, data: { acceptingNewClients: false } });
-      return departure;
-    },
-  );
+  try {
+    return await guarded(
+      {
+        actor, action: 'create', resource: 'departure', resourceId: id,
+        target: { subjectUserId: input.userId },
+      },
+      async (tx) => {
+        const departure = await tx.departure.create({
+          data: {
+            id,
+            userId: input.userId,
+            plannedById: actor.id,
+            noticeAt: clock.now(),
+            lastDayOn: new Date(`${input.lastDayOn}T00:00:00Z`),
+            receivingSupervisorId: input.receivingSupervisorId ?? null,
+            acceptingNewClientsAtNotice: leaver.acceptingNewClients,
+          },
+        });
+        await tx.user.update({ where: { id: input.userId }, data: { acceptingNewClients: false } });
+        return departure;
+      },
+      );
+  } catch (e) {
+    // The partial unique index decides, not a pre-check: two people recording
+    // the same notice at once is a race a read would lose.
+    if ((e as { code?: unknown }).code === 'P2002') {
+      throw new Conflict('This person already has a departure planned', 'already_departing');
+    }
+    throw e;
+  }
 }
 
 /**
@@ -242,12 +282,12 @@ async function blockersOf(db: Tx | typeof prisma, d: DepartureRow): Promise<Depa
   const from = lastDayStart(d.lastDayOn);
   const [leaver, caseload, assignments, alerts, supervisees, receivingSupervisor] = await Promise.all([
     db.user.findUniqueOrThrow({ where: { id: d.userId }, select: { supervisorId: true } }),
-    db.client.findMany({ where: { treatingClinicianId: d.userId, status: 'active' }, select: { id: true } }),
+    db.client.findMany({ where: caseloadOf(d.userId), select: { id: true } }),
     db.departureAssignment.findMany({
-      where: { departureId: d.id },
+      where: { departureId: d.id, client: caseloadOf(d.userId) },
       select: {
         clientId: true, disposition: true, receivingClinicianId: true,
-        receivingClinician: { select: { active: true } },
+        receivingClinician: { select: { active: true, role: true } },
       },
     }),
     db.alert.findMany({
@@ -267,7 +307,10 @@ async function blockersOf(db: Tx | typeof prisma, d: DepartureRow): Promise<Depa
     if (!decided.has(c.id)) blockers.push({ kind: 'undecided', clientId: c.id });
   }
   for (const a of assignments) {
-    if (a.receivingClinicianId && (a.receivingClinicianId === d.userId || !a.receivingClinician?.active)) {
+    const r = a.receivingClinician;
+    if (a.receivingClinicianId && (
+      a.receivingClinicianId === d.userId || !r?.active || !mayTreat({ id: a.receivingClinicianId, role: r.role })
+    )) {
       blockers.push({ kind: 'receiver_unavailable', clientId: a.clientId, receivingClinicianId: a.receivingClinicianId });
     }
   }
@@ -279,15 +322,8 @@ async function blockersOf(db: Tx | typeof prisma, d: DepartureRow): Promise<Depa
       }
     }
   }
-  // P0-8: a receiver the matrix would never let co-sign for an associate leaves
-  // every associate with a co-signature nobody can give. Asked of the matrix
-  // rather than of a role name, per hard rule 1 — so it stays right if who may
-  // co-sign ever changes.
-  const receiverCanSupervise = !!receivingSupervisor?.active && may({
-    actor: { id: receivingSupervisor.id, role: receivingSupervisor.role },
-    action: 'cosign', resource: 'progress_note',
-    target: { authorSupervisorId: receivingSupervisor.id },
-  });
+  // P0-8: associates need somebody who can co-sign for them.
+  const receiverCanSupervise = !!receivingSupervisor?.active && maySupervise(receivingSupervisor);
   if (!receiverCanSupervise) {
     for (const s of supervisees) blockers.push({ kind: 'supervisee_unassigned', superviseeId: s.id });
   }
@@ -325,6 +361,219 @@ export async function departureBlockers(actor: Actor, departureId: string) {
   return guarded(
     { actor, action: 'read', resource: 'departure', resourceId: departureId, target: { subjectUserId: d.userId } },
     (tx) => blockersOf(tx, d),
+  );
+}
+
+// ─────────────────────── the decisions (P0-1, P0-11) ───────────────────────
+
+export type Disposition = 'transfer' | 'discharge' | 'referred_out';
+
+/** A plan changes while it is a plan, and never after. */
+async function plannedRow(departureId: string) {
+  const d = await prisma.departure.findUnique({ where: { id: departureId }, select: { status: true, userId: true } });
+  if (!d) throw new NotFound('Departure');
+  if (d.status !== 'planned') throw new Conflict(`A ${d.status} departure cannot be changed`, 'bad_transition');
+  return d;
+}
+
+/**
+ * One client, one decision — and the only writer of `DepartureAssignment`.
+ *
+ * `departure.update`, so a supervisor may propose and the practice manager may
+ * decide; front desk reads the answer and cannot write it. Deciding again
+ * replaces the decision rather than stacking a second, and every decision is
+ * its own audit row naming the client and the disposition as a code (P0-11),
+ * so the log still shows the one it replaced.
+ *
+ * Refused inside the guard, so a caller the matrix turns away learns nothing
+ * about the caseload:
+ * - a client not on the leaver's active caseload. Execution repoints what it is
+ *   handed, so a decision about somebody else's client is a transfer of a
+ *   record this plan was never about;
+ * - a transfer to nobody, or to somebody who could not carry the client — the
+ *   leaver, a colleague who has gone, a role the matrix would never let write a
+ *   note. The picker only offers clinicians; a hand-rolled POST is why this
+ *   asks anyway.
+ *
+ * Fields that do not belong to the disposition are dropped rather than refused,
+ * the way `createInquiry` drops a referrer on a non-GP source: a form cannot
+ * hide a select without JavaScript, and the CHECK refuses the row that disagrees.
+ */
+export async function decideAssignment(
+  actor: Actor,
+  departureId: string,
+  input: {
+    clientId: string; disposition: Disposition;
+    receivingClinicianId?: string | null; referredOutToId?: string | null;
+  },
+  clock: Clock = systemClock,
+) {
+  const d = await plannedRow(departureId);
+  const { clientId, disposition } = input;
+
+  return guarded(
+    {
+      actor, action: 'update', resource: 'departure', resourceId: departureId, clientId,
+      target: { subjectUserId: d.userId }, reason: `departure:decided_${disposition}`,
+    },
+    async (tx) => {
+      if (!(await tx.client.count({ where: { id: clientId, ...caseloadOf(d.userId) } }))) {
+        throw new Conflict('That client is not on this caseload', 'not_on_caseload');
+      }
+
+      const receivingClinicianId = disposition === 'transfer' ? input.receivingClinicianId || null : null;
+      if (disposition === 'transfer') {
+        const receiver = receivingClinicianId
+          ? await tx.user.findUnique({ where: { id: receivingClinicianId }, select: { id: true, role: true, active: true } })
+          : null;
+        if (!receiver?.active || receiver.id === d.userId || !mayTreat(receiver)) {
+          throw new Conflict('A transfer needs a clinician who is staying', 'receiver_unavailable');
+        }
+      }
+
+      const decision = {
+        disposition,
+        receivingClinicianId,
+        referredOutToId: disposition === 'referred_out' ? input.referredOutToId || null : null,
+        decidedById: actor.id,
+        decidedAt: clock.now(),
+      };
+      return tx.departureAssignment.upsert({
+        where: { departureId_clientId: { departureId, clientId } },
+        create: { departureId, clientId, ...decision },
+        update: decision,
+      });
+    },
+  );
+}
+
+/**
+ * Name who takes a departing supervisor's associates, or nobody (P0-8).
+ *
+ * Its own act because `supervisee_unassigned` is a blocker the plan screen
+ * shows, and a blocker whose only fix is withdrawing notice and giving it again
+ * puts two notices in the log for one decision. The test the blocker scan
+ * applies, applied at the door.
+ */
+export async function setReceivingSupervisor(actor: Actor, departureId: string, supervisorId: string | null) {
+  const d = await plannedRow(departureId);
+  return guarded(
+    {
+      actor, action: 'update', resource: 'departure', resourceId: departureId,
+      target: { subjectUserId: d.userId }, reason: 'departure:receiving_supervisor',
+    },
+    async (tx) => {
+      if (supervisorId) {
+        const s = await tx.user.findUnique({ where: { id: supervisorId }, select: { id: true, role: true, active: true } });
+        if (!s?.active || s.id === d.userId || !maySupervise(s)) {
+          throw new Conflict('The receiving supervisor must be a supervisor who is staying', 'receiver_unavailable');
+        }
+      }
+      return tx.departure.update({ where: { id: departureId }, data: { receivingSupervisorId: supervisorId } });
+    },
+  );
+}
+
+// ─────────────────────────── the screens (Phase 4) ───────────────────────────
+
+/** Every departure, open ones first. Front desk, supervisors and the practice manager. */
+export async function listDepartures(actor: Actor) {
+  return guarded({ actor, action: 'read', resource: 'departure' }, (tx) =>
+    tx.departure.findMany({
+      select: { id: true, status: true, noticeAt: true, lastDayOn: true, user: { select: { name: true } } },
+      orderBy: [{ status: 'asc' }, { lastDayOn: 'asc' }],
+    }));
+}
+
+const CLIENT_NAME = { id: true, code: true, firstName: true, lastName: true } as const;
+
+/**
+ * The plan screen, in one read and one audit row.
+ *
+ * Client names ride on `departure.read`, not `client.read`, where the practice
+ * manager holds only break-glass. A plan is a client list, and a client list at
+ * the demographic tier is what P0-3 gave this cell — the tier the calendar
+ * already shows the practice manager through `appointment.read` (D-24). Names
+ * and codes and nothing else: no date of birth, no contact details, nothing a
+ * caseload decision does not need.
+ *
+ * Blockers come back as ids, as `blockersOf` makes them, and the screen labels
+ * them from `clients`. Once executed the caseload belongs to other people, so
+ * the list is what the plan decided.
+ */
+export async function getDeparturePlan(actor: Actor, departureId: string) {
+  const d = await prisma.departure.findUnique({ where: { id: departureId }, select: DEPARTURE_ROW });
+  if (!d) throw new NotFound('Departure');
+
+  return guarded(
+    { actor, action: 'read', resource: 'departure', resourceId: departureId, target: { subjectUserId: d.userId } },
+    async (tx) => {
+      const [detail, caseload, assignments, blockers] = await Promise.all([
+        tx.departure.findUniqueOrThrow({
+          where: { id: departureId },
+          select: {
+            noticeAt: true, executedAt: true,
+            user: { select: { name: true } },
+            plannedBy: { select: { name: true } },
+            receivingSupervisor: { select: { id: true, name: true } },
+          },
+        }),
+        tx.client.findMany({ where: caseloadOf(d.userId), select: CLIENT_NAME }),
+        tx.departureAssignment.findMany({
+          where: { departureId },
+          select: {
+            clientId: true, disposition: true, receivingClinicianId: true, referredOutToId: true, decidedAt: true,
+            client: { select: CLIENT_NAME },
+            receivingClinician: { select: { name: true } },
+            referredOutTo: { select: { practice: true } },
+            decidedBy: { select: { name: true } },
+          },
+        }),
+        d.status === 'planned' ? blockersOf(tx, d) : Promise.resolve([] as DepartureBlocker[]),
+      ]);
+
+      const decided = new Map(assignments.map((a) => [a.clientId, a]));
+      const clients = (d.status === 'executed' ? assignments.map((a) => a.client) : caseload)
+        .sort((a, b) => a.lastName.localeCompare(b.lastName))
+        .map((c) => ({ ...c, assignment: decided.get(c.id) ?? null }));
+      return { ...d, ...detail, clients, blockers };
+    },
+  );
+}
+
+/**
+ * P0-4a: a departing clinician's own unsigned drafts, oldest first, with the
+ * days left to sign them — the half of this feature that prevents the hole
+ * rather than labelling it (D-03).
+ *
+ * Null for anybody not leaving, and for anybody who writes no notes. Two rows
+ * through `guardedAll`: the departure under `self`, the drafts under the
+ * `progress_note.read` an author already holds. No new cell.
+ */
+export async function ownDrafts(actor: Actor, clock: Clock = systemClock) {
+  const d = await prisma.departure.findFirst({
+    where: { userId: actor.id, status: 'planned' },
+    select: { id: true, lastDayOn: true },
+  });
+  if (!d || !mayTreat(actor)) return null;
+
+  return guardedAll(
+    [
+      { actor, action: 'read', resource: 'departure', resourceId: d.id, target: { subjectUserId: actor.id } },
+      { actor, action: 'read', resource: 'progress_note', target: { authorId: actor.id } },
+    ],
+    async (tx) => ({
+      daysLeft: daysBetween(localDateOf(clock.now()), d.lastDayOn.toISOString().slice(0, 10)),
+      drafts: await tx.progressNote.findMany({
+        where: { authorId: actor.id, status: 'draft' },
+        select: {
+          id: true, createdAt: true,
+          client: { select: CLIENT_NAME },
+          appointment: { select: { startAt: true } },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+    }),
   );
 }
 
@@ -385,8 +634,11 @@ export async function executeDeparture(actor: Actor, departureId: string, clock:
         }
 
         const leaver = await tx.user.findUniqueOrThrow({ where: { id: d.userId }, select: { supervisorId: true } });
+        // A decision about a client front desk has since given to somebody
+        // else is a decision about nobody on this caseload. Repointing it would
+        // take the client from their new clinician; skipping it takes nothing.
         const assignments = await tx.departureAssignment.findMany({
-          where: { departureId: d.id },
+          where: { departureId: d.id, client: caseloadOf(d.userId) },
           select: { clientId: true, disposition: true, receivingClinicianId: true },
         });
 

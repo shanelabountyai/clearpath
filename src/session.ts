@@ -67,6 +67,10 @@ export async function requireSession(): Promise<Session> {
 export const switchableUsers = () =>
   prisma.user.findMany({
     where: { active: true, role: { not: 'client' } },
-    select: { id: true, name: true, role: true, supervisor: { select: { name: true } } },
+    select: {
+      id: true, name: true, role: true, supervisor: { select: { name: true } },
+      // P0-9's second notice effect: somebody leaving is marked, with the day.
+      departures: { where: { status: 'planned' }, select: { id: true, lastDayOn: true } },
+    },
     orderBy: [{ role: 'asc' }, { name: 'asc' }],
   });

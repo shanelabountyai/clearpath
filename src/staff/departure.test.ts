@@ -5,10 +5,11 @@ import { Conflict, Forbidden } from '../errors';
 import {
   amendProgressNote, coSignProgressNote, getProcessNote, getProgressNote, listProgressNotes,
 } from '../notes/service';
+import type { Role } from '../auth/permissions';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import {
-  TRANSITIONS, assertTransition, canTransition, cancelDeparture, departureBlockers,
-  executeDeparture, planDeparture, runProcessNotePurge,
+  TRANSITIONS, assertTransition, canTransition, cancelDeparture, decideAssignment, departureBlockers,
+  executeDeparture, getDeparturePlan, ownDrafts, planDeparture, runProcessNotePurge, setReceivingSupervisor,
   type DepartureStatus,
 } from './departure';
 
@@ -749,5 +750,130 @@ describe('what the transaction closes, and what it writes down (P0-4b, P0-10, P0
     expect(rows.find((r) => r.reason === 'departure:deactivated')?.clientId).toBeNull();
     expect(rows.every((r) => r.actorId === manager.id)).toBe(true);
     expect(JSON.stringify(rows)).not.toMatch(/Sensitive|Private working/);
+  });
+});
+
+describe('the decisions, and the screens that read them (Phase 4)', () => {
+  const decideAs = (who: { id: string; role: Role }, departureId: string, clientId: string,
+    disposition: 'transfer' | 'discharge' | 'referred_out', receivingClinicianId?: string) =>
+    decideAssignment(actor(who), departureId, { clientId, disposition, receivingClinicianId }, NOTICE);
+
+  it('writes one decision per client, one audit row per decision, and a second decision replaces the first', async () => {
+    const { manager, sup, beth, kept, departure } = await practice();
+    await decideAs(sup, departure.id, kept.id, 'transfer', beth.id);
+    // The receiver rides along on the form and is dropped: a discharge has nobody receiving.
+    await decideAs(manager, departure.id, kept.id, 'discharge', beth.id);
+
+    expect(await prisma.departureAssignment.findMany({ where: { departureId: departure.id } })).toMatchObject([
+      { clientId: kept.id, disposition: 'discharge', receivingClinicianId: null, decidedById: manager.id },
+    ]);
+    expect((await departureRows(departure.id)).filter((r) => r.action === 'update').map((r) => [r.clientId, r.reason]))
+      .toEqual([[kept.id, 'departure:decided_transfer'], [kept.id, 'departure:decided_discharge']]);
+  });
+
+  it('clears the blockers it answers', async () => {
+    const { manager, beth, kept, ended, departure } = await practice();
+    await decideAs(manager, departure.id, kept.id, 'transfer', beth.id);
+    await decideAs(manager, departure.id, ended.id, 'referred_out');
+    expect(await departureBlockers(actor(manager), departure.id)).toEqual([]);
+  });
+
+  it('refuses a client who is not on the caseload — execution moves whatever it is handed', async () => {
+    const { manager, beth, departure } = await practice();
+    const bethsOwn = await makeClient(beth.id);
+    await expect(decideAs(manager, departure.id, bethsOwn.id, 'discharge')).rejects.toMatchObject({ code: 'not_on_caseload' });
+    expect(await prisma.departureAssignment.count()).toBe(0);
+  });
+
+  it('refuses a transfer to nobody, to the leaver, to somebody gone, and to a role that cannot carry a client', async () => {
+    const { manager, alex, beth, kept, departure } = await practice();
+    const desk = await makeUser('front_desk');
+    await prisma.user.update({ where: { id: beth.id }, data: { active: false } });
+    for (const receiver of [undefined, alex.id, beth.id, desk.id, manager.id]) {
+      await expect(decideAs(manager, departure.id, kept.id, 'transfer', receiver), String(receiver))
+        .rejects.toMatchObject({ code: 'receiver_unavailable' });
+    }
+    expect(await prisma.departureAssignment.count()).toBe(0);
+  });
+
+  it('is front desk\'s to read and not to write, on the record — and a finished plan takes no decisions', async () => {
+    const { manager, kept, departure } = await practice();
+    const desk = await makeUser('front_desk');
+    await expect(decideAs(desk, departure.id, kept.id, 'discharge')).rejects.toThrow(Forbidden);
+    expect(await prisma.auditEvent.count({
+      where: { actorId: desk.id, action: 'update', resource: 'departure', allowed: false },
+    })).toBe(1);
+
+    await cancelDeparture(actor(manager), departure.id);
+    await expect(decideAs(manager, departure.id, kept.id, 'discharge')).rejects.toMatchObject({ code: 'bad_transition' });
+  });
+
+  it('does not take a client back from the clinician front desk gave them to after the decision', async () => {
+    const { manager, beth, kept, ended, departure } = await practice();
+    const carl = await makeUser('therapist');
+    await decideAs(manager, departure.id, kept.id, 'transfer', beth.id);
+    await decideAs(manager, departure.id, ended.id, 'discharge');
+    await prisma.client.update({ where: { id: kept.id }, data: { treatingClinicianId: carl.id } });
+
+    await executeDeparture(actor(manager), departure.id, EXECUTION);
+    expect((await prisma.client.findUniqueOrThrow({ where: { id: kept.id } })).treatingClinicianId).toBe(carl.id);
+  });
+
+  it('names who takes the associates, and refuses a receiver who could never co-sign', async () => {
+    const { manager, alex, beth, departure } = await practice({ leaverRole: 'supervisor', supervised: false });
+    await makeUser('associate', { supervisorId: alex.id });
+    const sam = await makeUser('supervisor');
+    const kinds = async () => (await departureBlockers(actor(manager), departure.id)).map((b) => b.kind);
+
+    for (const wrong of [beth.id, alex.id]) {
+      await expect(setReceivingSupervisor(actor(manager), departure.id, wrong)).rejects.toMatchObject({ code: 'receiver_unavailable' });
+    }
+    expect(await kinds()).toContain('supervisee_unassigned');
+    await setReceivingSupervisor(actor(manager), departure.id, sam.id);
+    expect(await kinds()).not.toContain('supervisee_unassigned');
+  });
+
+  it('answers a second notice, and a last day already gone, with a Conflict rather than a database error', async () => {
+    const { manager, alex, beth } = await practice();
+    await expect(planDeparture(actor(manager), { userId: alex.id, lastDayOn: '2026-10-31' }, NOTICE))
+      .rejects.toMatchObject({ name: 'Conflict', code: 'already_departing' });
+    await expect(planDeparture(actor(manager), { userId: beth.id, lastDayOn: '2026-08-31' }, NOTICE))
+      .rejects.toMatchObject({ name: 'Conflict', code: 'last_day_past' });
+  });
+
+  it('shows the practice manager the caseload by name without breaking glass, and nothing clinical beside it', async () => {
+    const { manager, alex, beth, kept, ended, departure } = await practice();
+    const carl = await makeUser('therapist');
+    await decideAs(manager, departure.id, kept.id, 'transfer', beth.id);
+
+    const plan = await getDeparturePlan(actor(manager), departure.id);
+    expect(plan.clients.map((c) => c.id).sort()).toEqual([kept.id, ended.id].sort());
+    expect(plan.clients.find((c) => c.id === kept.id)).toMatchObject({
+      assignment: { disposition: 'transfer', receivingClinician: { name: 'Beth' } },
+    });
+    expect(Object.keys(plan.clients[0]!).sort()).toEqual(['assignment', 'code', 'firstName', 'id', 'lastName']);
+    expect(plan.blockers).toEqual([{ kind: 'undecided', clientId: ended.id }]);
+
+    // The leaver reads their own; a colleague does not.
+    await expect(getDeparturePlan(actor(alex), departure.id)).resolves.toBeTruthy();
+    await expect(getDeparturePlan(actor(carl), departure.id)).rejects.toThrow(Forbidden);
+  });
+
+  it('shows the leaver their own drafts, oldest first, with the days left — and nothing to anybody staying', async () => {
+    const { alex, beth, kept, ended } = await practice();
+    const draft = async (clientId: string, authorId: string, iso: string) => prisma.progressNote.create({
+      data: {
+        appointmentId: (await book(clientId, authorId, iso, 'completed')).id,
+        clientId, authorId, content: 'Unsigned.', createdAt: new Date(iso),
+      },
+    });
+    const newer = await draft(ended.id, alex.id, '2026-09-09T14:00:00Z');
+    const older = await draft(kept.id, alex.id, '2026-09-02T14:00:00Z');
+    await draft((await makeClient(beth.id)).id, beth.id, '2026-09-03T14:00:00Z');
+
+    const own = await ownDrafts(actor(alex), fixedClock('2026-09-20T15:00:00Z'));
+    expect(own?.daysLeft).toBe(10);
+    expect(own?.drafts.map((d) => d.id)).toEqual([older.id, newer.id]);
+    expect(await ownDrafts(actor(beth))).toBeNull();
   });
 });
