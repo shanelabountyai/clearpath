@@ -18,7 +18,7 @@ const ACTIVE_STATUSES = ['scheduled', 'confirmed', 'arrived', 'in_session', 'com
  * a window. So the insert is the check, and 23P01 is a normal outcome to handle
  * rather than an error to log.
  */
-function conflictKind(e: unknown): 'room' | 'clinician' | null {
+export function conflictKind(e: unknown): 'room' | 'clinician' | null {
   const text = e instanceof Error ? `${e.message}${'meta' in e ? JSON.stringify((e as { meta?: unknown }).meta) : ''}` : '';
   if (text.includes('appointment_room_no_overlap')) return 'room';
   if (text.includes('appointment_clinician_no_overlap')) return 'clinician';

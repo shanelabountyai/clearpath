@@ -2640,6 +2640,107 @@ returns a deactivated actor's rows, and — structurally — the audit page's
 mode is a filter somebody adds later for tidiness, and no behavioural test of a
 page that renders correctly today would ever notice.
 
+## 31. The transaction, and the door it could not use
+
+Phase 2 made the wrong row impossible to write. This phase writes the right
+ones — a caseload, a supervision tree, the drafts, the private notes and an
+account, in one transaction — and the interesting parts are the three places
+the PRD's own sketch turned out to be wrong.
+
+### First, the rule nobody could satisfy
+
+Phase 1 widened `progress_note.read` to `authorSupervisorOrTreating` and every
+test of the matrix passed. No call site could reach it. `progressContext()`
+built its target from the note alone — author and author's supervisor — so the
+third claimant, the clinician who carries the client now, was never in the
+target the matrix decided on. A policy cell that decides `true` against a
+target nobody constructs is a comment.
+
+The fix is one join on a query that already ran, and read, update, sign, cosign
+and amend inherit it. `listProgressNotes` needed the other half: its SQL scoped
+to `authorId IN (self, supervisees)`, so the list said no where the single read
+said yes. The test for it was written first and then run against the file with
+the join removed, to make sure it actually goes red. It did.
+
+### The door the matrix refused
+
+The PRD sketched `executeDeparture` as `guardedAll` over the records it
+touches, the way a group session writes six clients' records. The matrix said
+no. Admin's `client.update` is `breakGlass`, and a departure has no break-glass
+cell anywhere in its column by design. The sketch had two possible
+implementations. One was a practice manager breaking glass fifteen times on a
+routine Tuesday. The other granted admin `client.update`, which is the widening
+this feature exists to refuse.
+
+What was exercised is `depart`, so `depart` is decided once, by `guarded`, and
+logged once. Everything after it is a consequence and is logged with
+`auditEvent` in the same transaction: one row per client (`departure:transfer`,
+`departure:discharge`, `departure:referred_out`), per alert repointed, per
+supervisee, per draft abandoned, per private note made unreachable, and one for
+the deactivation. Each names the departure and the client where there is one,
+and carries a code. It is the same register the purge set in §30, arrived at
+from the other side: that one had no actor exercising a power, and this one has
+exactly one.
+
+### Postgres decides the hour
+
+The PRD had `departureConflicts` validate the plan and then the transfer run.
+That is a read-then-write check, and `booking.ts` already measured what one of
+those costs: a session booked onto the receiver between the check and the move
+slips through the window. So the roles split. The scan runs any time from
+notice, using the same `tstzrange(…) &&` the exclusion constraint uses, so the
+two cannot disagree about what a clash is. At execution the constraint decides.
+A `23P01` anywhere in the move rolls back the entire departure and surfaces as
+`Conflict('hour_clash')`.
+
+The rollback test depends on write order. The writes a clash can refuse come
+*after* a client row, an appointment cancellation and a series deactivation
+have already gone through inside the same transaction. The test then asserts
+none of those survived, nor the account change, nor the draft status, nor any
+`depart` audit row. A rollback test whose failing statement is the first write
+proves nothing.
+
+The other blockers are checked inside the transaction, before any write:
+undecided clients, a transfer to someone gone, an unread alert with nobody to
+route it to, associates with no supervisor to take them. Those are facts about
+the plan, not races with a neighbour. They all come from one
+`departureBlockers` list, which replaces the PRD's four-function readiness
+question (D-20).
+
+### The two moments, and what cancelling puts back
+
+Notice sets `acceptingNewClients = false`. Cancelling has to undo that, and
+without a stored value "undo" means guessing `true`. Guessing `true` reopens a
+clinician who had closed their own books, which puts the practice manager in
+charge of a capacity signal that D-10 says they may only ever close. So the
+departure row records the value it overwrote.
+
+### The supervision tree
+
+One `receivingSupervisorId` on the departure, not one per supervisee. A caseload
+splits because clients follow the fit, the hour or the ending, and none of that
+applies to associates. Splitting them across supervisors is restructuring the
+practice, and belongs in `user.update`, not in someone's last day. The receiver
+has to be someone the matrix would let co-sign. The first draft checked
+`role === 'supervisor'` and the build failed it, correctly, under hard rule 1.
+It now asks `may(… 'cosign' …)` for that person, so the answer stays right if
+who may co-sign ever changes. A CHECK refuses the leaver as their own successor.
+`coSignedById` is now `RESTRICT`, which changes nothing today, and that is the
+reason for making it.
+
+### What it deliberately does not do
+
+- **Decide dispositions.** `DepartureAssignment` rows are written by the plan
+  screen in Phase 4, under `departure.update`. This phase reads them.
+- **Mark the clinician departing in the person picker.** P0-9's second notice
+  effect is presentation, and it belongs to Phase 4 with the rest of the UI.
+- **Move inactive clients.** The caseload is `status: 'active'`. A client
+  discharged last year keeps naming the clinician they actually saw.
+- **Batch the audit rows.** Around a hundred single-row writes for a
+  fifteen-client caseload, inside a 30-second transaction budget. A
+  `ponytail:` comment names `createMany` as the upgrade if a real caseload
+  ever gets near that.
+
 ## Decisions log
 
 | Decision | Why |
@@ -2819,6 +2920,12 @@ page that renders correctly today would ever notice.
 | `assignedClinicianId` is separate from `requestedClinicianId` | One is what the caller said, the other is what the practice decided. Collapsing them loses the case worth seeing: the call sent somewhere other than the name that was asked for |
 | The page decides what to draw with `may(… 'capacity', { subjectUserId: actor.id })` | "Is this person a clinician" is not a question a page may ask (hard rule 1). "May this person declare their own capacity" is, and only one of the two stays correct when the matrix changes |
 | The purge's candidate query is one `OR` of per-reason cutoffs, not five separate queries | `purgeWhere` still runs once, for the same reason `purgeCutoff` used to be shared between the purge and its preview: two computations that must always agree are one of them one edit away from silently not |
+| The widening needed a join, not a rule | `authorSupervisorOrTreating` was correct and unreachable: `progressContext` never resolved the treating clinician, so the matrix decided against a target nobody built. One select, five call sites |
+| Execution is one `guarded` `depart` plus `auditEvent` per consequence, not `guardedAll` (D-21) | Admin's `client.update` is break-glass and a departure has none. The two ways to satisfy `guardedAll` were fifteen break-glass sessions or the widening the feature refuses |
+| The constraint decides hour clashes at execution; the scan is only the preview (D-22) | A read-then-write check has a window, and `booking.ts` already measured it. The scan and the constraint use the same `tstzrange &&`, so they cannot disagree about what a clash is |
+| One blocker list, not `departureConflicts` (D-20) | P0-7 and P0-8 each add a blocking item. Readiness is one question, and a screen that asks four functions will eventually ask three |
+| Notice stores the capacity value it overwrote (D-23) | Cancelling without it guesses `true`, which reopens a clinician who had closed their own books, a signal D-10 says the manager may only close |
+| The receiving supervisor is checked with `may(… 'cosign' …)`, not a role | The first draft compared `role === 'supervisor'` and hard rule 1's grep failed the build. The matrix is the only place that knows who can co-sign |
 
 ## What this project deliberately is not
 

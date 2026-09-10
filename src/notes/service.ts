@@ -26,12 +26,29 @@ import { Conflict, NotFound } from '../errors';
 
 // ───────────────────────────── progress notes ─────────────────────────────
 
+/**
+ * The three claimants `authorSupervisorOrTreating` names, resolved from the
+ * note and from the client it belongs to.
+ *
+ * The client's `treatingClinicianId` is selected here rather than at each of
+ * the five call sites, because it is the fact that makes D-04's rule
+ * satisfiable at all: a target carrying only the author and their supervisor
+ * decides `false` for the clinician who carries the client now, whatever the
+ * matrix says. One join on a query that already runs, and read, update, sign,
+ * cosign and amend all inherit it.
+ *
+ * Note that this hands `update`, `sign` and `cosign` a wider target than they
+ * can use — those cells are `author` and `supervisorOfAuthor`, and the extra
+ * field decides nothing. That is the right direction for the resolution to be
+ * wrong in: the matrix narrows, the caller does not.
+ */
 async function progressContext(noteId: string) {
   const note = await prisma.progressNote.findUnique({
     where: { id: noteId },
     select: {
       id: true, clientId: true, authorId: true, status: true, content: true,
       author: { select: { role: true, supervisorId: true } },
+      client: { select: { treatingClinicianId: true } },
     },
   });
   if (!note) throw new NotFound('ProgressNote');
@@ -40,6 +57,7 @@ async function progressContext(noteId: string) {
     target: {
       authorId: note.authorId,
       authorSupervisorId: note.author.supervisorId ?? undefined,
+      clinicianId: note.client.treatingClinicianId,
     },
   };
 }
@@ -190,22 +208,34 @@ export async function amendProgressNote(actor: Actor, noteId: string, content: s
   );
 }
 
-/** Progress notes on a client's record — the author's own and, for a supervisor, their supervisees'. */
+/**
+ * Progress notes on a client's record, scoped to the three claimants D-04
+ * names: the author, the supervisor of an author, and the clinician who
+ * carries this client now.
+ *
+ * The scope is in the SQL, not in the guard. One `guarded` call cannot decide
+ * a list — the matrix answers about one note and this returns many — so the
+ * check here is the door and the `where` is the policy, which is why the two
+ * have to say the same thing. The treating clinician reads the whole record
+ * because that is exactly what D-04 granted; everybody else still sees only
+ * what they or a supervisee wrote.
+ */
 export async function listProgressNotes(actor: Actor, clientId: string) {
-  const supervisees = await prisma.user.findMany({
-    where: { supervisorId: actor.id },
-    select: { id: true },
-  });
+  const [{ clinicianId }, supervisees] = await Promise.all([
+    clientTarget(clientId),
+    prisma.user.findMany({ where: { supervisorId: actor.id }, select: { id: true } }),
+  ]);
   const readable = [actor.id, ...supervisees.map((s) => s.id)];
+  const treating = clinicianId === actor.id;
 
   return guarded(
     {
       actor, action: 'read', resource: 'progress_note', clientId,
-      target: { authorId: actor.id },
+      target: { authorId: actor.id, clinicianId },
     },
     (tx) =>
       tx.progressNote.findMany({
-        where: { clientId, authorId: { in: readable } },
+        where: { clientId, ...(treating ? {} : { authorId: { in: readable } }) },
         select: {
           id: true, status: true, signedAt: true, coSignedAt: true, createdAt: true,
           author: { select: { id: true, name: true, role: true } },

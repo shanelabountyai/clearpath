@@ -63,6 +63,7 @@ model User {
 
   departures          Departure[]           @relation("departingUser")
   departuresPlanned   Departure[]           @relation("departurePlanner")
+  superviseesReceived Departure[]           @relation("departureReceivingSupervisor")
   caseloadReceived    DepartureAssignment[] @relation("departureReceiver")
   dispositionsDecided DepartureAssignment[] @relation("departureDecider")
 
@@ -514,8 +515,14 @@ model ProgressNote {
   status  ProgressNoteStatus @default(draft)
 
   signedAt     DateTime?
+  /// `Restrict`, not the implicit `SetNull` this was (P0-8). A co-signature is
+  /// an assertion made by a named person on a date, and a foreign key that can
+  /// quietly null it describes a record that can lose its second signer. This
+  /// changes nothing today — every other reference to `User` already refuses
+  /// the delete — and that is the point: the schema now says what the system
+  /// means instead of relying on the neighbours to mean it.
   coSignedById String?
-  coSignedBy   User?     @relation("noteCoSigner", fields: [coSignedById], references: [id])
+  coSignedBy   User?     @relation("noteCoSigner", fields: [coSignedById], references: [id], onDelete: Restrict)
   coSignedAt   DateTime?
 
   /// Why this note stopped being a draft without being signed (P0-4b). Set in
@@ -1181,6 +1188,32 @@ model Departure {
   /// Set when the caseload actually moved. A `departure_execution_is_complete`
   /// CHECK keeps this and `status` from disagreeing.
   executedAt DateTime?
+
+  /// P0-8: who the departing supervisor's supervisees answer to afterwards.
+  ///
+  /// On `Departure` rather than per-supervisee, because a supervision tree is
+  /// not a caseload: the argument that split `DepartureAssignment` off — some
+  /// clients follow the fit, some the hour, some end — has no counterpart here.
+  /// Associates move together or the practice has quietly restructured itself
+  /// inside a departure, which is a thing to do deliberately with `user.update`
+  /// and not a side effect of somebody's last day.
+  ///
+  /// Null is the ordinary case: most people leaving supervise nobody. A
+  /// departing supervisor who still has supervisees and no receiver here is a
+  /// blocking item on the plan, refused at execution rather than in the schema
+  /// — the column cannot see the supervisee rows that make it required.
+  receivingSupervisorId String?
+  receivingSupervisor   User?   @relation("departureReceivingSupervisor", fields: [receivingSupervisorId], references: [id], onDelete: Restrict)
+
+  /// What `acceptingNewClients` said the moment before notice closed it
+  /// (P0-9), so that `cancelled` can put it back rather than assume `true`.
+  ///
+  /// Without this column the reversal is a guess, and the guess is the exact
+  /// widening D-10 refused: a clinician who had already closed their own books
+  /// would come back open, and the practice manager would have set a capacity
+  /// signal they do not hold `capacity.update` to set. Withdrawn notice
+  /// restores the fact; it does not make a new one.
+  acceptingNewClientsAtNotice Boolean @default(true)
 
   assignments DepartureAssignment[]
   /// The drafts this departure closed (P0-4b). Not a transfer of authorship —

@@ -1,78 +1,59 @@
 # Next
 
-**Item:** Phase 3 of the departure PRD — the transaction. P0-6 (the one
-transaction and the all-or-nothing assertion), P0-7 (alerts), P0-8 (supervision
-and the `coSignedById` `RESTRICT` change), P0-9 (the two moments). Opus.
+**Item:** Phase 4 of the departure PRD — the UI. The plan screen with the
+blocker list, P0-4a's unsigned-drafts list, the `processNoteAfterDepartureDays`
+settings field, and the "departing, last day …" marker in the person picker
+(P0-9's second notice effect). Then P1. Sonnet for the screens; Opus for the
+assignment-decision action, because it writes `DepartureAssignment` under
+`departure.update` and P0-11 wants one audit row per decision.
 
-**Do the two-line widening fix first.** It is carried over from Phase 1's
-handoff and it belongs to this phase now:
+## What just landed (Phase 3)
 
-- `src/notes/service.ts:29` `progressContext()` builds its target from the note
-  alone (`authorId`, `authorSupervisorId`) and never resolves the client's
-  current `treatingClinicianId`. Shared helper behind read, update, sign, cosign
-  and amend — one edit covers all five.
-- `src/notes/service.ts:~185` `listProgressNotes()` scopes its SQL to
-  `authorId: { in: [self, ...supervisees] }`.
+- **The widening fix Phase 1 left behind.** `progressContext()` now resolves
+  the client's `treatingClinicianId`; `listProgressNotes()` returns the whole
+  record to the treating clinician. Mutation-checked: removing the join turns
+  the D-04 test red.
+- **Migration `20260910163704_departure_supervision_and_capacity`.**
+  `Departure.receivingSupervisorId`, `Departure.acceptingNewClientsAtNotice`,
+  `coSignedById` → `RESTRICT`, CHECK `departure_supervisor_is_not_the_leaver`.
+- **`src/staff/departure.ts`:** `planDeparture`, `cancelDeparture`,
+  `departureBlockers`, `executeDeparture`.
+- WRITEUP §31; PRD D-20 … D-23; Phase 3 marked landed.
 
-Until those two land, `authorSupervisorOrTreating` is a policy no call site can
-satisfy. `clients/repository.ts:250` already passes `clinicianId` and needs
-nothing.
+## What Phase 4 must know
 
-## What just landed (Phase 2, committed and pushed — d3bb1ff)
-
-Two migrations. `20260910161613_progress_note_abandoned` holds one line, the
-enum value, alone: Postgres permits `ALTER TYPE … ADD VALUE` in a transaction
-but forbids *using* the value in the same one, and Prisma wraps every migration
-in one. Anything that names `abandoned` has to be in a later migration.
-
-1. **`Departure` + `DepartureAssignment`** (P0-1), with five rules Prisma has no
-   syntax for: `departure_one_open_per_user` (partial unique on `planned`, so
-   the P2 returning clinician stays possible), `departure_last_day_after_notice`,
-   `departure_execution_is_complete`, `departure_transfer_has_a_receiver`
-   (biconditional), `departure_destination_only_when_referred_out`
-   (one-directional, like the inquiry sibling).
-2. **`ProgressNoteStatus.abandoned`** (P0-4b) + `abandonedByDepartureId`, a
-   CHECK pairing them, and two new clauses in `progress_note_content_frozen`:
-   only from `draft`, and terminal.
-3. **`ProcessNote.unreachableSince`** (P0-10),
-   `process_note_delete_only_after_departure`, and `runProcessNotePurge` in
-   `src/staff/departure.ts`. `PracticeSettings.processNoteAfterDepartureDays`
-   ships at 2555 (seven years).
-4. **`npm run purge:run`** — one schedule for both retention sweeps. Settles the
-   PRD's open question as D-16.
-
-WRITEUP §30, four decisions logged (D-16 … D-19).
-
-## Two things that bit, so they do not bite again
-
-1. **Referential cascade is an AFTER action on the parent.** The amendment
-   trigger's hole was first written as `EXISTS (… unreachableSince IS NOT NULL)`
-   and failed, because by the time the child's trigger runs the process note is
-   already deleted. It is now `NOT EXISTS (… unreachableSince IS NULL)` — the
-   absence of a *reachable* parent — which is true in both orders.
-2. **Adding an enum value is a one-line diff with a wide blast radius.** Three
-   places accepted `abandoned` silently and all three now refuse or label it:
-   `coSignProgressNote`, `amendProgressNote`, and both note badges, which
-   otherwise fell through to "Co-signed". No type error anywhere. Assume the
-   same of any future status.
+1. **There is no service function that writes a `DepartureAssignment` yet.**
+   Tests create them with Prisma directly. Phase 4 builds `decideAssignment`
+   under `departure.update`, with an audit row per decision (P0-11's "one per
+   assignment decided").
+2. **`departureBlockers` returns ids, never names.** The plan screen resolves
+   clients through the client resource. Admin's client read is break-glass, so
+   check what the plan screen can actually render for the practice manager
+   before designing it — this is the same wall D-21 hit.
+3. **`planDeparture` does not map the partial-unique violation.** A second
+   notice for somebody already planned surfaces as a raw Prisma P2002. Map it
+   to a `Conflict` when the form exists.
+4. **Hour clashes at execution are a `Conflict('hour_clash')`**, decided by the
+   constraint; the other blockers are `Conflict('departure_not_ready')`. The
+   screen should render both.
 
 ## Gate
 
-**Green at this commit.** Unit **2884/2884** (28 files), typecheck clean. No
-lint script. e2e **not run** — the two badge branches are unreachable until
-something sets `abandoned`, and nothing does until Phase 3. Run it before Phase
-3 lands, as Phase 1's handoff said and this one repeats.
+**Green at this commit.** Unit **2904/2904** (28 files), typecheck clean. e2e
+**45 passed + 1 skipped = 46**, against the production build. No lint script.
+`npm run db:status` green on all three local databases.
 
-`npm run db:status` is green on all three local databases.
+The first unit run failed one test, correctly: hard rule 1's grep caught a
+`role === 'supervisor'` in `departure.ts`. It now asks `may(… 'cosign' …)`.
 
 ## Loose threads
 
 1. Public form's throttle read-then-write race. `ponytail:` comment. Still not
    worth a lock at three an hour.
-2. A clinician on *leave* (not departing) with their books left open — still no
-   mechanism, still P2.
+2. A clinician on *leave* (not departing) — still P2.
 3. Design brief §5b/§5c components with no picture. Still inventory.
-4. **Another project's test sweep will make this one look broken.** A `bookable`
-   sweep running alongside took load average to 39.8 and every DB test to 1–3s
-   (normally sub-second). Check `uptime` and `pg_stat_activity` before reading a
-   stack trace.
+4. **Another project's test sweep will make this one look broken.**
+   `alongside/backend` was sweeping through all of Phase 3 at load average
+   25–35. Check `uptime` and `pgrep -fl vitest` before reading a stack trace.
+5. `executeDeparture` has a `ponytail:` 30s transaction budget with per-row
+   audit writes; `createMany` if a real caseload ever measures near it.
