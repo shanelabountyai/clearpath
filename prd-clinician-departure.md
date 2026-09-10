@@ -191,7 +191,7 @@ None of that is a bug. Each one is a rule this project argued for and got right.
 
 ### Future Considerations (P2)
 
-- **Leave of absence** — a reversible coverage state with its own transitions: notes stay signable, process notes have no window, books close and reopen, and the covering clinician's access ends on a date. Everything this PRD makes terminal, that one has to make temporary, which is why it is not a flag on this model.
+- **Leave of absence** — a reversible coverage state with its own transitions: notes stay signable, process notes have no window, books close and reopen, and the covering clinician's access ends on a date. Everything this PRD makes terminal, that one has to make temporary, which is why it is not a flag on this model. Drafted as `prd-clinician-leave.md`.
 - **Records release / disclosure** — the departing clinician's own copy, a client's request for their file, a request from another practice. Consent with a scope and an expiry, a point-in-time snapshot that is reproducible later, and disclosure as an audit event distinct from a read. Its own PRD.
 - **Transfer outside a departure** — a client who changes clinician for fit rather than because anybody is leaving. P0-5 already makes the access correct for this case; what it lacks is the act, the audit reason and the client's part in it.
 - **A returning clinician** — rehired eighteen months later. Their old client relationships are gone and should stay gone; the question is whether their `User` row is reused and what that means for a supervision tree that has moved on twice.

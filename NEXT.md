@@ -1,50 +1,39 @@
 # Next
 
-**Item:** not decided. Recommended: a clinician on *leave* (not departing),
-still P2. It is the largest remaining product gap now that the public form's
-race is closed. Opus fits if it touches who may read a caseload while the
-treating clinician is away; `opusplan` if it turns out to be scheduling only.
+**Item:** review `prd-clinician-leave.md` (Draft v0.1), then build Phase 1.
+Opus fits: the phase is permission-matrix cells and new coverage rules.
 
-## What just landed (throttle race)
+## What just landed
 
-- `claimSlot` in `src/clients/public-inquiry.ts` is one
-  `INSERT … ON CONFLICT (id) DO UPDATE … WHERE`. The row lock queues a burst;
-  a refusal is the `WHERE` failing and affecting no row. No migration.
-- Measured first: the old read-then-write let **10 of 10** simultaneous
-  requests through a limit of 3, not the "one extra" its `ponytail:` priced.
-- New unit tests: a burst of ten gets exactly three through, and the window a
-  claim starts reads back through Prisma as the clock's instant.
-- The UTC pinning (`::timestamptz AT TIME ZONE 'UTC'`) was tried and removed:
-  with it gone every test, including the instant assertion, still passed. The
-  driver already sends a `Date` as the UTC instant. The assertion is the guard.
-- WRITEUP §35 and one decisions-log row.
+- `prd-clinician-leave.md`, a draft PRD. Nothing is built yet, by choice
+  (2026-09-10): the PRD comes first and is reviewed before any code.
+- The departure PRD's P2 "Leave of absence" bullet points at it.
 
-## What the next session must know
+## The review should settle
 
-1. The first raw-SQL write in `src/` against a zone-less `timestamp(3)`
-   column. The test DB session runs in `America/Chicago`. If a driver upgrade
-   changes `Date` parameters, `starts the window at the instant the clock gave`
-   fails first.
-2. A mutation check (remove the thing, rerun) caught that the existing window
-   tests could not see a timezone shift. Worth repeating on any guard you add.
-3. Outside `npm run`, a bare `dotenv` is the Python CLI. Use
-   `node_modules/.bin/dotenv -e .env.e2e -- node_modules/.bin/playwright test <files>`.
+1. D-02, access derived from dates plus the clock (no grant/revoke writes).
+   Everything else depends on it.
+2. D-03, one required coverer per leave with per-client overrides, which
+   deliberately departs from departure D-13.
+3. D-04, which five cells widen for the coverer.
+4. Open Questions: routine sessions vs crisis only; whether supervisor
+   coverage (P1-3) should be P0.
+
+## Then Phase 1 (pure logic, TDD)
+
+`leavePhase`, the `leave` matrix row with every denial, the three coverage
+rules with boundary-day tests, process-note denials, and the fail-closed test.
 
 ## Gate
 
-**Green at this commit.** Typecheck clean. `public-inquiry.test.ts` **35/35**.
-e2e `enquire.spec.ts` **7 passed = 7** against a fresh production build. The
-full unit suite and the full e2e sweep were not rerun; `claimSlot`'s only caller
-is `submitPublicInquiry`, covered by both files above (last full runs 2920/2920
-unit, 53 + 1 skipped = 54 e2e).
+Unchanged from the previous commit (docs only). Last runs: 2920/2920 unit,
+53 + 1 skipped = 54 e2e.
 
-## Loose threads
+## Loose threads (carried)
 
-1. A clinician on *leave* (not departing) is still P2 (recommended above).
-2. **Kill-on-alarm pattern.** `pkill -f "$PWD.*playwright test "` matches
+1. **Kill-on-alarm pattern.** `pkill -f "$PWD.*playwright test "` matches
    nothing, because the runner's command line has no project path.
-3. Design brief §5b/§5c components with no picture. Still inventory.
-4. `executeDeparture`'s `ponytail:` 30s transaction budget.
-5. Queued links use the stub's `http://localhost:3700`.
-6. `CLEARPATH_THROTTLE_SECRET` must be set on any multi-instance deployment
-   (existing `ponytail:`, a setting rather than a race).
+2. Design brief §5b/§5c components with no picture. Still inventory.
+3. `executeDeparture`'s `ponytail:` 30s transaction budget.
+4. Queued links use the stub's `http://localhost:3700`.
+5. `CLEARPATH_THROTTLE_SECRET` must be set on any multi-instance deployment.
