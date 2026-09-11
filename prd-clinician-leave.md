@@ -2,7 +2,7 @@
 
 **Sample business:** "Stillwater Counseling" (as in the parent PRD) — 6 clinicians, 4 rooms, ~70 standing weekly clients
 **Builder:** Solo, in Claude Code
-**Status:** v0.2 — **reviewed 2026-09-10** (D-14 to D-17 added); Phases 1–4 built, capstone seeded (D-19 added). Decided 2026-09-10: PRD first, then build in phases. Feature PRD, child of `prd-clearpath-counseling-ops.md`; the P2 that `prd-clinician-departure.md` deferred by name
+**Status:** v0.2 — **reviewed 2026-09-10** (D-14 to D-17 added); Phases 1–4 built, capstone seeded (D-19 added); P1-1 and P1-5 built (D-20 added). Decided 2026-09-10: PRD first, then build in phases. Feature PRD, child of `prd-clearpath-counseling-ops.md`; the P2 that `prd-clinician-departure.md` deferred by name
 **Learning objectives:** a clinical read grant that is *derived* from a dated row and the injected clock rather than written on the first day and revoked on the last; what hard rule 9's "exactly one reader" means when that one person is away; and the pair with departure — everything that PRD made terminal, made to end on a date without anybody having to end it
 
 ---
@@ -219,6 +219,7 @@ None of this is a bug. Every rule above is right for a clinician who is at work.
 | D-17 | Supervisor coverage stays P1 | Settled in review; closes the third Open Question. `supervises()` decides every supervisee note and co-signature, so the widening is larger than the clinician case and gets its own review before it is built |
 | D-18 | Early return may set `toDate` to yesterday, and that edit returns the leave's unread alerts | Settled 2026-09-11 in Phase 3. Shortening only to today left the leave on until midnight. The "ends" move P0-5 put in the edit then had nothing to move, and a clinician back at their desk had their alerts going to a colleague all day. Ending the leave at the edit stops access and alerts together, at the moment a person says so. A leave whose first day is today still runs to midnight, because `leave_ends_after_it_starts` refuses anything else |
 | D-19 | A leave write that changes who reads an alert today moves that leave's unread alerts in its own transaction | Settled 2026-09-11 in Phase 4. Phase 3 moved them only on the hourly sweep, apart from an early return. After a supervisor split a client to Kai mid-leave, the matrix refused Dev the record at once, while the alert behind it stayed with Dev until the next run. Recording a leave that starts today, naming a coverer, deciding a client and moving dates all now call the same `rerouteAlerts` the sweep uses. The sweep is still what moves alerts at the date boundaries, when nobody writes anything |
+| D-20 | The uncovered-absence count reads on `leave.read`, and the screen shows it to `leave.create` | Settled 2026-09-11 with P1-1. Guarding the read as `create` would write an audit row saying the practice manager created a leave. The count holds no client (departure D-25), the same kind of number front desk already sees about a departure. The screen asks `may` for `leave.create` because recording a leave is the fix. It counts unread alerts to a recipient with an `unavailable` override active today and no leave behind it |
 
 ## Risks and objections
 
@@ -241,6 +242,7 @@ None of this is a bug. Every rule above is right for a clinician who is at work.
 - **Phase 2:** schema. `Leave`, `LeaveCoverage`, `leave_no_overlap`, the CHECKs, `Alert.coveringLeaveId`, and the override coupling, all audit-logged. Constraints asserted against a real database.
 - **Phase 3:** wiring. Coverage resolution in `clientTarget` and `caseloadWhere`, `alertRecipient` at both creation sites, the boundary sweep, derived capacity, and the `leave_open` departure blocker.
 - **Phase 4:** the leave plan screen (record, name the coverer, split clients, early return), front desk's view, and P1-2 markers.
+- **P1-1, P1-5:** landed 2026-09-11. `leaveWorklist` and `uncoveredAbsenceAlerts` give `/worklists` a "Somebody is away" section, counts only (D-20).
 - **Capstone demo:** the Lagging scenario as a seeded leave and a spec, on an advanced clock.
 
 ## Build Notes for Claude Code

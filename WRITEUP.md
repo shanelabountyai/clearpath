@@ -3243,6 +3243,48 @@ shown to whoever reads the row rather than to the coverer.
 - **No scheduler.** `reminders:run` still has nothing that runs it, so the
   boundary sweep runs only when invoked.
 
+### P1-5 and P1-1: the leave section of `/worklists`
+
+**The problem.** The plan screen answered "is this leave ready?" only for
+someone who opened it. Nothing on front desk's daily screen said that a coverer
+had since booked their own week off, or that a clinician about to go still had
+unread alerts which would land on a colleague on day one. And an absence
+recorded as a bare calendar row, with no leave behind it, covered nobody:
+alerts went on arriving for a person who was not there, and no screen said so.
+
+**The design.** `leaveWorklist` is `departureWorklist` again (departure D-28):
+one row per leave not yet over, and counts only. It gives the caseload the
+coverers take on, how many named coverers could not cover the rest (the plan
+screen's own `unavailableCoverers`, so the two cannot disagree), and the unread
+alerts still addressed to the person away. That last clause is `waitingWith`,
+now shared with `settleAlerts`: exactly the alerts a leave moves on its first
+day. On an upcoming leave it is a nudge to read them before going. On an active
+leave it should be zero, and a number there means a sweep that has not run. The
+unit test shows both, before and after the day-one sweep.
+
+`uncoveredAbsenceAlerts` counts unread alerts whose recipient has an
+`unavailable` override active today with no leave attached. Unread, because an
+acknowledged alert has a reader. Today, because a future absence has not yet
+left anyone waiting. It reads on `leave.read`, so its audit row is a read. The
+screen shows it only to whoever holds `leave.create`, because recording a leave
+is the fix (D-20).
+
+Four mutations, each red once the test had a recipient whose absence begins
+later: without the bare-override filter, the kind filter, the unread filter on
+the leave count, or the today filter. The first version of the test missed that
+last one. Its only future absence belonged to somebody who was also away today,
+and `some` counts an alert once.
+
+**What it deliberately does not do.**
+
+- **No client, anywhere in either read** (departure D-25). The unit test checks
+  the serialised rows for the client id, and the e2e spec checks the section
+  for client codes.
+- **No name on the uncovered count.** The absences section further down the
+  page already says who is away. This line says that nobody covers them.
+- **No capacity judgement.** The caseload count is shown and not compared to
+  anything. Whether fourteen extra clients is too many is the practice's call.
+
 ## Decisions log
 
 | Decision | Why |

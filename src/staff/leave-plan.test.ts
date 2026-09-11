@@ -4,7 +4,10 @@ import { prisma } from '../db';
 import { Forbidden } from '../errors';
 import { actor, makeClient, makeUser, resetDb, settings } from '../test/harness';
 import { zonedToUtc, type LocalDate } from '../time';
-import { cancelLeave, createLeave, decideCoverage, editLeaveDates, getLeavePlan, listLeaves, nameCoverer } from './leave-plan';
+import {
+  cancelLeave, createLeave, decideCoverage, editLeaveDates, getLeavePlan, leaveWorklist, listLeaves, nameCoverer,
+  runLeaveAlertSweep, uncoveredAbsenceAlerts,
+} from './leave-plan';
 
 /** Midday in the practice's zone, so no test sits on a midnight it did not mean to. */
 const on = (d: LocalDate) => fixedClock(zonedToUtc(d, 12 * 60));
@@ -392,5 +395,60 @@ describe('the plan screen\'s read (Phase 4, P0-8)', () => {
       .toEqual([[kaiAway.id, 'active', dev.name], [leave.id, 'upcoming', dev.name]]);
     expect((await listLeaves(actor(desk), on('2026-09-19'))).map((l) => l.id)).toEqual([leave.id]);
     await expect(listLeaves(actor(nour), RECORDED)).rejects.toThrow(Forbidden);
+  });
+});
+
+describe('the work-list counts (P1-5, P1-1)', () => {
+  const unread = (recipientId: string, clientId: string, acknowledgedAt: Date | null = null) =>
+    prisma.alert.create({ data: { recipientId, clientId, kind: 'inbound_unparsed', acknowledgedAt } });
+
+  it('counts each leave\'s caseload, coverers who cannot cover, and alerts still with the person away, naming no client', async () => {
+    const { ray, sam, nour, dev, kai, client, leave } = await onLeave();
+    const desk = await makeUser('front_desk');
+    await makeClient(nour.id);
+    await unread(nour.id, client.id);
+    await unread(nour.id, client.id);
+    await unread(nour.id, client.id, RECORDED.now());
+    await decideCoverage(actor(sam), leave.id, { clientId: client.id, coveringClinicianId: kai.id }, RECORDED);
+    await createLeave(actor(ray), { userId: kai.id, fromDate: '2026-10-19', toDate: '2026-10-23', coveringClinicianId: sam.id }, RECORDED);
+
+    const nours = async (clock = RECORDED) => {
+      const rows = await leaveWorklist(actor(desk), clock);
+      expect(JSON.stringify(rows)).not.toContain(client.id);
+      return rows.find((r) => r.id === leave.id);
+    };
+    expect(await nours()).toEqual({
+      id: leave.id, name: nour.name, coverer: dev.name, ...NOUR_AWAY, phase: 'upcoming',
+      clients: 2, unavailableCoverers: 1, unreadAlerts: 2,
+    });
+
+    // Day one before the sweep: the number is the lateness. After it: nothing waits.
+    const dayOne = on('2026-10-05');
+    expect(await nours(dayOne)).toMatchObject({ phase: 'active', unreadAlerts: 2 });
+    await runLeaveAlertSweep(dayOne);
+    expect(await nours(dayOne)).toMatchObject({ phase: 'active', unreadAlerts: 0 });
+
+    await expect(leaveWorklist(actor(dev), RECORDED)).rejects.toThrow(Forbidden);
+  });
+
+  it('counts unread alerts to somebody away today with no leave behind it, and never a leave\'s own days', async () => {
+    const { ray, nour, dev, kai, client } = await onLeave();
+    const devs = await makeClient(dev.id);
+    const kais = await makeClient(kai.id);
+    const override = (userId: string, day: LocalDate, kind: 'unavailable' | 'available' = 'unavailable') =>
+      prisma.availabilityOverride.create({ data: { userId, fromDate: dbDate(day), toDate: dbDate(day), kind } });
+    await override(dev.id, '2026-09-11');
+    await override(dev.id, '2026-09-12', 'available');
+    await override(kai.id, '2026-09-14');
+    await unread(dev.id, devs.id);
+    await unread(dev.id, devs.id, RECORDED.now());
+    await unread(kai.id, kais.id);
+    await unread(nour.id, client.id);
+
+    expect(await uncoveredAbsenceAlerts(actor(ray), RECORDED)).toBe(1);
+    expect(await uncoveredAbsenceAlerts(actor(ray), on('2026-09-12'))).toBe(0);
+    expect(await uncoveredAbsenceAlerts(actor(ray), on('2026-09-14'))).toBe(1);
+    // Nour's leave has a calendar row too, and an unswept alert behind it: covered, not a gap.
+    expect(await uncoveredAbsenceAlerts(actor(ray), on('2026-10-05'))).toBe(0);
   });
 });

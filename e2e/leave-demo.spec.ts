@@ -78,6 +78,12 @@ test.describe('a seeded leave, from the first alert to the day after return', ()
     await expect(row).toContainText(`covering: ${COVERER}`);
     await expect(row).toContainText('1 client with somebody else');
     await expect(row).toContainText('away now');
+
+    // P1-5: the work list counts the leave and names none of its clients (departure D-25).
+    await page.goto('/worklists');
+    const away = page.locator('section', { has: page.getByRole('heading', { name: 'Somebody is away' }) });
+    await expect(away.locator('li', { hasText: AWAY })).toContainText(`covering: ${COVERER}`);
+    await expect(away).not.toContainText('TC-08');
   });
 
   test('the day after the last, on an advanced clock, the record is refused before anything has run', async () => {

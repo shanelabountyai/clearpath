@@ -11,6 +11,7 @@ import { systemClock } from '@/src/clock';
 import { withDenial } from '@/src/ui/denied';
 import { may } from '@/src/auth/guard';
 import { departureWorklist } from '@/src/staff/departure';
+import { leaveWorklist, uncoveredAbsenceAlerts } from '@/src/staff/leave-plan';
 import { dayLabel, plural } from '../departures/ui';
 
 export const dynamic = 'force-dynamic';
@@ -45,6 +46,9 @@ async function WorkListsPage() {
   // Asked rather than caught: a clinician's `self` cell would refuse this read on
   // every visit, and a denial on the record per page load buries the real ones.
   const leaving = may({ actor, action: 'read', resource: 'departure' }) ? await departureWorklist(actor) : [];
+  const away = may({ actor, action: 'read', resource: 'leave' }) ? await leaveWorklist(actor) : [];
+  // P1-1 is for whoever can fix it, and the fix is recording a leave.
+  const uncovered = may({ actor, action: 'create', resource: 'leave' }) ? await uncoveredAbsenceAlerts(actor) : 0;
 
   return (
     <>
@@ -134,6 +138,50 @@ async function WorkListsPage() {
                     </li>
                   );
                 })}
+              </ul>
+            </Card>
+          </section>
+        )}
+
+        {(away.length > 0 || uncovered > 0) && (
+          <section>
+            <h2 className="mb-2 text-subhead font-semibold">Somebody is away</h2>
+            <p className="mb-3 max-w-prose text-body text-muted">
+              Every leave not yet over, soonest first. Counts only: the plan is where clients are
+              named and where coverage is changed. Unread alerts still with the person away go to
+              whoever covers on the leave&apos;s first day &mdash; better read before they go.
+            </p>
+            <Card className="p-0">
+              <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                {uncovered > 0 && (
+                  <li className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body">
+                    <span>
+                      Away today with no leave recorded, so nobody covers.{' '}
+                      <Link href="/leave" className="text-accent hover:underline">Record a leave</Link>
+                    </span>
+                    <Badge tone="danger" glyph="!">{plural(uncovered, 'unread alert')} nobody covers</Badge>
+                  </li>
+                )}
+                {away.map((l) => (
+                  <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body">
+                    <span>
+                      <Link href={`/leave/${l.id}`} className="font-medium text-accent hover:underline">{l.name}</Link>
+                      <span className="ml-2 text-muted">
+                        {l.phase === 'active' ? `until ${dayLabel(l.toDate)}` : `${dayLabel(l.fromDate)} to ${dayLabel(l.toDate)}`}
+                        {' · '}covering: {l.coverer} · {plural(l.clients, 'client')}
+                      </span>
+                    </span>
+                    <span className="flex flex-wrap items-center gap-2">
+                      {l.unavailableCoverers > 0 && (
+                        <Badge tone="danger" glyph="!">{plural(l.unavailableCoverers, 'coverer')} not here for all of it</Badge>
+                      )}
+                      {l.unreadAlerts > 0 && (l.phase === 'active'
+                        ? <Badge tone="danger" glyph="!">{plural(l.unreadAlerts, 'unread alert')} not yet moved</Badge>
+                        : <Badge tone="warning">{plural(l.unreadAlerts, 'unread alert')} move on day one</Badge>)}
+                      {l.unavailableCoverers === 0 && l.unreadAlerts === 0 && <Badge tone="success" glyph="✓">covered</Badge>}
+                    </span>
+                  </li>
+                ))}
               </ul>
             </Card>
           </section>

@@ -296,6 +296,9 @@ const ALERT_ROW = {
   client: { select: { treatingClinicianId: true } },
 } as const;
 
+/** Alerts about this person's own clients still addressed to them: what a leave moves on its first day. */
+const waitingWith = (userId: string) => ({ coveringLeaveId: null, recipientId: userId, client: { treatingClinicianId: userId } });
+
 type AlertRow = {
   id: string; clientId: string; recipientId: string; coveringLeaveId: string | null;
   client: { treatingClinicianId: string };
@@ -345,10 +348,7 @@ async function settleAlerts(tx: Tx, actor: Actor, leave: { id: string; userId: s
   const alerts = await tx.alert.findMany({
     where: {
       acknowledgedAt: null,
-      OR: [
-        { coveringLeaveId: leave.id },
-        { coveringLeaveId: null, recipientId: leave.userId, client: { treatingClinicianId: leave.userId } },
-      ],
+      OR: [{ coveringLeaveId: leave.id }, waitingWith(leave.userId)],
     },
     select: ALERT_ROW,
   });
@@ -413,6 +413,66 @@ export async function listLeaves(actor: Actor, clock: Clock = systemClock) {
       return { ...r, ...dates, phase: leavePhase(dates, today) };
     });
   });
+}
+
+/**
+ * P1-5: the leave section of `/worklists`, in counts (departure D-25, D-28).
+ *
+ * The plan screen is where clients are named; this says which plan to open.
+ * Per leave not yet over: the caseload its coverers take on, which is the
+ * overload this PRD leaves a practice to judge; how many named coverers could
+ * not cover the rest of it, by the plan screen's own scan; and the unread
+ * alerts still with the person away. On an upcoming leave those move on its
+ * first day. On an active one they should already have, and a number there is
+ * a sweep that has not run.
+ */
+export async function leaveWorklist(actor: Actor, clock: Clock = systemClock) {
+  const today = localDateOf(clock.now());
+  return guarded({ actor, action: 'read', resource: 'leave' }, async (tx) => {
+    const open = await tx.leave.findMany({
+      where: { cancelledAt: null, toDate: { gte: dbDate(today) } },
+      select: {
+        id: true, userId: true, fromDate: true, toDate: true, coveringClinicianId: true,
+        user: { select: { name: true } }, coveringClinician: { select: { name: true } },
+        coverage: { select: { coveringClinicianId: true } },
+      },
+      orderBy: { fromDate: 'asc' },
+    });
+    return Promise.all(open.map(async (l) => {
+      const dates = { fromDate: localDate(l.fromDate), toDate: localDate(l.toDate) };
+      const named = [l.coveringClinicianId, ...l.coverage.map((c) => c.coveringClinicianId)];
+      const [unavailable, clients, unreadAlerts] = await Promise.all([
+        unavailableCoverers(tx, { userId: l.userId, ...dates }, named, today),
+        tx.client.count({ where: { treatingClinicianId: l.userId, status: 'active' } }),
+        tx.alert.count({ where: { acknowledgedAt: null, ...waitingWith(l.userId) } }),
+      ]);
+      return {
+        id: l.id, name: l.user.name, coverer: l.coveringClinician.name, ...dates,
+        phase: leavePhase({ ...dates, cancelledAt: null }, today),
+        clients, unavailableCoverers: unavailable.length, unreadAlerts,
+      };
+    }));
+  });
+}
+
+/**
+ * P1-1: unread alerts addressed to somebody away today with no leave behind
+ * the absence. A bare `unavailable` override grants nobody anything (D-11), so
+ * each of these waits on a person who is not here. A count and never a client
+ * (departure D-25), on `leave.read` like the section it sits in; the screen
+ * shows it to whoever holds `leave.create`, because recording a leave is the fix.
+ */
+export async function uncoveredAbsenceAlerts(actor: Actor, clock: Clock = systemClock) {
+  const today = dbDate(localDateOf(clock.now()));
+  return guarded({ actor, action: 'read', resource: 'leave' }, (tx) =>
+    tx.alert.count({
+      where: {
+        acknowledgedAt: null,
+        recipient: {
+          overrides: { some: { kind: 'unavailable', leave: { is: null }, fromDate: { lte: today }, toDate: { gte: today } } },
+        },
+      },
+    }));
 }
 
 /**
