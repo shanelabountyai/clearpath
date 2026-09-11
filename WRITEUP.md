@@ -3285,6 +3285,34 @@ and `some` counts an alert once.
 - **No capacity judgement.** The caseload count is shown and not compared to
   anything. Whether fourteen extra clients is too many is the practice's call.
 
+### The scheduler: Vercel Cron for `reminders:run` and `purge:run`
+
+**The problem.** Both runners were commands with nothing to call them on the
+deployment. The leave boundary sweep rides on `reminders:run`, so an alert
+stayed with somebody away until a person typed the command. `/worklists` now
+has a count of unread alerts not yet moved, and a missing sweep looks exactly
+like that count. The purge's retention windows were a promise nothing kept.
+
+**What the design does.** `src/jobs.ts` states each runner once, as
+`remindersRun` and `purgeRun`. The npm scripts call them, and so do two route
+handlers under `app/api/cron`. `vercel.json` schedules reminders hourly and the
+purge daily at 08:00 UTC. Each route admits only `Authorization: Bearer
+$CRON_SECRET`, compared over digests so it runs in constant time, and it
+answers with counts. With the secret unset, every call is refused. That
+matters, because otherwise the literal header `Bearer undefined` would match an
+unset secret.
+
+**What it deliberately does not do.**
+
+- **No `delivery:run` or `nonresponse:run`.** `nonresponse:run` has money
+  attached and was built to be stopped on its own. `delivery:run` is the
+  carrier stub, the only thing that moves a message to `delivered`, and fees
+  depend on that state. Scheduling either one is a decision, not wiring.
+- **No audit row for a refused cron call.** It has no actor and reads no
+  record. It gets the same treatment as a request with no session.
+- **No `maxDuration`.** Both runners are idempotent, so a run cut off by the
+  platform limit is finished by the next one.
+
 ## Decisions log
 
 | Decision | Why |
@@ -3505,6 +3533,7 @@ and `some` counts an alert once.
 | The audit log filters on an exact reason code, and links only code-shaped reasons | P0-9 wrote `leave:<id>` so an auditor could list one leave's reads. A break-glass justification is free text, and hard rule 3 keeps free text out of URLs |
 | `orBack` lives in the shared plan UI module, not in an actions file | Every export of a `'use server'` file is a callable endpoint. Sharing the helper from the actions file would have published it |
 | The seed walks past sessions in a total order, `(startAt, client code)` | Standing sessions share start times across clinicians, and the PRNG's rolls are dealt in query order. Ties broken however Postgres chose made a different history on each run; once, two later sections both asked about one session, and the seed crashed on a duplicate reminder row. Client code is deterministic, and a client never holds two sessions at one instant |
+| Vercel Cron calls the runners through `/api/cron/*`, and the scripts and routes share `src/jobs.ts` | Two doors that each list their sweeps drift apart, and the door that drifts is the one nobody watches. The route refuses without `CRON_SECRET` rather than trusting a header a platform might not send |
 
 ## What this project deliberately is not
 

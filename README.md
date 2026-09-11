@@ -118,12 +118,15 @@ npm test             # 1,552 unit + integration tests
 npm run test:e2e     # 24 Playwright tests against a production build
 ```
 
-The confirmation loop runs as commands rather than as a scheduler, because the
-due times derive from `startAt` and an injected clock — so the schedule is an
-implementation detail of whatever calls them:
+The confirmation loop runs as commands, because the due times derive from
+`startAt` and an injected clock — so the schedule is an implementation detail of
+whatever calls them. On the deployment, Vercel Cron calls `reminders:run` hourly
+and `purge:run` daily through `/api/cron/*`, behind `CRON_SECRET`. The rest are
+invoked by hand:
 
 ```bash
-npm run reminders:run      # queue every reminder stage that has come due
+npm run reminders:run      # queue every reminder stage that has come due, then move leave alerts
+npm run purge:run          # every retention window: enquiries, departed process notes
 npm run delivery:run       # the carrier stub: hand over, then hear back
 npm run nonresponse:run    # the half with money attached, stoppable on its own
 npm run inbound:simulate -- 555-0101 "can we talk first"   # a client writes back

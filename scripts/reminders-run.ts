@@ -1,22 +1,13 @@
 import { systemClock } from '../src/clock';
 import { prisma } from '../src/db';
-import { runReminderHorizon } from '../src/scheduling/reminders';
-import { runLeaveAlertSweep } from '../src/staff/leave-plan';
+import { remindersRun } from '../src/jobs';
 
 /**
- * `npm run reminders:run`. A cron entry, a systemd timer or a hosted scheduler
- * calls this; none of them is a dependency, because the cadence is due-date
- * driven rather than tick driven. Running it twice is the same as running it
- * once, so a missed hour costs nothing but lateness.
- *
- * The leave alert sweep rides here and not on `purge:run` (leave Phase 3). It
- * has this runner's property exactly — idempotent, and late rather than wrong
- * when missed — and lateness is its whole cost: an unread critical alert
- * waiting for a nightly purge could sit with somebody away for most of a day.
- * `purge:run` shares a schedule because its sweeps destroy data; this one
- * destroys nothing.
+ * `npm run reminders:run`. Vercel Cron calls the same runner hourly through
+ * `app/api/cron/reminders`, and this is the command for anywhere else. The
+ * cadence is due-date driven rather than tick driven, so running it twice is
+ * the same as running it once, and a missed hour costs only lateness.
  */
-const { queued, promoted, exempted } = await runReminderHorizon(systemClock);
-const moved = await runLeaveAlertSweep(systemClock);
-console.log(`queued ${queued.length}, promoted ${promoted.length}, exempted ${exempted.length}, alerts moved ${moved.length}`);
+const r = await remindersRun(systemClock);
+console.log(`queued ${r.queued}, promoted ${r.promoted}, exempted ${r.exempted}, alerts moved ${r.alertsMoved}`);
 await prisma.$disconnect();
