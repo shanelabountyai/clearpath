@@ -1,15 +1,8 @@
 # Next
 
-**First, two steps that need a person.**
+**First, the step that needs a person.** (P1-3's production migration ran before the push.)
 
-1. **The production migration, before the push.** `20260911163544_leave_supervision_cover`
-   adds `Leave.coveringSupervisorId`. The Vercel build does not migrate, so code
-   that selects the column must not deploy onto a database without it. The
-   column is nullable, so migrating first is safe for the code running now:
-
-       npm run db:migrate:prod && git push
-
-2. **`CRON_SECRET` is still unset on Vercel** (carried). Both cron routes answer
+1. **`CRON_SECRET` is still unset on Vercel** (carried). Both cron routes answer
    401 until it is set:
 
        openssl rand -hex 32 | tr -d '\n' | vercel env add CRON_SECRET production --sensitive
