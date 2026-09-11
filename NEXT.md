@@ -9,33 +9,38 @@
 
    Then redeploy, and check `/api/cron/reminders` returned 200 after the hour.
 
-**Item: a departure while the leaver's supervisor is away.** `executeDeparture`
-hands unacknowledged alerts with no receiver to the leaver's supervisor
-(departure P0-7). If that supervisor is on a leave with a supervision cover,
-those alerts go to the person who is away, not to the cover. Listed under the
-leave PRD's risks. It touches alert routing (hard rule 9), so it is **Opus**
-work. Chosen 2026-09-11 over the supervision-cover follow-ups and a production
-reseed.
+**Item: a supervisor who departs after a supervisee did.** Alex departed and
+Alex's discharged client's alert went to Sam (departure P0-7). When Sam departs,
+`executeDeparture` repoints Alex's `supervisorId` to Sam's receiver. But it moves
+only alerts about Sam's own caseload, so that alert stays with Sam's closed
+account. `ownerOf`/`routesOf` in `src/staff/coverage.ts` already say where it
+belongs. The likely fix is a reroute of the leaver's remaining unread alerts
+after supervisees repoint, plus a blocker when there is nobody to take them.
+This is alert routing (hard rule 9), so it is **Opus** work. It is recommended
+over the supervision-cover follow-ups (loose thread 1) and a production reseed
+(0); pick one of those instead if you prefer.
 
-## What just landed (leave P1-4, "while you were away")
+## What just landed (leave D-26, a departure while the supervisor is away)
 
-- `leave-plan.ts`: `recentlyBack` finds the actor's own leave that ended in the
-  last 14 days, and asks the matrix first. `whileYouWereAway` makes three
-  treating reads in one `guardedAll`: flagged submissions (filtered on
-  `FormRequest.submittedAt`), sessions somebody else held, and progress notes
-  somebody else wrote about sessions in the window. It never reads process notes.
-- Home redirects a recently returned clinician to `/worklists`. The "While you
-  were away" section there comes first.
-- Seed: Dev holds and writes up a session for TC-086 on day two. The
-  leave-demo spec checks Hana's first screen back.
-- D-25 in the PRD, WRITEUP §36 P1-4 entry, and two decisions-log rows.
+- `coverage.ts`: `ownerOf` gives an alert's owner: the treating clinician, or a
+  departed clinician's supervisor. `routesOf` covers the owner, by client
+  (`coverageOf`) or by supervision (`supervisionCoverageOf`). `alertRecipient`,
+  `executeDeparture`, the sweep and every `settleAlerts` write route through it.
+  `nameSupervisionCover` now settles alerts too.
+- Both orders are handled. A departure during the leave sends the alert to the
+  cover, stamped, and the leave's end returns it to the supervisor. A leave that
+  starts after the departure takes the alert on its first day. New alerts about
+  a departed clinician's client no longer go to the closed account.
+- A transferred client's alert reaches an away receiver's coverer inside the
+  departure's transaction.
+- The PRD has D-26 and a new risk line. WRITEUP §36 has the entry "A departure
+  while the supervisor is away", and the decisions log has two rows.
 
 ## Gate
 
-The typecheck is clean. The unit tests passed: 3092 across 25 files, including
-both source-grep guards. Six mutations were each caught by one red test. The
-e2e run passed 14 of 14 (leave, leave-demo, confidentiality) against a fresh
-production build.
+The typecheck is clean. The unit tests passed: 3199 across 32 files. Five
+mutations were each caught by one red test. The e2e specs `departure-demo` and
+`leave-demo` passed, 9 of 9, against a fresh production build.
 
 ## Loose threads
 
@@ -45,7 +50,8 @@ production build.
    any migration.
 1. `listProgressNotes`' audit row names the first leave a cover holds
    (`ponytail:`). `/worklists` does not count blocked supervision covers, and
-   the seed has no supervision-cover demo.
+   the seed has no supervision-cover demo. A supervisor away with no supervision
+   cover still holds a departed supervisee's alerts (D-26 leaves it to D-22).
 2. P1-4 lists nothing for a returning supervisor (co-signatures a cover gave),
    and has no dismissal; it drops off after 14 days.
 3. `delivery:run` and `nonresponse:run` have no scheduler, on purpose.

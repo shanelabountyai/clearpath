@@ -13,7 +13,9 @@ import { actor, makeClient, makeUser, resetDb, settings } from '../test/harness'
 import { zonedToUtc, type LocalDate } from '../time';
 import { alertRecipient } from './coverage';
 import { departureBlockers, executeDeparture, planDeparture } from './departure';
-import { cancelLeave, createLeave, decideCoverage, editLeaveDates, nameCoverer, runLeaveAlertSweep } from './leave-plan';
+import {
+  cancelLeave, createLeave, decideCoverage, editLeaveDates, nameCoverer, nameSupervisionCover, runLeaveAlertSweep,
+} from './leave-plan';
 
 /** Midday in the practice's zone, so no test sits on a midnight it did not mean to. */
 const on = (d: LocalDate) => fixedClock(zonedToUtc(d, 12 * 60));
@@ -355,5 +357,71 @@ describe('a departure over an open leave (P0-8)', () => {
     expect(await departureBlockers(actor(p.ray), d.id, DAY_TWO)).toContainEqual({ kind: 'leave_open', leaveId: p.leave.id });
     await expect(executeDeparture(actor(p.ray), d.id, on('2026-10-20'))).rejects.toMatchObject({ code: 'leave_open' });
     expect((await departureBlockers(actor(p.ray), d.id, BACK)).map((b) => b.kind)).not.toContain('leave_open');
+  });
+});
+
+/**
+ * Alex, whom Sam supervises, leaves with a discharged client's alert unread,
+ * so it passes to Sam (departure P0-7). Sam's leave, once recorded, is Nour's
+ * dates with Dev covering supervision (D-26).
+ */
+async function alexLeavesUnderSam(lastDayOn: LocalDate) {
+  const ray = await makeUser('admin');
+  const sam = await makeUser('supervisor');
+  const dev = await makeUser('supervisor');
+  const kai = await makeUser('therapist');
+  const alex = await makeUser('therapist', { supervisorId: sam.id });
+  const ended = await makeClient(alex.id);
+  const departure = await planDeparture(actor(ray), { userId: alex.id, lastDayOn }, RECORDED);
+  await prisma.departureAssignment.create({
+    data: { departureId: departure.id, clientId: ended.id, disposition: 'discharge', decidedById: ray.id },
+  });
+  const alert = await prisma.alert.create({ data: { recipientId: alex.id, clientId: ended.id, kind: 'screener_threshold' } });
+  const samAway = (clock: Clock) => createLeave(
+    actor(ray), { userId: sam.id, ...NOUR_AWAY, coveringClinicianId: kai.id, coveringSupervisorId: dev.id }, clock,
+  );
+  const at = () => prisma.alert.findUniqueOrThrow({ where: { id: alert.id } });
+  return { ray, sam, dev, ended, departure, alert, samAway, at };
+}
+
+describe('the leaver\'s supervisor is away (D-26)', () => {
+  it('a departure in the window passes the alert to the cover, who can open the record, and it returns to the supervisor, not the closed account', async () => {
+    const p = await alexLeavesUnderSam('2026-10-20');
+    const leave = await p.samAway(RECORDED);
+    const lastDay = on('2026-10-20');
+
+    await executeDeparture(actor(p.ray), p.departure.id, lastDay);
+    expect(await p.at()).toMatchObject({ recipientId: p.dev.id, coveringLeaveId: leave.id });
+    await expect(getClient(actor(p.dev), p.ended.id, lastDay)).resolves.toBeTruthy();
+
+    expect(await runLeaveAlertSweep(LAST)).toEqual([]);
+    expect(await runLeaveAlertSweep(BACK)).toEqual([p.alert.id]);
+    expect(await p.at()).toMatchObject({ recipientId: p.sam.id, coveringLeaveId: null });
+  });
+
+  it('a departure before the window: the sweep moves the alert on the first day, and a cover named mid-leave takes it', async () => {
+    const p = await alexLeavesUnderSam('2026-10-02');
+    const leave = await p.samAway(RECORDED);
+
+    await executeDeparture(actor(p.ray), p.departure.id, on('2026-10-02'));
+    expect(await p.at()).toMatchObject({ recipientId: p.sam.id, coveringLeaveId: null });
+
+    expect(await runLeaveAlertSweep(DAY_BEFORE)).toEqual([]);
+    expect(await runLeaveAlertSweep(FIRST)).toEqual([p.alert.id]);
+    expect(await p.at()).toMatchObject({ recipientId: p.dev.id, coveringLeaveId: leave.id });
+
+    const lee = await makeUser('supervisor');
+    await nameSupervisionCover(actor(p.ray), leave.id, lee.id, DAY_TWO);
+    expect(await p.at()).toMatchObject({ recipientId: lee.id, coveringLeaveId: leave.id });
+  });
+
+  it('a leave recorded to start today takes the alert in its own write, and a new alert about the client routes the same way', async () => {
+    const p = await alexLeavesUnderSam('2026-10-02');
+    await executeDeparture(actor(p.ray), p.departure.id, on('2026-10-02'));
+
+    const leave = await p.samAway(FIRST);
+    expect(await p.at()).toMatchObject({ recipientId: p.dev.id, coveringLeaveId: leave.id });
+    expect(await alertRecipient(prisma, p.ended.id, '2026-10-06')).toEqual({ recipientId: p.dev.id, coveringLeaveId: leave.id });
+    expect(await alertRecipient(prisma, p.ended.id, '2026-11-28')).toEqual({ recipientId: p.sam.id, coveringLeaveId: null });
   });
 });

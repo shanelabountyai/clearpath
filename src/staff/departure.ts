@@ -10,6 +10,7 @@ import { conflictKind } from '../scheduling/booking';
 import { TRANSITIONS as SESSION_TRANSITIONS, type Status as SessionStatus } from '../scheduling/lifecycle';
 import { SYSTEM_ACTOR } from '../scheduling/reminders';
 import { daysBetween, localDateOf, zonedToUtc, type LocalDate } from '../time';
+import { routesOf } from './coverage';
 
 /**
  * A departure is a plan before it is an event.
@@ -814,14 +815,20 @@ export async function executeDeparture(actor: Actor, departureId: string, clock:
           // P0-7. Acknowledged alerts stay where they are: "Alex saw this on
           // the 12th" is a fact about the 12th. Unread ones follow the client
           // to its new clinician, or to the leaver's supervisor when the client
-          // has none — which the blocker scan has already guaranteed exists.
-          const alertTo = receiver ?? leaver.supervisorId;
+          // has none — which the blocker scan has already guaranteed exists —
+          // and to that person's cover while they are away (leave D-26).
+          // Routed as the client stands once this commits: the leaver closed.
           const unread = await tx.alert.findMany({
             where: { recipientId: d.userId, clientId: a.clientId, acknowledgedAt: null },
             select: { id: true },
           });
-          if (alertTo && unread.length) {
-            await tx.alert.updateMany({ where: { id: { in: unread.map((x) => x.id) } }, data: { recipientId: alertTo } });
+          const after = {
+            id: a.clientId, treatingClinicianId: receiver ?? d.userId,
+            treatingClinician: { active: !!receiver, supervisorId: receiver ? null : leaver.supervisorId },
+          };
+          const to = unread.length ? (await routesOf(tx, [after], localDateOf(now))).get(a.clientId)! : null;
+          if (to && to.recipientId !== d.userId) {
+            await tx.alert.updateMany({ where: { id: { in: unread.map((x) => x.id) } }, data: to });
             for (const _ of unread) await note(tx, 'departure:alert_repointed', a.clientId);
           }
 

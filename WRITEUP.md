@@ -3418,6 +3418,47 @@ now sits inside the window, as a session taken from home.
 - **No client names.** Codes, the form's name and dates only. The links open
   each record through its own guard.
 
+### A departure while the supervisor is away
+
+**The problem.** Departure P0-7 hands a leaving clinician's unread alerts to
+their supervisor when the client has nobody to receive them. If that
+supervisor was on a leave with a supervision cover, the alert went to the
+person away. The sweep could not repair it. It routed by the client's treating
+clinician, so the leave's end would have sent the alert back to the closed
+account, and it skipped alerts a departure had passed on for that reason. The
+same gap opened in the other order, a supervisor's leave starting after the
+departure. A new alert about that client went to the closed account as well.
+
+**The design.** Routing learns one fact: whose an alert is when nobody is away.
+`ownerOf` answers with the treating clinician, or, once they are inactive,
+their supervisor. `routesOf` then covers the owner. A clinician is covered by
+client, through `coverageOf`. A supervisor is covered by supervision, through
+`supervisionCoverageOf`, the fact `clientTarget` grants the cover's read on, so
+the alert reaches the cover on exactly the days the cover can open the record.
+Every path calls it: alert creation, `executeDeparture` (routing the client as
+it stands once the transaction commits), the sweep, and each write that settles
+a leave's alerts, now including `nameSupervisionCover`. The stamped
+`coveringLeaveId` is what brings it back to the supervisor. A transferred
+client's alert reaches an away receiver's coverer the same way, in the
+departure's transaction rather than at the next sweep.
+
+Three tests, one per order plus new alerts, and five mutations, each red: the
+departure ignoring the cover, the sweep's old treating-clinician filter, the
+old `waitingWith`, `nameSupervisionCover` not settling, and `ownerOf` answering
+with the treating clinician.
+
+**What it deliberately does not do.**
+
+- **Nothing for a supervisor away with no cover.** The alert stays with them.
+  The door requires a cover for anybody who supervises (D-22), and the plan
+  screen flags a missing one.
+- **Nothing for a supervisor who departs later.** Alex's `supervisorId`
+  repoints to the receiving supervisor, but alerts already with the departing
+  supervisor about Alex's clients stay with them. Their departure moves only
+  their own caseload's alerts.
+- **No new cell.** Routing asks no matrix question; the read the cover needs
+  is P1-3's (D-21).
+
 ## Decisions log
 
 | Decision | Why |
@@ -3644,6 +3685,8 @@ now sits inside the window, as a session taken from home.
 | `supervisorOfAuthor` became `supervisorOfAuthorOrCovering` rather than widening in place | The rule name lands in the audit row, and a name that no longer says who is a name nobody reviewed |
 | "While you were away" is on `/worklists` for 14 days after the last day, and Home lands there (leave D-25) | A dismissal is a write and a stored state for a list that goes stale by itself. Home is the first screen a clinician reaches, so its redirect makes this the first screen back without a second list on `/calendar` |
 | The away summary filters submissions on `FormRequest.submittedAt`, not `FormSubmission.createdAt` | `createdAt` is the database's clock, so on a fixed test clock every submission lands on the day the suite ran (hard rule 7) |
+| An alert belongs to its treating clinician, or to a departed clinician's supervisor, and a leave covers whoever it belongs to (leave D-26) | The sweep routed by treating clinician, so ending a supervisor's leave would have returned a departed clinician's alert to a closed account; one owner function makes creation, departure and the sweep agree in either order |
+| Routing to a supervision cover reads `supervisionCoverageOf`, the fact the cover's client read rests on | An alert is only useful on the days its reader can open the record behind it, so routing and reads share one fact |
 
 ## What this project deliberately is not
 

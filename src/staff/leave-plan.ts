@@ -6,7 +6,7 @@ import { prisma, type Tx } from '../db';
 import { Conflict, NotFound } from '../errors';
 import { SYSTEM_ACTOR } from '../scheduling/reminders';
 import { addDays, localDateOf, zonedToUtc, type LocalDate } from '../time';
-import { coverageOf, routeOf } from './coverage';
+import { ownerOf, ROUTED_CLIENT, routesOf, type RoutedClient } from './coverage';
 import { maySupervise, mayTreat } from './departure';
 import { canTransition, leavePhase } from './leave';
 
@@ -225,7 +225,8 @@ export async function nameCoverer(actor: Actor, leaveId: string, coveringClinici
  * Name, change or clear who covers the supervision (P1-3). On an active leave
  * this write is the grant, as a coverage decision is (D-15), and the audit row
  * is the control. Clearing it is refused while anybody is still supervised.
- * No alert moves: supervision routes none.
+ * The alerts supervision routes, a departed supervisee's (D-26), move in this
+ * write (D-19).
  */
 export async function nameSupervisionCover(
   actor: Actor,
@@ -243,7 +244,9 @@ export async function nameSupervisionCover(
     },
     async (tx) => {
       await assertSupervisionCover(tx, leave, coveringSupervisorId, leave.today);
-      return tx.leave.update({ where: { id: leaveId }, data: { coveringSupervisorId } });
+      const named = await tx.leave.update({ where: { id: leaveId }, data: { coveringSupervisorId } });
+      await settleAlerts(tx, actor, leave, leave.today);
+      return named;
     },
   );
 }
@@ -368,15 +371,21 @@ export async function cancelLeave(actor: Actor, leaveId: string, clock: Clock = 
 
 const ALERT_ROW = {
   id: true, clientId: true, recipientId: true, coveringLeaveId: true,
-  client: { select: { treatingClinicianId: true } },
+  client: { select: ROUTED_CLIENT },
 } as const;
 
-/** Alerts about this person's own clients still addressed to them: what a leave moves on its first day. */
-const waitingWith = (userId: string) => ({ coveringLeaveId: null, recipientId: userId, client: { treatingClinicianId: userId } });
+/**
+ * Alerts this person owns still addressed to them: what a leave moves on its
+ * first day. Their own clients', and a departed supervisee's (D-26).
+ */
+const waitingWith = (userId: string) => ({
+  coveringLeaveId: null, recipientId: userId,
+  client: { OR: [{ treatingClinicianId: userId }, { treatingClinician: { active: false, supervisorId: userId } }] },
+});
 
 type AlertRow = {
   id: string; clientId: string; recipientId: string; coveringLeaveId: string | null;
-  client: { treatingClinicianId: string };
+  client: RoutedClient;
 };
 
 /**
@@ -389,12 +398,10 @@ type AlertRow = {
  * 14 October.
  */
 async function rerouteAlerts(tx: Tx, actor: Actor, alerts: readonly AlertRow[], today: LocalDate) {
-  const coverage = await coverageOf(
-    tx, alerts.map((a) => ({ id: a.clientId, treatingClinicianId: a.client.treatingClinicianId })), today,
-  );
+  const routes = await routesOf(tx, alerts.map((a) => a.client), today);
   const moved: string[] = [];
   for (const a of alerts) {
-    const to = routeOf(a.client, coverage.get(a.clientId), today);
+    const to = routes.get(a.clientId)!;
     if (to.recipientId === a.recipientId && to.coveringLeaveId === a.coveringLeaveId) continue;
     const { count } = await tx.alert.updateMany({
       where: { id: a.id, recipientId: a.recipientId, acknowledgedAt: null }, data: to,
@@ -434,11 +441,11 @@ async function settleAlerts(tx: Tx, actor: Actor, leave: { id: string; userId: s
  * The boundary sweep (P0-5, D-06): every unread alert a leave touches ends up
  * with whoever `alertRecipient` would choose today.
  *
- * Two kinds of alert are in play: one addressed to its client's treating
- * clinician while that clinician has a leave not yet over, and one a leave
- * already moved. Each goes where routing says now — to the coverer from the
- * first day, to a newly decided coverer mid-leave, back to the treating
- * clinician after the last.
+ * Two kinds of alert are in play: one addressed to its owner — the treating
+ * clinician, or a departed clinician's supervisor (D-26) — while the owner has
+ * a leave not yet over, and one a leave already moved. Each goes where routing
+ * says now — to the coverer from the first day, to a newly decided coverer
+ * mid-leave, back to the owner after the last.
  *
  * Idempotent: an alert already where it belongs is not written, so a second
  * run writes nothing and a missed run costs only lateness. Access never waits
@@ -456,9 +463,8 @@ export async function runLeaveAlertSweep(clock: Clock = systemClock) {
     },
     select: ALERT_ROW,
   });
-  // An unstamped alert is the leave's only while it sits with the treating
-  // clinician. One a departure passed to a supervisor is not.
-  const inPlay = candidates.filter((a) => a.coveringLeaveId !== null || a.recipientId === a.client.treatingClinicianId);
+  // An unstamped alert is the leave's only while it sits with its owner.
+  const inPlay = candidates.filter((a) => a.coveringLeaveId !== null || a.recipientId === ownerOf(a.client));
   if (inPlay.length === 0) return [];
   return prisma.$transaction((tx) => rerouteAlerts(tx as Tx, SYSTEM_ACTOR, inPlay, today));
 }

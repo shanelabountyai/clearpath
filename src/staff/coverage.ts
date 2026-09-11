@@ -128,21 +128,59 @@ export interface AlertRoute {
   coveringLeaveId: string | null;
 }
 
+/** What routing reads about a client: who treats them, and whether that person is still here. */
+export const ROUTED_CLIENT = {
+  id: true, treatingClinicianId: true, treatingClinician: { select: { active: true, supervisorId: true } },
+} as const;
+export type RoutedClient = {
+  id: string; treatingClinicianId: string; treatingClinician: { active: boolean; supervisorId: string | null };
+};
+
 /**
- * Where an alert about this client goes today, given what `coverageOf` found.
+ * Whose an alert about this client is when nobody is away: the treating
+ * clinician, or once they have departed, the supervisor departure P0-7 hands
+ * their unread alerts to (D-26). A departed clinician with no supervisor keeps
+ * it, which is the case the departure blocker refuses to close over.
+ */
+export function ownerOf(c: RoutedClient): string {
+  return c.treatingClinician.active ? c.treatingClinicianId : c.treatingClinician.supervisorId ?? c.treatingClinicianId;
+}
+
+/**
+ * Where an alert goes today: the owner's cover while the owner's leave is on,
+ * else the owner.
  *
  * Routing, not authorization, so it does not ask the matrix. It asks
  * `leavePhase`, the function `covers` asks, so an alert reaches the coverer on
  * exactly the days the coverer can open the record behind it.
  */
-export function routeOf(
-  client: { treatingClinicianId: string },
-  coverage: Coverage | undefined,
-  today: LocalDate,
-): AlertRoute {
+export function routeOf(ownerId: string, coverage: Coverage | undefined, today: LocalDate): AlertRoute {
   return coverage && leavePhase(coverage, today) === 'active'
     ? { recipientId: coverage.coveringClinicianId, coveringLeaveId: coverage.leaveId }
-    : { recipientId: client.treatingClinicianId, coveringLeaveId: null };
+    : { recipientId: ownerId, coveringLeaveId: null };
+}
+
+/**
+ * Each client's alert route today, keyed by client id. A treating clinician
+ * away is covered by client (`coverageOf`). A departed clinician's supervisor
+ * away is covered by supervision (`supervisionCoverageOf`), the same fact
+ * `clientTarget` grants the cover's read on, so the cover can open the record
+ * on the days the alert is theirs.
+ */
+export async function routesOf(
+  db: Db,
+  clients: readonly RoutedClient[],
+  today: LocalDate,
+): Promise<Map<string, AlertRoute>> {
+  const departed = clients.filter((c) => ownerOf(c) !== c.treatingClinicianId);
+  const [coverage, supervision] = await Promise.all([
+    coverageOf(db, clients.filter((c) => ownerOf(c) === c.treatingClinicianId), today),
+    supervisionCoverageOf(db, departed.map(ownerOf), today),
+  ]);
+  return new Map(clients.map((c) => {
+    const owner = ownerOf(c);
+    return [c.id, routeOf(owner, owner === c.treatingClinicianId ? coverage.get(c.id) : supervision.get(owner), today)];
+  }));
 }
 
 /**
@@ -152,6 +190,6 @@ export function routeOf(
  * there is only one function to call.
  */
 export async function alertRecipient(db: Db, clientId: string, today: LocalDate): Promise<AlertRoute> {
-  const client = await db.client.findUniqueOrThrow({ where: { id: clientId }, select: { id: true, treatingClinicianId: true } });
-  return routeOf(client, (await coverageOf(db, [client], today)).get(clientId), today);
+  const client = await db.client.findUniqueOrThrow({ where: { id: clientId }, select: ROUTED_CLIENT });
+  return (await routesOf(db, [client], today)).get(clientId)!;
 }
