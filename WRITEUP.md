@@ -3014,6 +3014,62 @@ driver upgrade ever changes that.
   each instance keys its own hashes. That `ponytail:` stays. It is a deployment
   setting, not a race.
 
+## 36. A reader with an end date
+
+§29 moved a caseload because the relationship had ended. A clinician on leave is
+coming back, so the same move is wrong on every line: repoint the treating
+clinician and something has to repoint it back, and that restore is a guess
+about what changed in between. Until this entry, an eight-week leave left
+fourteen clients readable by nobody at work, apart from the practice manager
+through break-glass.
+
+### The grant is a function, not a row
+
+Coverage adds a second reader and never touches the first. `Target` gains
+`coverage` (which leave, which coverer, the dates) and `today`. Three rules add
+the coverer to rules that already existed: `treatingCoveringOrSupervising`,
+`authorSupervisorTreatingOrCovering` and `treatingOrCovering`. Five clinician
+cells move to them. The coverer is `covers`: named on the target, not an
+associate, and `leavePhase(coverage, today) === 'active'`. Nothing is written
+on the first day and nothing is revoked on the last. On the 28th the same
+function returns `ended`, whether or not anything ran.
+
+The review moved one line of the draft. v0.1 had the caller set a bare
+`coveringClinicianId` only on an active day. That made "is the leave on today"
+an access decision taken outside `permissions.ts`, and it left the boundary
+tests with only an id comparison to test. Now the caller resolves *which*
+leave and *which* coverer, the way it resolves a supervisor, and the matrix
+decides *when*.
+
+`can()` now reports `coveringLeaveId`, and only when the same request without
+coverage would be denied. A supervisor who happens to be named as coverer was
+already a reader, and the audit row will not say they relied on a leave.
+
+### What the mutations found
+
+After the boundary tests passed, four guards were removed one at a time and
+every removal turned tests red. One of them mattered more than it looked. Take
+out `t.today !== undefined` and `leavePhase` gets `undefined` for today.
+`undefined < '2026-10-05'` and `undefined > '2026-11-27'` are both false, so
+the phase comes back `active` on every day. The guard that reads like
+belt-and-braces is the only thing between a call site that forgot the clock
+and a grant with no end date. A test pins it.
+
+### What it deliberately does not do
+
+- **Move a process note, in either direction.** Nour's stay `author` against
+  the coverer, the supervisor and break-glass, on every day of the leave. Dev's
+  own, written while covering, are Dev's after it.
+- **Widen for anyone but the coverer.** The coverer's supervisor, and a front
+  desk, admin or auditor account named on the row, get the same answer as
+  without it. That property is asserted over the whole matrix.
+- **Let a coverer read the plan they cover under.** `leave.read` stays `self`
+  for clinicians. Dev learns what they cover from the caseload they can now
+  read.
+- **Resolve anything yet.** No schema, no `clientTarget` change. Until Phase 3
+  wires the resolvers, no call site passes `coverage`, so the widening denies
+  everywhere, which is what failing closed looks like before the wiring.
+
 ## Decisions log
 
 | Decision | Why |
@@ -3210,6 +3266,10 @@ driver upgrade ever changes that.
 | The demo's leaver is a seventh therapist added at the end of the seed | The seed's PRNG sequence carries weight, and other specs assert seeded caseload counts. A clinician who draws nothing and holds hours no standing slot uses moves nothing else |
 | Execution is refused before the last day, inside the guard and ahead of the other blockers (D-30) | Sessions move from the last day on and the account closes whenever execution runs, so an early click left the weeks between on a clinician who could no longer sign in. Before the guard, a supervisor's early attempt would have come back as a date refusal with no denial row |
 | The throttle claims a slot in one `INSERT … ON CONFLICT DO UPDATE … WHERE` | Read-then-write let ten simultaneous requests through a limit of three, not the one extra its comment priced. The row lock queues a burst, and the table's primary key was already the constraint it needed |
+| Whether a leave is on today is decided in `permissions.ts`, from dates on the `Target` (leave D-14) | A resolver that sets the coverer only on an active day makes a date-shaped access decision outside the one file hard rule 1 allows. The caller resolves which leave and which coverer; the matrix decides when |
+| A supervisor's `leave.update` is a grant, and they keep it (leave D-15) | Who covers which client is clinical fit, which is supervision's work. A departure has admin's `depart` between proposal and access and a leave has nothing, so the audit row is the control |
+| Five cells' audit rule names change for every reader, not only the coverer | `client.read` and `form_submission.read` now record `treatingCoveringOrSupervising`, `progress_note.read` records `authorSupervisorTreatingOrCovering`, and both creates record `treatingOrCovering`. The name is the enumeration of who could have read, and a claimant arriving without renaming it is what D-15 said a register exists to stop. Whether a read actually relied on a leave is `coveringLeaveId`, not the name |
+| `covers` refuses an associate even when a row names one | The write will refuse the row (D-13). Refusing again at read time means the rule does not rest on the write having run |
 
 ## What this project deliberately is not
 

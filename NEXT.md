@@ -1,33 +1,44 @@
 # Next
 
-**Item:** review `prd-clinician-leave.md` (Draft v0.1), then build Phase 1.
-Opus fits: the phase is permission-matrix cells and new coverage rules.
+**Item:** clinician leave, Phase 2: schema (`prd-clinician-leave.md` v0.2).
+Opus fits: exclusion constraint, CHECKs, and audit in the same transaction.
 
 ## What just landed
 
-- `prd-clinician-leave.md`, a draft PRD. Nothing is built yet, by choice
-  (2026-09-10): the PRD comes first and is reviewed before any code.
-- The departure PRD's P2 "Leave of absence" bullet points at it.
+- Review settled D-14 to D-17 (2026-09-10). The date check lives in
+  `permissions.ts`, a supervisor's `leave.update` is a grant, the coverer gets
+  all five cells, and supervisor coverage stays P1.
+- Phase 1: `src/staff/leave.ts` (`leavePhase`), the `leave` matrix row, the
+  `covers` rule and three rules built on it, `Target.coverage`/`today`,
+  `Decision.coveringLeaveId`, process-note denials, fail-closed tests, and
+  WRITEUP §36. Mutation-checked: removing the toDate compare, the phase
+  check, the `today` guard or the associate refusal each turns tests red.
 
-## The review should settle
+## Phase 2 scope
 
-1. D-02, access derived from dates plus the clock (no grant/revoke writes).
-   Everything else depends on it.
-2. D-03, one required coverer per leave with per-client overrides, which
-   deliberately departs from departure D-13.
-3. D-04, which five cells widen for the coverer.
-4. Open Questions: routine sessions vs crisis only; whether supervisor
-   coverage (P1-3) should be P0.
+`Leave`, `LeaveCoverage`, `leave_no_overlap` (gist on a daterange where not
+cancelled), the CHECKs (`toDate >= fromDate`, coverer is not the person away),
+`Alert.coveringLeaveId`, and the `AvailabilityOverride` written in the same
+transaction. Every write audit-logged. Constraints asserted against a real
+connection. D-13's coverer check at the door: `mayTreat` plus
+`!requiresCoSignature`, asked of the matrix and never of a role name.
 
-## Then Phase 1 (pure logic, TDD)
+## Watch for
 
-`leavePhase`, the `leave` matrix row with every denial, the three coverage
-rules with boundary-day tests, process-note denials, and the fail-closed test.
+- **Keep `src/staff/leave.ts` import-free.** `permissions.ts` imports it, so
+  a guard or db import there is a cycle through every request. Put the
+  service in its own file.
+- **The rule names in audit rows changed** for five cells, for every reader.
+  Nothing in `src`, `app`, `e2e` or `scripts` matched on the old names.
+- **Phase 3's resolver test** must show a `LeaveCoverage` override beating the
+  leave-level coverer. In pure logic it is only "the id on the target".
+- **Early return** is refused below `fromDate` by the CHECK. The PRD's
+  "shorten to today" rule already avoids that case; keep it.
 
 ## Gate
 
-Unchanged from the previous commit (docs only). Last runs: 2920/2920 unit,
-53 + 1 skipped = 54 e2e.
+3098/3098 unit, typecheck clean. e2e not rerun: no spec touched, and no
+call site passes `coverage` yet. Last e2e: 53 + 1 skipped = 54.
 
 ## Loose threads (carried)
 

@@ -33,6 +33,8 @@ const ALLOWED: Record<Role, Set<string>> = {
     referrer: 'read create update',
     // Answers the phone to "who will I be seeing?". Reads only.
     departure: 'read',
+    // And to "who do I talk to while Nour is away?".
+    leave: 'read',
   }),
   therapist: spec({
     client: 'read update',
@@ -53,6 +55,8 @@ const ALLOWED: Record<Role, Set<string>> = {
     referrer: 'read create',
     // `self`: your own leaving, never a colleague's.
     departure: 'read',
+    // `self` again: your own absence, and not the plan you are covering under.
+    leave: 'read',
   }),
   associate: spec({
     client: 'read update',
@@ -70,6 +74,7 @@ const ALLOWED: Record<Role, Set<string>> = {
     capacity: 'read update',
     referrer: 'read create',
     departure: 'read',
+    leave: 'read',
   }),
   supervisor: spec({
     client: 'read update',
@@ -88,6 +93,8 @@ const ALLOWED: Record<Role, Set<string>> = {
     referrer: 'read create',
     // Reads any departure and proposes the dispositions; never executes one.
     departure: 'read update',
+    // Decides who covers which client, which for a leave is the grant itself.
+    leave: 'read update',
   }),
   admin: spec({
     client: 'read update', // break-glass only
@@ -110,6 +117,8 @@ const ALLOWED: Record<Role, Set<string>> = {
     // The only holder of `depart`. Deliberately not `user.update`, which they
     // already have: same row, three orders of magnitude of blast radius.
     departure: 'read create update depart',
+    // The only creator: recording a leave closes a clinician's books.
+    leave: 'read create update',
   }),
   auditor: spec({ audit_log: 'read' }),
   // The tokenized door, and nothing else in the matrix. `update` is confirm and
@@ -153,6 +162,7 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
     // not only one they hold a relationship to. Absent from the therapist and
     // associate blocks above because theirs is `self`.
     departure: 'read update',
+    leave: 'read update',
   }),
   admin: spec({
     fee: 'read update waive',
@@ -166,6 +176,7 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
     capacity: 'read',
     referrer: 'read create update',
     departure: 'read create update depart',
+    leave: 'read create update',
   }),
   auditor: ALLOWED.auditor,
   // Never unconditional: without a row that is theirs, a token decides `never`.
@@ -177,13 +188,18 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
 
 const ME = 'u-me';
 const OTHER = 'u-other';
+const TODAY = '2026-10-14';
+const coveredBy = (id: string): Pick<Target, 'coverage' | 'today'> => ({
+  coverage: { leaveId: 'lv-probe', coveringClinicianId: id, fromDate: '2026-10-05', toDate: '2026-11-27' },
+  today: TODAY,
+});
 
 /** Actor holds every relationship to the target it possibly could. */
 const insider = (role: Role): [Actor, Target] => [
   { id: ME, role, breakGlass: { reason: 'client in crisis' } },
   {
     authorId: ME, authorSupervisorId: ME, clinicianId: ME, recipientId: ME,
-    treatingSupervisorId: ME, ownerClientId: ME, subjectUserId: ME,
+    treatingSupervisorId: ME, ownerClientId: ME, subjectUserId: ME, ...coveredBy(ME),
   },
 ];
 /** Actor supervises the target's author but wrote nothing. */
@@ -191,7 +207,7 @@ const oversight = (role: Role): [Actor, Target] => [
   { id: ME, role },
   {
     authorId: OTHER, authorSupervisorId: ME, clinicianId: OTHER, recipientId: OTHER,
-    treatingSupervisorId: ME, ownerClientId: OTHER, subjectUserId: OTHER,
+    treatingSupervisorId: ME, ownerClientId: OTHER, subjectUserId: OTHER, ...coveredBy(OTHER),
   },
 ];
 /** Actor holds no relationship at all. */
@@ -199,7 +215,7 @@ const stranger = (role: Role): [Actor, Target] => [
   { id: ME, role },
   {
     authorId: OTHER, authorSupervisorId: OTHER, clinicianId: OTHER, recipientId: OTHER,
-    treatingSupervisorId: OTHER, ownerClientId: OTHER, subjectUserId: OTHER,
+    treatingSupervisorId: OTHER, ownerClientId: OTHER, subjectUserId: OTHER, ...coveredBy(OTHER),
   },
 ];
 
@@ -314,8 +330,11 @@ describe('the official record follows the client (D-04)', () => {
       authorId: ME, authorSupervisorId: OTHER, clinicianId: OTHER,
     });
     expect(d.allowed).toBe(true);
-    // The rule name goes in the audit row, so it is part of the contract.
-    expect(d.rule).toBe('authorSupervisorOrTreating');
+    // The rule name goes in the audit row, so it is part of the contract. The
+    // cell gained a fourth claimant with clinician leave (leave D-04), and the
+    // name says so; the author's read is not attributed to any leave.
+    expect(d.rule).toBe('authorSupervisorTreatingOrCovering');
+    expect(d.coveringLeaveId).toBeUndefined();
   });
 
   it('the clinician who carries the client now reads what the last one wrote', () => {
@@ -437,6 +456,241 @@ describe('departure is its own resource, and `depart` its own action', () => {
         expect(can(actor, 'depart', resource, target).allowed, `${role}:${resource}`).toBe(false);
       }
     }
+  });
+});
+
+describe('leave is its own resource, with no action of its own', () => {
+  const plan: Target = { subjectUserId: OTHER };
+
+  it('the practice manager records it, and nobody else creates one', () => {
+    const ray: Actor = { id: ME, role: 'admin' };
+    for (const action of ['read', 'create', 'update'] as Action[]) {
+      expect(can(ray, action, 'leave', plan).allowed).toBe(true);
+    }
+    for (const role of ROLES.filter((r) => r !== 'admin')) {
+      const [actor, target] = insider(role);
+      expect(can(actor, 'create', 'leave', target).allowed, role).toBe(false);
+    }
+  });
+
+  it('a supervisor decides who covers, and cannot record a leave', () => {
+    const sam: Actor = { id: ME, role: 'supervisor' };
+    expect(can(sam, 'read', 'leave', plan).allowed).toBe(true);
+    expect(can(sam, 'update', 'leave', plan).allowed).toBe(true);
+    expect(can(sam, 'create', 'leave', plan).allowed).toBe(false);
+  });
+
+  it('front desk reads it to answer the phone, and writes none of it', () => {
+    const dana: Actor = { id: ME, role: 'front_desk' };
+    expect(can(dana, 'read', 'leave', plan).allowed).toBe(true);
+    for (const action of ACTIONS.filter((a) => a !== 'read')) {
+      expect(can(dana, action, 'leave', plan).allowed, action).toBe(false);
+    }
+  });
+
+  it('a clinician reads their own absence — not a colleague’s, not even the one they cover', () => {
+    for (const role of ['therapist', 'associate'] as Role[]) {
+      const dev: Actor = { id: ME, role };
+      expect(can(dev, 'read', 'leave', { subjectUserId: ME }).allowed).toBe(true);
+      expect(can(dev, 'read', 'leave', { subjectUserId: OTHER }).allowed).toBe(false);
+      expect(can(dev, 'read', 'leave', { subjectUserId: OTHER, ...coveredBy(ME) }).allowed).toBe(false);
+      expect(can(dev, 'read', 'leave', {}).allowed).toBe(false);
+    }
+  });
+
+  it('holds no break-glass cell anywhere — the row stores no reason to reach', () => {
+    for (const role of ROLES) {
+      for (const action of ACTIONS) {
+        const withGlass: Actor = { id: ME, role, breakGlass: { reason: 'caseload review' } };
+        const without: Actor = { id: ME, role };
+        expect(can(withGlass, action, 'leave', plan).allowed, `${role}:${action}`)
+          .toBe(can(without, action, 'leave', plan).allowed);
+      }
+    }
+  });
+
+  it('is not reachable by the auditor, the client link, or the public form', () => {
+    for (const role of ['auditor', 'client', 'public'] as Role[]) {
+      for (const action of ACTIONS) {
+        const [actor, target] = insider(role);
+        expect(can(actor, action, 'leave', target).allowed, `${role}:${action}`).toBe(false);
+      }
+    }
+  });
+
+  it('answers nothing but read, create and update, for anybody', () => {
+    for (const action of ['sign', 'cosign', 'waive', 'discard', 'depart'] as Action[]) {
+      for (const role of ROLES) {
+        const [actor, target] = insider(role);
+        expect(can(actor, action, 'leave', target).allowed, `${role}:${action}`).toBe(false);
+      }
+    }
+  });
+});
+
+describe('coverage is a second reader for a dated window (leave D-02, D-04, D-14)', () => {
+  const NOUR = 'u-nour';
+  const DEV = 'u-dev';
+  const KAI = 'u-kai';
+  const SAM = 'u-sam'; // Nour's supervisor
+  const DEVS_SUPERVISOR = 'u-devs-supervisor';
+  const LEAVE: NonNullable<Target['coverage']> = {
+    leaveId: 'lv-nour', coveringClinicianId: DEV, fromDate: '2026-10-05', toDate: '2026-11-27',
+  };
+  /** A client of Nour's, a note Nour wrote about them, and an alert addressed to Nour — on `today`. */
+  const onDay = (today: string, coverage: Target['coverage'] = LEAVE): Target => ({
+    clinicianId: NOUR, treatingSupervisorId: SAM, authorId: NOUR, authorSupervisorId: SAM,
+    recipientId: NOUR, coverage, today,
+  });
+  const as = (id: string, role: Role = 'therapist'): Actor => ({ id, role });
+
+  const GAINED: [Resource, Action][] = [
+    ['client', 'read'], ['form_submission', 'read'], ['progress_note', 'read'],
+    ['progress_note', 'create'], ['process_note', 'create'],
+  ];
+  const UNMOVED: [Resource, Action][] = [
+    ['client', 'update'], ['fee', 'read'], ['attendance_history', 'read'],
+    ['portal_link', 'read'], ['portal_link', 'create'], ['alert', 'read'], ['alert', 'update'],
+    ['progress_note', 'update'], ['progress_note', 'sign'], ['progress_note', 'cosign'],
+    ['process_note', 'read'], ['process_note', 'update'],
+  ];
+  const COVERER_ROLES: Role[] = ['therapist', 'supervisor'];
+
+  it.each(GAINED)('the coverer gains %s / %s on the first day and on the last', (resource, action) => {
+    for (const role of COVERER_ROLES) {
+      expect(can(as(DEV, role), action, resource, onDay('2026-10-05')).allowed, role).toBe(true);
+      expect(can(as(DEV, role), action, resource, onDay('2026-11-27')).allowed, role).toBe(true);
+    }
+  });
+
+  it.each(GAINED)('and holds no %s / %s the day before, the day after, once cancelled, or after an early return', (resource, action) => {
+    const dev = as(DEV);
+    expect(can(dev, action, resource, onDay('2026-10-04')).allowed, 'day before').toBe(false);
+    expect(can(dev, action, resource, onDay('2026-11-28')).allowed, 'day after').toBe(false);
+    const cancelled = { ...LEAVE, cancelledAt: new Date('2026-09-20T15:00:00Z') };
+    expect(can(dev, action, resource, onDay('2026-10-14', cancelled)).allowed, 'cancelled').toBe(false);
+    const cameBack = { ...LEAVE, toDate: '2026-10-20' };
+    expect(can(dev, action, resource, onDay('2026-10-20', cameBack)).allowed, 'return day').toBe(true);
+    expect(can(dev, action, resource, onDay('2026-10-21', cameBack)).allowed, 'after return').toBe(false);
+  });
+
+  it.each(UNMOVED)('never gains %s / %s, on any day of the leave', (resource, action) => {
+    for (const role of COVERER_ROLES) {
+      for (const day of ['2026-10-05', '2026-10-14', '2026-11-27']) {
+        expect(can(as(DEV, role), action, resource, onDay(day)).allowed, `${role} ${day}`).toBe(false);
+      }
+    }
+  });
+
+  it('admits only the coverer the target names — a client split to Kai admits Kai, not Dev', () => {
+    const split = onDay('2026-10-14', { ...LEAVE, coveringClinicianId: KAI });
+    for (const [resource, action] of GAINED) {
+      expect(can(as(KAI), action, resource, split).allowed, `${resource}:${action}`).toBe(true);
+      expect(can(as(DEV), action, resource, split).allowed, `${resource}:${action}`).toBe(false);
+    }
+  });
+
+  it('gives the coverer’s own supervisor nothing the coverer gained', () => {
+    const theirs = as(DEVS_SUPERVISOR, 'supervisor');
+    for (const [resource, action] of GAINED) {
+      expect(can(theirs, action, resource, onDay('2026-10-14')).allowed, `${resource}:${action}`).toBe(false);
+    }
+  });
+
+  it('never makes an associate a coverer, even with the row in hand (D-13)', () => {
+    for (const [resource, action] of GAINED) {
+      expect(can(as(DEV, 'associate'), action, resource, onDay('2026-10-14')).allowed, `${resource}:${action}`).toBe(false);
+    }
+  });
+
+  it('changes nothing for a role outside the clinical row, break-glass included', () => {
+    for (const role of ['front_desk', 'admin', 'auditor', 'client', 'public'] as Role[]) {
+      for (const breakGlass of [undefined, { reason: 'client in crisis' }]) {
+        const named: Actor = { id: DEV, role, breakGlass };
+        for (const resource of RESOURCES) {
+          for (const action of ACTIONS) {
+            expect(
+              can(named, action, resource, onDay('2026-10-14')).allowed,
+              `${role}:${resource}:${action}`,
+            ).toBe(can(named, action, resource, onDay('2026-10-14', undefined)).allowed);
+          }
+        }
+      }
+    }
+  });
+
+  it('fails closed: a target built without coverage, or without today, denies the coverer', () => {
+    const { coverage: _c, ...noCoverage } = onDay('2026-10-14');
+    const { today: _t, ...noToday } = onDay('2026-10-14');
+    for (const [resource, action] of GAINED) {
+      expect(can(as(DEV), action, resource, noCoverage).allowed, `${resource}:${action}`).toBe(false);
+      expect(can(as(DEV), action, resource, noToday).allowed, `${resource}:${action}`).toBe(false);
+    }
+  });
+
+  it('leaves the clinician away with every cell they had', () => {
+    for (const [resource, action] of [...GAINED, ['process_note', 'read'], ['alert', 'read']] as [Resource, Action][]) {
+      expect(can(as(NOUR), action, resource, onDay('2026-10-14')).allowed, `${resource}:${action}`).toBe(true);
+    }
+  });
+
+  it('names the leave in the decision only when coverage made the difference', () => {
+    const during = onDay('2026-10-14');
+    expect(can(as(DEV), 'read', 'client', during).coveringLeaveId).toBe('lv-nour');
+    expect(can(as(NOUR), 'read', 'client', during).coveringLeaveId).toBeUndefined();
+    expect(can(as(SAM, 'supervisor'), 'read', 'client', during).coveringLeaveId).toBeUndefined();
+    expect(can(as(DEV), 'read', 'client', onDay('2026-11-28')).coveringLeaveId).toBeUndefined();
+    // Sam covering a supervisee's client was already a reader; the leave is not their reason.
+    const samCovers = onDay('2026-10-14', { ...LEAVE, coveringClinicianId: SAM });
+    expect(can(as(SAM, 'supervisor'), 'read', 'client', samCovers)).toMatchObject({ allowed: true });
+    expect(can(as(SAM, 'supervisor'), 'read', 'client', samCovers).coveringLeaveId).toBeUndefined();
+  });
+});
+
+describe('process notes do not move during a leave (leave P0-4, D-05)', () => {
+  const NOUR = 'u-nour';
+  const DEV = 'u-dev';
+  const SAM = 'u-sam';
+  const DEVS_SUPERVISOR = 'u-devs-supervisor';
+  const coverage = { leaveId: 'lv-nour', coveringClinicianId: DEV, fromDate: '2026-10-05', toDate: '2026-11-27' };
+  const client = { clinicianId: NOUR, treatingSupervisorId: SAM, coverage };
+
+  it('refuses the clinician away’s notes to every reader but them, on every day of the leave', () => {
+    const refused: Actor[] = [
+      { id: DEV, role: 'therapist' },
+      { id: DEV, role: 'supervisor' },
+      { id: SAM, role: 'supervisor' },
+      { id: 'u-ray', role: 'admin' },
+      { id: 'u-ray', role: 'admin', breakGlass: { reason: 'client in crisis' } },
+    ];
+    for (const today of ['2026-10-05', '2026-10-14', '2026-11-27']) {
+      const note: Target = { ...client, authorId: NOUR, authorSupervisorId: SAM, today };
+      for (const actor of refused) {
+        expect(can(actor, 'read', 'process_note', note).allowed, `${actor.id}/${actor.role} ${today}`).toBe(false);
+        expect(can(actor, 'update', 'process_note', note).allowed, `${actor.id}/${actor.role} ${today}`).toBe(false);
+      }
+      expect(can({ id: NOUR, role: 'therapist' }, 'read', 'process_note', note).allowed).toBe(true);
+    }
+  });
+
+  it('keeps the coverer’s own note theirs alone, during the leave and after it', () => {
+    for (const today of ['2026-10-14', '2026-11-30']) {
+      const note: Target = { ...client, authorId: DEV, authorSupervisorId: DEVS_SUPERVISOR, today };
+      expect(can({ id: DEV, role: 'therapist' }, 'read', 'process_note', note).allowed, today).toBe(true);
+      for (const actor of [
+        { id: NOUR, role: 'therapist' },
+        { id: SAM, role: 'supervisor' },
+        { id: DEVS_SUPERVISOR, role: 'supervisor' },
+      ] as Actor[]) {
+        expect(can(actor, 'read', 'process_note', note).allowed, `${actor.id} ${today}`).toBe(false);
+      }
+    }
+  });
+
+  it('lets the coverer start one inside the window and not outside it', () => {
+    const dev: Actor = { id: DEV, role: 'therapist' };
+    expect(can(dev, 'create', 'process_note', { ...client, today: '2026-10-14' }).allowed).toBe(true);
+    expect(can(dev, 'create', 'process_note', { ...client, today: '2026-11-28' }).allowed).toBe(false);
   });
 });
 

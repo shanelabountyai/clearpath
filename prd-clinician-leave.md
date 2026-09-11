@@ -2,7 +2,7 @@
 
 **Sample business:** "Stillwater Counseling" (as in the parent PRD) — 6 clinicians, 4 rooms, ~70 standing weekly clients
 **Builder:** Solo, in Claude Code
-**Status:** Draft v0.1 — **for review before any code** (decided 2026-09-10: PRD first, then build in phases). Feature PRD, child of `prd-clearpath-counseling-ops.md`; the P2 that `prd-clinician-departure.md` deferred by name
+**Status:** v0.2 — **reviewed 2026-09-10** (D-14 to D-17 added); Phase 1 built. Decided 2026-09-10: PRD first, then build in phases. Feature PRD, child of `prd-clearpath-counseling-ops.md`; the P2 that `prd-clinician-departure.md` deferred by name
 **Learning objectives:** a clinical read grant that is *derived* from a dated row and the injected clock rather than written on the first day and revoked on the last; what hard rule 9's "exactly one reader" means when that one person is away; and the pair with departure — everything that PRD made terminal, made to end on a date without anybody having to end it
 
 ---
@@ -56,7 +56,7 @@ None of this is a bug. Every rule above is right for a clinician who is at work.
 - **Ray, practice manager (admin).** Records the leave and names the coverer. Cannot read a clinical record to do so, and must not need to.
 - **Nour, therapist (away).** Wants the caseload safe while they are gone and to come back to an accurate record. May sign a draft from home; must not be the only reader of a critical alert for eight weeks.
 - **Dev, therapist (covering).** Picks up the call in week three and needs that client's record and screener answers that afternoon. Must lose that access on 28 November without anybody remembering to remove it.
-- **Sam, supervisor.** Proposes which colleague covers which client when a long leave splits.
+- **Sam, supervisor.** Decides which colleague covers which client when a long leave splits. For an active leave the decision is the grant (D-15).
 - **Dana, front desk.** Must stop offering Nour to new callers, and must tell a distressed caller who is covering. Never sees why Nour is away.
 - **Jo, auditor.** Must see that Dev read a client of Nour's, on which leave, and that the reads stopped on the 28th, without learning anything clinical.
 
@@ -103,12 +103,15 @@ None of this is a bug. Every rule above is right for a clinician who is at work.
   | auditor | — (`audit_log` only, as today) |
   | client / public | — |
 
-  Front desk reads because they answer the phone to "who do I talk to while Nour is away?". A supervisor proposes who covers which client, as with departures. Only admin creates, because creating is what closes the books (P0-6). **Break-glass appears nowhere in this row.**
+  Front desk reads because they answer the phone to "who do I talk to while Nour is away?". A supervisor decides who covers which client. Unlike a departure, where admin's `depart` turns a proposal into access, a supervisor's `update` on an active leave *is* the grant (D-15). Only admin creates, because creating is what closes the books (P0-6). **Break-glass appears nowhere in this row.**
 
-- `Target` gains `coveringClinicianId`. The caller resolves it from the leave active today and the client's `LeaveCoverage` row, falling back to the leave's coverer. It is undefined when the treating clinician has no active leave.
-- Two new rules, enumerated in the D-15 register. Neither widens an existing rule in place:
+- `Target` gains `coverage` (`leaveId`, `coveringClinicianId`, `fromDate`, `toDate`, `cancelledAt`) and `today`. The caller resolves *which* leave (the treating clinician's open one) and *which* coverer (the client's `LeaveCoverage` row, else the leave's), the way it resolves a supervisor. **It does not decide whether the leave is on today.** The rule calls `leavePhase` on the dates it was handed, so the one date-shaped grant is decided in `permissions.ts` (D-14).
+- Three new rules, enumerated in the departure PRD's D-15 register. None widens an existing rule in place:
   - `treatingCoveringOrSupervising` = `treatingOrSupervising` ∪ the coverer.
   - `authorSupervisorTreatingOrCovering` = `authorSupervisorOrTreating` ∪ the coverer.
+  - `treatingOrCovering` = `treating` ∪ the coverer.
+- The coverer is `covers`: named on the target, not an associate (D-13, held again at read time), and `leavePhase(coverage, today) === 'active'`.
+- `Decision` gains `coveringLeaveId`, set only when the same request without `coverage` would be denied. P0-9's audit reason reads it, so a treating clinician's or supervisor's read is never attributed to a leave.
 - The cells that move for clinicians (D-04):
 
   | resource.action | today | with this PRD |
@@ -116,12 +119,12 @@ None of this is a bug. Every rule above is right for a clinician who is at work.
   | `client.read` | `treatingOrSupervising` | `treatingCoveringOrSupervising` |
   | `form_submission.read` | `treatingOrSupervising` | `treatingCoveringOrSupervising` |
   | `progress_note.read` | `authorSupervisorOrTreating` | `authorSupervisorTreatingOrCovering` |
-  | `progress_note.create` | `treating` | new rule `treatingOrCovering` |
+  | `progress_note.create` | `treating` | `treatingOrCovering` |
   | `process_note.create` | `treating` | `treatingOrCovering` — the note is the coverer's own, and read stays `author` |
 
 - **Unmoved, and asserted as denials to the coverer:** `client.update`, `fee.read`, `attendance_history.read`, `portal_link.*` and `alert.*`, which stays `recipient`.
 - **Only the coverer gains access.** The coverer's supervisor does not, and neither does anyone else. A coverer must be a `therapist` or `supervisor` (D-13).
-- **It fails closed.** A call site that forgets to resolve `coveringClinicianId` denies Dev; it never over-grants. That is the property that makes a derived grant safe to spread across call sites, and a test pins it.
+- **It fails closed.** A call site that forgets to resolve `coverage` or `today` denies Dev; it never over-grants. That is the property that makes a derived grant safe to spread across call sites, and a test pins it.
 
 **P0-4: Process notes do not move, in any way, at any priority**
 
@@ -210,6 +213,10 @@ None of this is a bug. Every rule above is right for a clinician who is at work.
 | D-11 | A leave writes its own `AvailabilityOverride`, and a bare override grants nothing | Four consumers already read overrides correctly, so the leave keeps them fed rather than teaching them a second source. Coverage rests only on a leave, because a grant of clinical access must be a recorded decision naming a person, never a side effect of blocking out a calendar |
 | D-12 | A leave stores no reason | Why an employee is away is private to them, and the calendar is read by front desk. The override carries the generic `Leave` |
 | D-13 | A coverer must be a `therapist` or `supervisor` | An associate's covering notes need a co-signature from their own supervisor, who has no read on the client, so they would countersign blind. That is exactly what `treatingOrSupervising`'s comment exists to prevent. Refusing associate coverers in V1 avoids it; P1-3 is where it would be solved |
+| D-14 | Whether a leave is on today is decided inside `permissions.ts`, from dates on the `Target` | Settled in review, 2026-09-10. As v0.1 read, the resolver set `coveringClinicianId` only on an active day, which put a date-based access decision outside the one file hard rule 1 allows, and left the Phase 1 boundary tests nothing to test. The caller still resolves which leave and which coverer, as it resolves a supervisor. It passes dates and `today`, and `covers` decides. It also lets `can()` report the leave that made the difference, which P0-9's audit reason needs |
+| D-15 | A supervisor keeps `leave.update: always`, and their write is a grant | Settled in review. Story 2 is a clinical-fit judgement, which is supervision's work. The departure shape does not carry over: there, admin's `depart` turns a supervisor's proposal into access; here, a `LeaveCoverage` row or a `toDate` extension on an active leave widens read access when it is written. Admin-only was narrower and put fit with the practice manager. A split `leave_coverage` resource was more precise, at the cost of a matrix row D-08 argued against. Accepted with the audit row as the control |
+| D-16 | The coverer holds routine sessions as well as crisis contact: all five D-04 cells | Settled in review; closes the first Open Question. An eight-week leave means displaced sessions, and a session held with nothing written down is a worse record. A crisis-only practice drops `progress_note.create` and `process_note.create` |
+| D-17 | Supervisor coverage stays P1 | Settled in review; closes the third Open Question. `supervises()` decides every supervisee note and co-signature, so the widening is larger than the clinician case and gets its own review before it is built |
 
 ## Risks and objections
 
@@ -221,9 +228,9 @@ None of this is a bug. Every rule above is right for a clinician who is at work.
 
 ## Open Questions
 
-- **(Product)** Does the coverer hold routine sessions, or only crisis contact? V1: both. `progress_note.create` is in D-04 because an eight-week leave means displaced sessions, and a session held with nothing written down is a worse record. A practice that covers crisis only would drop two cells.
+- ~~**(Product)** Does the coverer hold routine sessions, or only crisis contact?~~ **Settled: both (D-16).** V1: both. `progress_note.create` is in D-04 because an eight-week leave means displaced sessions, and a session held with nothing written down is a worse record. A practice that covers crisis only would drop two cells.
 - **(Product)** Should Nour keep read access while away? V1: yes. They remain the treating clinician and may sign a draft. Revoking access during leave is a disciplinary act with a different name, not a leave.
-- **(Product)** Is supervisor coverage (P1-3) actually P0? A supervisor away for eight weeks leaves associates' notes unsigned against a compliance clock. It is P1 only because its widening is larger and should be reviewed on its own.
+- ~~**(Product)** Is supervisor coverage (P1-3) actually P0?~~ **Settled: stays P1 (D-17).** A supervisor away for eight weeks leaves associates' notes unsigned against a compliance clock. It is P1 only because its widening is larger and should be reviewed on its own.
 - **(Builder)** Which runner hosts the boundary sweep: `purge:run`, whose D-16 argued for one schedule, or `reminders:run`? Settle in Phase 3.
 
 ## Timeline / Phasing
@@ -238,6 +245,7 @@ None of this is a bug. Every rule above is right for a clinician who is at work.
 
 - All CLAUDE.md hard rules apply. Four bite: authorization only through `permissions.ts` (coverage is a `Target` fact, never a check at a call site), process notes author-only at every layer, alerts to exactly one person, and no bare `new Date()` — every phase decision takes the injected clock.
 - Adding `'leave'` to `Resource` fails `permissions.test.ts` until every cell is asserted. Fill the cells; do not narrow the test.
+- **Phase 1 landed the rules; Phase 3 owns resolution.** A resolver test must show a `LeaveCoverage` override naming Kai beating the leave-level coverer, because in pure logic that is only "the id on the target".
 - `clientTarget` is not the only resolver. `app/(staff)/clients/[id]/page.tsx` and `scheduling/worklists.ts` build targets by hand. Route every one through a single coverage lookup, and grep for `treatingSupervisorId:` to find them. The fail-closed property means a missed site is a denial in a test, not a leak, but find them anyway.
 - The mutation check from WRITEUP §35 applies: after the boundary tests pass, shift the practice zone or remove the `toDate` comparison and confirm a test goes red.
 - Write the WRITEUP entry as Phase 1 lands. The entry is the pair with §29: the same caseload, and a grant that ends by itself instead of a transfer that cannot be undone.

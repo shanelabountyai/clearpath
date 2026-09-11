@@ -6,6 +6,9 @@
  * and by nobody else, ever. Not a supervisor, not an admin, not break-glass.
  */
 
+import { leavePhase } from '../staff/leave';
+import type { LocalDate } from '../time';
+
 export type Role =
   | 'front_desk'
   | 'therapist'
@@ -78,7 +81,18 @@ export type Resource =
    * there is no break-glass cell anywhere in its column — there is nothing here
    * to break glass for.
    */
-  | 'departure';
+  | 'departure'
+  /**
+   * A dated absence, and who covers the caseload behind it.
+   *
+   * Its own resource for the reason `departure` is, and with no action of its
+   * own for the reason it is not one: nothing here deactivates an account,
+   * destroys a row or moves a caseload. What it does is name a second reader
+   * for a window, and that widening is decided by the coverage rules below
+   * against the row's dates — never by a grant written on the first day.
+   * No reason is stored, so there is no break-glass cell to reach one with.
+   */
+  | 'leave';
 
 /**
  * `waive` is its own action rather than an `update` on `fee`, because reversing
@@ -106,7 +120,7 @@ export const RESOURCES: readonly Resource[] = [
   'client', 'fee', 'appointment', 'attendance_history', 'progress_note',
   'process_note', 'form_template', 'form_request', 'form_submission',
   'alert', 'portal_link', 'audit_log', 'user', 'inquiry', 'capacity', 'referrer',
-  'departure',
+  'departure', 'leave',
 ];
 export const ACTIONS: readonly Action[] = [
   'read', 'create', 'update', 'sign', 'cosign', 'waive', 'discard', 'depart',
@@ -145,6 +159,24 @@ export interface Target {
   ownerClientId?: string;
   /** The staff member a row is *about*, where that is the whole relationship. */
   subjectUserId?: string;
+  /**
+   * The treating clinician's leave, and who covers this client under it.
+   *
+   * The caller resolves *which* leave and *which* coverer — the client's own
+   * override, or the leave's coverer — the way it resolves a supervisor. It
+   * does not decide whether the leave is on today: the dates travel here and
+   * `covers` decides, so the one date-shaped grant in the application is
+   * reviewable in this file (leave D-14). Absent, it grants nobody anything.
+   */
+  coverage?: {
+    leaveId: string;
+    coveringClinicianId: string;
+    fromDate: LocalDate;
+    toDate: LocalDate;
+    cancelledAt?: Date | null;
+  };
+  /** Today in the practice's zone, from the injected clock. Coverage decides nothing without it. */
+  today?: LocalDate;
 }
 
 type RuleName = keyof typeof RULES;
@@ -156,6 +188,29 @@ const supervises = (a: Actor, t: Target): boolean =>
   a.role === 'supervisor' &&
   t.authorSupervisorId !== undefined &&
   a.id === t.authorSupervisorId;
+
+const treats = (a: Actor, t: Target): boolean =>
+  t.clinicianId !== undefined && a.id === t.clinicianId;
+
+const supervisesTreating = (a: Actor, t: Target): boolean =>
+  a.role === 'supervisor' && t.treatingSupervisorId !== undefined && a.id === t.treatingSupervisorId;
+
+/**
+ * The named coverer, on a day the leave is on.
+ *
+ * Fails closed at every step: no coverage, no today, a cancelled leave or a
+ * day outside the window each decide `false`. An associate is never a coverer
+ * even if a row names one (leave D-13) — their covering notes would need a
+ * co-signature from a supervisor with no read on the client. The write refuses
+ * that row; this refuses it again at read time, so the rule does not rest on
+ * the write having run.
+ */
+const covers = (a: Actor, t: Target): boolean =>
+  t.coverage !== undefined &&
+  t.today !== undefined &&
+  a.id === t.coverage.coveringClinicianId &&
+  !requiresCoSignature(a.role) &&
+  leavePhase(t.coverage, t.today) === 'active';
 
 const RULES = {
   never: () => false,
@@ -173,8 +228,9 @@ const RULES = {
   authorOrSupervisor: (a: Actor, t: Target) => isAuthor(a, t) || supervises(a, t),
   // You do not co-sign your own note.
   supervisorOfAuthor: (a: Actor, t: Target) => supervises(a, t) && !isAuthor(a, t),
-  treating: (a: Actor, t: Target) =>
-    t.clinicianId !== undefined && a.id === t.clinicianId,
+  treating: treats,
+  /** Writing into the record for the dated window, never after it. */
+  treatingOrCovering: (a: Actor, t: Target) => treats(a, t) || covers(a, t),
   /**
    * The official record's readers: whoever wrote it, the supervisor responsible
    * for that author, and the clinician who carries the client *now*.
@@ -198,9 +254,14 @@ const RULES = {
    * of it and stays `author`, which is the whole point of the pair.
    */
   authorSupervisorOrTreating: (a: Actor, t: Target) =>
-    isAuthor(a, t) ||
-    supervises(a, t) ||
-    (t.clinicianId !== undefined && a.id === t.clinicianId),
+    isAuthor(a, t) || supervises(a, t) || treats(a, t),
+  /**
+   * `authorSupervisorOrTreating` and a fourth claimant, named — which is what
+   * that rule's comment said a fourth would take (leave D-04). The coverer
+   * reads the record they are acting on, for the window only.
+   */
+  authorSupervisorTreatingOrCovering: (a: Actor, t: Target) =>
+    isAuthor(a, t) || supervises(a, t) || treats(a, t) || covers(a, t),
   /**
    * The treating clinician, or the supervisor responsible for their practice.
    *
@@ -211,9 +272,14 @@ const RULES = {
    * `author` and is the sharper for it. The supervisor sees everything about
    * this client except the one thing.
    */
-  treatingOrSupervising: (a: Actor, t: Target) =>
-    (t.clinicianId !== undefined && a.id === t.clinicianId) ||
-    (a.role === 'supervisor' && t.treatingSupervisorId !== undefined && a.id === t.treatingSupervisorId),
+  treatingOrSupervising: (a: Actor, t: Target) => treats(a, t) || supervisesTreating(a, t),
+  /**
+   * `treatingOrSupervising` and the coverer. Only the coverer: their own
+   * supervisor gains nothing, because `treatingSupervisorId` is the treating
+   * clinician's supervisor and the coverer's is nowhere on the target.
+   */
+  treatingCoveringOrSupervising: (a: Actor, t: Target) =>
+    treats(a, t) || supervisesTreating(a, t) || covers(a, t),
   /**
    * The actor is the person this row is about.
    *
@@ -247,7 +313,9 @@ type RoleMatrix = Partial<Record<Resource, Cell>>;
 
 /** Shared by therapist, associate and supervisor. Anything absent is denied. */
 const CLINICIAN: RoleMatrix = {
-  client: { read: 'treatingOrSupervising', update: 'treatingOrSupervising' },
+  // Read widens to the coverer (leave D-04); update does not — running the
+  // caseload stays with the clinician who comes back to it.
+  client: { read: 'treatingCoveringOrSupervising', update: 'treatingOrSupervising' },
   fee: { read: 'treatingOrSupervising' },
   appointment: { read: 'always', create: 'always', update: 'always' },
   attendance_history: { read: 'treatingOrSupervising' },
@@ -255,17 +323,22 @@ const CLINICIAN: RoleMatrix = {
     // Widened from `authorOrSupervisor` by D-04: the clinician who carries the
     // client now reads what the previous one wrote, because they are the one
     // clinically responsible for what happens next.
-    read: 'authorSupervisorOrTreating',
-    // Writing is the treating clinician's alone. A supervisor countersigns the
-    // record; they do not author into somebody else's.
-    create: 'treating',
+    // And by leave D-04 to the coverer, for the window.
+    read: 'authorSupervisorTreatingOrCovering',
+    // Writing is the treating clinician's, and the coverer's while they hold
+    // the sessions. A supervisor countersigns the record; they do not author
+    // into somebody else's.
+    create: 'treatingOrCovering',
     update: 'author',
     sign: 'author',
   },
-  process_note: { read: 'author', create: 'treating', update: 'author' },
+  // The coverer may write their own; `read: author` means it is theirs alone,
+  // during the leave and after it, and never reaches the clinician away.
+  process_note: { read: 'author', create: 'treatingOrCovering', update: 'author' },
   form_template: { read: 'always' },
   form_request: { read: 'always', create: 'always' },
-  form_submission: { read: 'treatingOrSupervising' },
+  // The screener behind an alert the coverer was sent (leave D-04).
+  form_submission: { read: 'treatingCoveringOrSupervising' },
   alert: { read: 'recipient', update: 'recipient' },
   // Issuing a client their own door is operational, so a clinician may do it
   // for a client they treat. It grants nothing the client does not already
@@ -288,6 +361,9 @@ const CLINICIAN: RoleMatrix = {
   // entitled to see their own leaving recorded correctly, and a colleague's
   // caseload dispositions are not theirs to read.
   departure: { read: 'self' },
+  // Your own absence. A coverer learns what they cover through the caseload
+  // they can now read, not by reading a colleague's plan.
+  leave: { read: 'self' },
 };
 
 /**
@@ -314,6 +390,9 @@ const MATRIX: Record<Role, RoleMatrix> = {
     // departing clinician the afternoon notice is given. Reads only: who
     // receives which client is a clinical-fit judgement.
     departure: { read: 'always' },
+    // Answers "who do I talk to while Nour is away?". Never why they are away,
+    // because the row does not know.
+    leave: { read: 'always' },
   },
 
   therapist: CLINICIAN,
@@ -327,6 +406,10 @@ const MATRIX: Record<Role, RoleMatrix> = {
     // `depart`: executing one deactivates an account, and that is the practice
     // manager's act.
     departure: { read: 'always', update: 'always' },
+    // Decides who covers which client — and unlike a departure, where the
+    // manager's `depart` turns a proposal into access, this `update` IS the
+    // grant, from the moment it is written for an active leave (leave D-15).
+    leave: { read: 'always', update: 'always' },
     // process_note deliberately inherits `read: author` — a supervisor reading a
     // supervisee's process note is a 403, and the denial is audit-logged.
   },
@@ -369,6 +452,9 @@ const MATRIX: Record<Role, RoleMatrix> = {
     // the one narrow path by which anybody but the clinician touches capacity,
     // and it only ever closes (D-10).
     departure: { read: 'always', create: 'always', update: 'always', depart: 'always' },
+    // The only creator, because creating is what closes a clinician's books
+    // for the window. No break-glass: there is no clinical content in the row.
+    leave: { read: 'always', create: 'always', update: 'always' },
   },
 
   auditor: {
@@ -479,6 +565,13 @@ export interface Decision {
   rule: RuleName;
   /** True whenever the actor is in a break-glass session, allowed or not. */
   breakGlass: boolean;
+  /**
+   * The leave that made the difference, for the audit row's reason (leave
+   * P0-9). Set only when the same request without coverage would be denied,
+   * so a treating clinician's or a supervisor's read is never attributed to a
+   * leave they were not relying on.
+   */
+  coveringLeaveId?: string;
 }
 
 export function can(
@@ -488,9 +581,13 @@ export function can(
   target: Target = {},
 ): Decision {
   const rule = MATRIX[actor.role]?.[resource]?.[action] ?? 'never';
+  const allowed = RULES[rule](actor, target);
+  const coveredOnly = allowed && target.coverage !== undefined &&
+    !RULES[rule](actor, { ...target, coverage: undefined });
   return {
-    allowed: RULES[rule](actor, target),
+    allowed,
     rule,
     breakGlass: !!actor.breakGlass,
+    ...(coveredOnly && { coveringLeaveId: target.coverage!.leaveId }),
   };
 }

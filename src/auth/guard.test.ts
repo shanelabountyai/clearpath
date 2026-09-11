@@ -35,7 +35,7 @@ describe('every access leaves exactly one audit row', () => {
       resourceId: client.id,
       clientId: client.id,
       allowed: true,
-      rule: 'treatingOrSupervising',
+      rule: 'treatingCoveringOrSupervising',
       breakGlass: false,
       reason: null,
     });
