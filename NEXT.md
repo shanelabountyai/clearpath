@@ -39,6 +39,11 @@ production build.
 
 ## Loose threads
 
+0. **Production was 21 migrations behind** (everything since 2026-09-05). All
+   applied cleanly on 2026-09-11, but the demo's data predates those features:
+   confirmations, departures and leave have no seeded rows on production. A
+   reseed is `npm run db:seed:prod`, about 25 silent minutes, and it is your
+   call. From now on, run `db:migrate:prod` before pushing any migration.
 1. **New, from P1-3:** a departure executed while the leaver's supervisor is
    away hands its unassigned alerts to the absent supervisor, not to the cover.
    Listed under the PRD's risks.
