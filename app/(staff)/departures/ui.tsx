@@ -27,6 +27,7 @@ const REFUSAL: Record<string, string> = {
   receiver_unavailable:
     'The person chosen cannot take this on: they are leaving, have left, or their role cannot hold it.',
   bad_transition: 'This departure has already ended, and a finished plan does not change.',
+  leave_open: 'Nothing moved. This person has a leave that has not ended. End it early or cancel it, then execute again.',
 };
 
 export function Refusal({ code }: { code?: string }) {

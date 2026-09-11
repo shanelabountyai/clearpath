@@ -5,6 +5,8 @@ import { DAY, HOUR, systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
 import { Conflict, NotFound } from '../errors';
 import { SYSTEM_ACTOR } from '../scheduling/reminders';
+import { leavePhase } from '../staff/leave';
+import { localDateOf } from '../time';
 import type { ClientEdit } from './repository';
 
 /**
@@ -332,13 +334,17 @@ export async function assignInquiry(actor: Actor, id: string, clinicianId: strin
 /**
  * Every clinician, what they say, and what the rows say.
  *
- * `accepting` is declared and maintained by hand. `caseload` and `queued` are
+ * `declared` is maintained by hand, by the clinician alone. `accepting` is what
+ * front desk reads: the declared value, closed on any day of a leave (leave
+ * P0-6, D-07). Nothing is written when a leave starts, so nothing has to be
+ * restored when it ends, and nobody but the clinician gains `capacity.update`. `caseload` and `queued` are
  * measured off data that already exists, which is why neither has a column:
  * a number somebody has to remember to update is a number that is wrong by
  * Thursday, and a stale capacity figure is worse than none because front desk
  * would believe it.
  */
-export async function clinicianCapacity(actor: Actor) {
+export async function clinicianCapacity(actor: Actor, clock: Clock = systemClock) {
+  const today = localDateOf(clock.now());
   return guarded(
     { actor, action: 'read', resource: 'capacity' },
     async (tx) => {
@@ -346,6 +352,12 @@ export async function clinicianCapacity(actor: Actor) {
         where: { active: true, role: { in: ['therapist', 'associate', 'supervisor'] } },
         select: {
           id: true, name: true, role: true, acceptingNewClients: true,
+          // The one under way, when there is one: two live leaves never share a day.
+          leaves: {
+            where: { cancelledAt: null, toDate: { gte: new Date(`${today}T00:00:00Z`) } },
+            orderBy: { fromDate: 'asc' }, take: 1,
+            select: { fromDate: true, toDate: true },
+          },
           _count: {
             select: {
               clients: { where: { status: 'active' } },
@@ -360,7 +372,10 @@ export async function clinicianCapacity(actor: Actor) {
         id: c.id,
         name: c.name,
         role: c.role,
-        accepting: c.acceptingNewClients,
+        accepting: c.acceptingNewClients && !c.leaves.some((l) => leavePhase({
+          fromDate: l.fromDate.toISOString().slice(0, 10), toDate: l.toDate.toISOString().slice(0, 10),
+        }, today) === 'active'),
+        declared: c.acceptingNewClients,
         caseload: c._count.clients,
         queued: c._count.inquiriesAssigned,
       }));

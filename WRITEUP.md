@@ -3102,6 +3102,71 @@ test red.
 Phase 2 writes nothing that grants anything yet. No resolver reads these rows
 until Phase 3, so every call site still denies the coverer.
 
+### Phase 3: the wiring
+
+One lookup answers *which leave* and *which coverer* for every caller:
+`coverageOf` in `staff/coverage.ts`. `clientTarget`, the progress-note context,
+the caseload list and alert routing all ask it, so a split client cannot mean
+Kai to the record and Dev to the alert. It takes the earliest leave that is
+not cancelled and not over, which is the one under way when there is one, and
+hands `covers` its dates. The day is still decided in `permissions.ts`. The
+module imports only the database and `leave.ts`, because the repository, the
+form service and the inbound handler all reach it.
+
+**The caseload list** admits a covered client by asking `may` of that client's
+resolved target, so the list names exactly the clients the record would open,
+and the leave-level coverer never sees a client split to Kai. The scope moved
+inside `AND`. Spread as a bare `OR`, it is overwritten by a search's own `OR`,
+and Dev's search returns every matching client in the practice.
+
+**Alerts.** Both creation sites call `alertRecipient`. It asks `leavePhase`,
+the same function `covers` asks, so an alert reaches the coverer on exactly
+the days the coverer can open the record behind it. The screener's email
+follows the alert. The sweep, `runLeaveAlertSweep`, has no idea what a
+boundary is. It puts every unread alert a leave touches where routing says it
+belongs *today*. The first day, the day after the last, and a supervisor's
+mid-leave decision are the same rule, and a second run writes nothing. The
+run is one transaction, and each write in it is conditioned on the alert
+still being unread with the same recipient. Each writes a `SYSTEM_ACTOR`
+audit row naming the leave. It
+runs on `reminders:run`, not `purge:run`. It has that runner's property
+exactly: idempotent, and late rather than wrong when missed. Lateness is its
+whole cost, and an unread critical alert should not wait for a nightly purge.
+
+**The audit reason.** `guarded` writes `leave:<leaveId>` when the decision
+rested on a leave and the action brought no reason code of its own. A treating
+clinician's read of the same client on the same day writes `null`.
+
+**The books** are `accepting = declared && !onLeave(today)`. The clinician's
+own toggle reads `declared`, so Nour's "Open my books" button describes the
+value Nour set, not the leave.
+
+**`leave_open`** is a departure blocker while the leave has not ended.
+Execution refuses with that code after D-30's date check, ahead of the generic
+`departure_not_ready`.
+
+**Back today** (D-18, settled in this phase). Phase 2 let `toDate` shorten as
+far as today. The leave was then still on until midnight, so the "ends" alert
+move P0-5 put in the edit had nothing to move. Nour, back at their desk, had
+alerts going to Dev for the rest of the day. An early return now saves
+`toDate` as yesterday. The leave has ended when the edit commits, so Dev's
+next read is refused. The same transaction returns the leave's unread alerts
+through `rerouteAlerts`, the helper the sweep uses, and the audit rows name the
+admin who made the edit. A leave whose first day is today cannot end before
+it, and runs to midnight.
+
+Nine mutations, each turned red: the split row ignored, routing that ignores
+the dates, no leave reason, the scope as a bare `OR`, a sweep that moves
+acknowledged alerts, no `leave_open`, capacity not derived, an early return
+that leaves the alerts with Dev, and the one that mattered most:
+
+- **The coverer's whole-record note list asks `coveringLeaveId`, not
+  `allowed`.** `listProgressNotes` widens its `where` for the coverer, the way
+  it already did for the treating clinician. Asking whether the matrix allowed
+  a read of somebody else's note is the obvious test, and admin's break-glass
+  passes that cell. The obvious version handed the practice manager every
+  progress note on the client. A test pins it.
+
 ## Decisions log
 
 | Decision | Why |
@@ -3307,6 +3372,14 @@ until Phase 3, so every call site still denies the coverer.
 | The coverer's own leave counts against them only from today | A week off that already ended does not stop somebody covering the rest of a colleague's leave. Counting from the leave's first day refused a coverer for days already behind them |
 | Naming the leave's own coverer for a client deletes the override row | "There is no row for same as the leave" (P0-1) is kept by the write, so changing the leave's coverer also removes rows that now duplicate it. A copy would go stale the next time the leave's coverer changed |
 | `covers` refuses an associate even when a row names one | The write will refuse the row (D-13). Refusing again at read time means the rule does not rest on the write having run |
+| One coverage lookup, `staff/coverage.ts`, for record reads, the caseload list and alert routing | A split client resolved in two places can mean one coverer to the record and another to the alert. It imports only the database and `leave.ts`, because the repository, the form service and the inbound handler all reach it |
+| The leave alert sweep runs on `reminders:run`, not `purge:run` (leave Phase 3) | It is idempotent and late rather than wrong when missed, which is that runner's contract. Lateness is its only cost, and a nightly purge would leave an unread critical alert with somebody away for most of a day. `purge:run` shares a schedule because its sweeps destroy data |
+| The sweep reconciles every unread alert a leave touches to today's routing, rather than acting on boundary days | The first day, the day after the last, and a mid-leave coverage decision become one rule. A missed run is caught up by the next, and a second run writes nothing |
+| The caseload list admits covered clients through `may` on each resolved target | A `where` that re-derived coverage would be a second statement of the rule, and it could name a client the record refuses |
+| The coverer's whole-record note list asks `can(...).coveringLeaveId`, not `allowed` | Break-glass passes the same `progress_note.read` cell, and asking `allowed` gave the practice manager every note on the client |
+| Capacity returns `accepting` (derived) and `declared` (the clinician's toggle) | Front desk reads the first. The clinician's own button must describe the value they set, or "Open my books" during a leave writes a value that changes nothing on screen |
+| A departure over an open leave refuses with its own `leave_open` code | The fix is one edit on a different screen. `departure_not_ready` would send the admin looking through a plan that has nothing wrong with it |
+| "Back today" saves `toDate` as yesterday, and that edit returns the leave's unread alerts (leave D-18) | Shortening only to today left the leave on until midnight. The edit had no alerts to return, and a clinician at their desk had theirs going to a colleague all day. Ending the leave at the edit stops access and alerts together, when a person says so |
 
 ## What this project deliberately is not
 

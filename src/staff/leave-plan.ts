@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { guarded } from '../auth/guard';
+import { auditEvent, guarded } from '../auth/guard';
 import { requiresCoSignature, type Actor } from '../auth/permissions';
 import { systemClock, type Clock } from '../clock';
 import { prisma, type Tx } from '../db';
 import { Conflict, NotFound } from '../errors';
-import { localDateOf, type LocalDate } from '../time';
+import { SYSTEM_ACTOR } from '../scheduling/reminders';
+import { addDays, localDateOf, type LocalDate } from '../time';
+import { coverageOf, routeOf } from './coverage';
 import { mayTreat } from './departure';
 import { canTransition, leavePhase } from './leave';
 
@@ -193,9 +195,12 @@ export async function decideCoverage(
  * Move a leave's dates, and its calendar row with them.
  *
  * Upcoming: any dates from today on. Active: the first day has happened and
- * stays; the last day may shorten as far as today — early return, D-10 — or
- * extend, and `leave_no_overlap` decides the extension. Extending an active
- * leave widens a grant, like a coverage decision, and is audited the same way.
+ * stays; the last day may extend, and `leave_no_overlap` decides the
+ * extension, or shorten as far as yesterday. That is "back today" (D-10,
+ * D-18): the leave has ended when this commits, so the coverer's next read is
+ * refused and the alerts the leave moved go back in this transaction (P0-5).
+ * Extending an active leave widens a grant, like a coverage decision, and is
+ * audited the same way.
  */
 export async function editLeaveDates(
   actor: Actor,
@@ -212,7 +217,9 @@ export async function editLeaveDates(
   if (leave.phase === 'upcoming' && fromDate < leave.today) {
     throw new Conflict('A leave cannot start before today', 'leave_starts_past');
   }
-  if (toDate < leave.today) throw new Conflict('A leave can end today at the earliest', 'leave_ends_past');
+  if (toDate < addDays(leave.today, -1)) {
+    throw new Conflict('A leave can end yesterday at the earliest, for somebody back today', 'leave_ends_past');
+  }
   if (toDate < fromDate) throw new Conflict('A leave cannot end before it starts', 'leave_ends_before_start');
 
   try {
@@ -224,7 +231,12 @@ export async function editLeaveDates(
       async (tx) => {
         const dates = { fromDate: dbDate(fromDate), toDate: dbDate(toDate) };
         await tx.availabilityOverride.update({ where: { id: leave.overrideId! }, data: dates });
-        return tx.leave.update({ where: { id: leaveId }, data: dates });
+        const edited = await tx.leave.update({ where: { id: leaveId }, data: dates });
+        if (toDate < leave.today) {
+          const stamped = await tx.alert.findMany({ where: { coveringLeaveId: leaveId, acknowledgedAt: null }, select: ALERT_ROW });
+          await rerouteAlerts(tx, actor, stamped, leave.today);
+        }
+        return edited;
       },
     );
   } catch (e) {
@@ -253,4 +265,78 @@ export async function cancelLeave(actor: Actor, leaveId: string, clock: Clock = 
       return cancelled;
     },
   );
+}
+
+const ALERT_ROW = {
+  id: true, clientId: true, recipientId: true, coveringLeaveId: true,
+  client: { select: { treatingClinicianId: true } },
+} as const;
+
+type AlertRow = {
+  id: string; clientId: string; recipientId: string; coveringLeaveId: string | null;
+  client: { treatingClinicianId: string };
+};
+
+/**
+ * Put each alert where routing says it belongs today, in the caller's
+ * transaction: the sweep's, or an early return's.
+ *
+ * Each write is conditioned on the alert still being unread with the same
+ * recipient, so an acknowledgement that lands mid-run stays where it was read.
+ * Acknowledged alerts never move: "Dev saw this on 14 October" is a fact about
+ * 14 October.
+ */
+async function rerouteAlerts(tx: Tx, actor: Actor, alerts: readonly AlertRow[], today: LocalDate) {
+  const coverage = await coverageOf(
+    tx, alerts.map((a) => ({ id: a.clientId, treatingClinicianId: a.client.treatingClinicianId })), today,
+  );
+  const moved: string[] = [];
+  for (const a of alerts) {
+    const to = routeOf(a.client, coverage.get(a.clientId), today);
+    if (to.recipientId === a.recipientId && to.coveringLeaveId === a.coveringLeaveId) continue;
+    const { count } = await tx.alert.updateMany({
+      where: { id: a.id, recipientId: a.recipientId, acknowledgedAt: null }, data: to,
+    });
+    if (!count) continue;
+    // P0-9: ids and a code. The leave is the one the alert moved under, or back from.
+    await auditEvent(actor, 'update', 'leave', {
+      resourceId: to.coveringLeaveId ?? a.coveringLeaveId!, clientId: a.clientId,
+      reason: to.coveringLeaveId ? 'leave:alert_to_coverer' : 'leave:alert_returned',
+    }, tx);
+    moved.push(a.id);
+  }
+  return moved;
+}
+
+/**
+ * The boundary sweep (P0-5, D-06): every unread alert a leave touches ends up
+ * with whoever `alertRecipient` would choose today.
+ *
+ * Two kinds of alert are in play: one addressed to its client's treating
+ * clinician while that clinician has a leave not yet over, and one a leave
+ * already moved. Each goes where routing says now — to the coverer from the
+ * first day, to a newly decided coverer mid-leave, back to the treating
+ * clinician after the last.
+ *
+ * Idempotent: an alert already where it belongs is not written, so a second
+ * run writes nothing and a missed run costs only lateness. Access never waits
+ * on this — an alert raised in the window was routed when it was raised.
+ */
+export async function runLeaveAlertSweep(clock: Clock = systemClock) {
+  const today = localDateOf(clock.now());
+  const candidates = await prisma.alert.findMany({
+    where: {
+      acknowledgedAt: null,
+      OR: [
+        { coveringLeaveId: { not: null } },
+        { recipient: { leaves: { some: { cancelledAt: null, toDate: { gte: dbDate(today) } } } } },
+      ],
+    },
+    select: ALERT_ROW,
+  });
+  // An unstamped alert is the leave's only while it sits with the treating
+  // clinician. One a departure passed to a supervisor is not.
+  const inPlay = candidates.filter((a) => a.coveringLeaveId !== null || a.recipientId === a.client.treatingClinicianId);
+  if (inPlay.length === 0) return [];
+  return prisma.$transaction((tx) => rerouteAlerts(tx as Tx, SYSTEM_ACTOR, inPlay, today));
 }

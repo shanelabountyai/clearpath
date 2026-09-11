@@ -36,9 +36,10 @@ export function leavePhase(leave: LeaveDates, today: LocalDate): LeavePhase {
  * `scheduling/lifecycle.ts` set.
  *
  * Only an upcoming leave cancels. An active one has already been a grant for
- * at least a day, so it ends by shortening `toDate` to today and the record
- * keeps the days it was on. Ended and cancelled go nowhere: they are the record
- * of who could read what, and on which days.
+ * at least a day, so it ends by shortening `toDate` — as far as yesterday, for
+ * somebody back today (D-18) — and the record keeps the days it was on. Ended
+ * and cancelled go nowhere: they are the record of who could read what, and on
+ * which days.
  */
 export const TRANSITIONS: Record<LeavePhase, readonly LeavePhase[]> = {
   upcoming: ['cancelled'],

@@ -1,26 +1,38 @@
 import { guarded, may } from '../auth/guard';
-import { includesSuperviseeCaseloads, ownCaseloadOnly, type Actor } from '../auth/permissions';
+import { includesSuperviseeCaseloads, ownCaseloadOnly, type Actor, type Target } from '../auth/permissions';
+import { systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
 import { NotFound } from '../errors';
+import { coverageOf } from '../staff/coverage';
+import { localDateOf } from '../time';
 
 /**
- * The relationship facts a check needs about a client: who treats them, and who
- * supervises that person. Resolved once, from data, and handed to the matrix —
- * which is what lets reassigning a supervisor change access with no deploy.
+ * The relationship facts a check needs about a client: who treats them, who
+ * supervises that person, and who covers the client while they are away.
+ * Resolved once, from data, and handed to the matrix — which is what lets
+ * reassigning a supervisor, or recording a leave, change access with no deploy.
+ *
+ * `today` travels with the coverage and `covers` decides whether the leave is
+ * on (leave D-14), so the grant ends at midnight whether or not anything ran.
  */
-export async function clientTarget(clientId: string) {
+export async function clientTarget(clientId: string, clock: Clock = systemClock) {
   const row = await prisma.client.findUnique({
     where: { id: clientId },
     select: {
+      id: true,
       treatingClinicianId: true,
       treatingClinician: { select: { supervisorId: true } },
     },
   });
   if (!row) throw new NotFound('Client');
+  const today = localDateOf(clock.now());
+  const coverage = (await coverageOf(prisma, [row], today)).get(clientId);
   return {
     clinicianId: row.treatingClinicianId,
     treatingSupervisorId: row.treatingClinician.supervisorId ?? undefined,
-  };
+    today,
+    ...(coverage && { coverage }),
+  } satisfies Target;
 }
 
 /**
@@ -62,8 +74,8 @@ export async function consentStatus(clientId: string) {
   };
 }
 
-export async function getClient(actor: Actor, clientId: string) {
-  const target = await clientTarget(clientId);
+export async function getClient(actor: Actor, clientId: string, clock: Clock = systemClock) {
+  const target = await clientTarget(clientId, clock);
 
   return guarded(
     { actor, action: 'read', resource: 'client', resourceId: clientId, clientId, target },
@@ -95,16 +107,52 @@ export async function getClient(actor: Actor, clientId: string) {
 /**
  * The clients a role is scoped to, as a `where` fragment.
  *
- * A supervisor's caseload is their own plus their supervisees'. Front desk gets
- * no fragment because they book for everyone, and the practice manager never
+ * A supervisor's caseload is their own plus their supervisees'. Anybody
+ * covering a leave also has the clients they cover today. Front desk gets no
+ * fragment because they book for everyone, and the practice manager never
  * reaches a query that uses this — their client read is break-glass.
+ *
+ * `AND`, so a caller's own `OR` (a search) cannot overwrite the scope.
  */
-async function caseloadWhere(actor: Actor) {
+async function caseloadWhere(actor: Actor, clock: Clock = systemClock) {
   if (!ownCaseloadOnly(actor)) return {};
-  const supervisees = includesSuperviseeCaseloads(actor)
-    ? (await prisma.user.findMany({ where: { supervisorId: actor.id }, select: { id: true } })).map((u) => u.id)
-    : [];
-  return { treatingClinicianId: { in: [actor.id, ...supervisees] } };
+  const [supervisees, covered] = await Promise.all([
+    includesSuperviseeCaseloads(actor)
+      ? prisma.user.findMany({ where: { supervisorId: actor.id }, select: { id: true } }).then((us) => us.map((u) => u.id))
+      : [],
+    coveredClientIds(actor, localDateOf(clock.now())),
+  ]);
+  return {
+    AND: [{ OR: [{ treatingClinicianId: { in: [actor.id, ...supervisees] } }, { id: { in: covered } }] }],
+  };
+}
+
+/**
+ * The clients this person covers today, each admitted by the same `client.read`
+ * the record itself asks, so the list never names a client the record would
+ * refuse — the leave-level coverer does not see a client split to somebody else.
+ */
+async function coveredClientIds(actor: Actor, today: string): Promise<string[]> {
+  const leaves = await prisma.leave.findMany({
+    where: {
+      cancelledAt: null,
+      toDate: { gte: new Date(`${today}T00:00:00Z`) },
+      OR: [{ coveringClinicianId: actor.id }, { coverage: { some: { coveringClinicianId: actor.id } } }],
+    },
+    select: { userId: true },
+  });
+  if (leaves.length === 0) return [];
+  const clients = await prisma.client.findMany({
+    where: { treatingClinicianId: { in: leaves.map((l) => l.userId) } },
+    select: { id: true, treatingClinicianId: true },
+  });
+  const coverage = await coverageOf(prisma, clients, today);
+  return clients
+    .filter((c) => may({
+      actor, action: 'read', resource: 'client',
+      target: { clinicianId: c.treatingClinicianId, coverage: coverage.get(c.id), today },
+    }))
+    .map((c) => c.id);
 }
 
 /** The relationship facts a caseload-wide read asserts about itself. */
@@ -118,8 +166,8 @@ const OWN_CASELOAD = (actor: Actor) => ({ clinicianId: actor.id, treatingSupervi
  * and one audit row per client on a page of forty would bury the individual
  * record opens that actually matter.
  */
-export async function listClients(actor: Actor, opts: { search?: string } = {}) {
-  const scope = await caseloadWhere(actor);
+export async function listClients(actor: Actor, opts: { search?: string; clock?: Clock } = {}) {
+  const scope = await caseloadWhere(actor, opts.clock);
 
   return guarded(
     { actor, action: 'read', resource: 'client', target: OWN_CASELOAD(actor) },
@@ -249,13 +297,8 @@ export async function effectiveFeeCents(clientId: string): Promise<number> {
   return client?.feeCents ?? settings?.standardFeeCents ?? 18000;
 }
 
-/** What the current actor may do with this record, for rendering affordances. */
-export function clientAffordances(
-  actor: Actor,
-  treatingClinicianId: string,
-  treatingSupervisorId?: string,
-) {
-  const target = { clinicianId: treatingClinicianId, treatingSupervisorId };
+/** What the current actor may do with this record, for rendering affordances. Pass `clientTarget`'s answer. */
+export function clientAffordances(actor: Actor, target: Target) {
   return {
     edit: may({ actor, action: 'update', resource: 'client', target }),
     setFee: may({ actor, action: 'update', resource: 'fee', target }),
@@ -264,6 +307,6 @@ export function clientAffordances(
     readAttendance: may({ actor, action: 'read', resource: 'attendance_history', target }),
     /** Does this person ever author process notes? Front desk and admin do not. */
     authorsProcessNotes: may({ actor, action: 'read', resource: 'process_note', target: { authorId: actor.id } }),
-    isTreatingClinician: actor.id === treatingClinicianId,
+    isTreatingClinician: actor.id === target.clinicianId,
   };
 }

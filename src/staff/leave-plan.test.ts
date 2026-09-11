@@ -285,23 +285,26 @@ describe('a leave\'s dates, and its one transition (P0-2, D-10)', () => {
     expect((await leaveAudit()).at(-1)).toMatchObject({ actorId: sam.id, reason: 'leave:dates_edited' });
   });
 
-  it('ends early by shortening to today and no further, keeps its first day, and is frozen once ended', async () => {
+  it('ends early by shortening as far as yesterday — back today — keeps its first day, and is frozen once ended', async () => {
     const { ray, kai, client, leave } = await onLeave();
     const midway = on('2026-10-20');
     const edit = (fromDate: LocalDate, toDate: LocalDate, clock = midway) =>
       editLeaveDates(actor(ray), leave.id, { fromDate, toDate }, clock);
 
-    await expect(edit('2026-10-05', '2026-10-19')).rejects.toMatchObject({ code: 'leave_ends_past' });
+    // A leave whose first day is today cannot end before it.
+    await expect(edit('2026-10-05', '2026-10-04', on('2026-10-05'))).rejects.toMatchObject({ code: 'leave_ends_before_start' });
+    await expect(edit('2026-10-05', '2026-10-18')).rejects.toMatchObject({ code: 'leave_ends_past' });
     await expect(edit('2026-10-06', '2026-11-27')).rejects.toMatchObject({ code: 'leave_started' });
     await edit('2026-10-05', '2026-10-20');
-    expect(await override(leave.overrideId!)).toMatchObject({ toDate: dbDate('2026-10-20') });
+    await edit('2026-10-05', '2026-10-19');
+    expect(await override(leave.overrideId!)).toMatchObject({ toDate: dbDate('2026-10-19') });
 
-    const after = on('2026-10-21');
-    await expect(edit('2026-10-05', '2026-10-30', after)).rejects.toMatchObject({ code: 'leave_frozen' });
-    await expect(decideCoverage(actor(ray), leave.id, { clientId: client.id, coveringClinicianId: kai.id }, after))
+    // Ended the moment it committed: frozen the same day.
+    await expect(edit('2026-10-05', '2026-10-30')).rejects.toMatchObject({ code: 'leave_frozen' });
+    await expect(decideCoverage(actor(ray), leave.id, { clientId: client.id, coveringClinicianId: kai.id }, midway))
       .rejects.toMatchObject({ code: 'leave_frozen' });
-    await expect(nameCoverer(actor(ray), leave.id, kai.id, after)).rejects.toMatchObject({ code: 'leave_frozen' });
-    await expect(cancelLeave(actor(ray), leave.id, after)).rejects.toMatchObject({ code: 'bad_transition' });
+    await expect(nameCoverer(actor(ray), leave.id, kai.id, midway)).rejects.toMatchObject({ code: 'leave_frozen' });
+    await expect(cancelLeave(actor(ray), leave.id, midway)).rejects.toMatchObject({ code: 'bad_transition' });
   });
 
   it('extends only where leave_no_overlap allows, and a refused extension leaves the calendar row where it was', async () => {

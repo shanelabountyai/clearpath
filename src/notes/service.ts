@@ -1,9 +1,11 @@
 import { guarded } from '../auth/guard';
-import { requiresCoSignature, type Actor } from '../auth/permissions';
+import { can, requiresCoSignature, type Actor } from '../auth/permissions';
 import { systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
 import { clientTarget } from '../clients/repository';
 import { Conflict, NotFound } from '../errors';
+import { coverageOf } from '../staff/coverage';
+import { localDateOf } from '../time';
 
 /**
  * Two classes of clinical note, with deliberately different rules.
@@ -42,7 +44,7 @@ import { Conflict, NotFound } from '../errors';
  * field decides nothing. That is the right direction for the resolution to be
  * wrong in: the matrix narrows, the caller does not.
  */
-async function progressContext(noteId: string) {
+async function progressContext(noteId: string, clock: Clock = systemClock) {
   const note = await prisma.progressNote.findUnique({
     where: { id: noteId },
     select: {
@@ -52,12 +54,16 @@ async function progressContext(noteId: string) {
     },
   });
   if (!note) throw new NotFound('ProgressNote');
+  const today = localDateOf(clock.now());
+  const treating = { id: note.clientId, treatingClinicianId: note.client.treatingClinicianId };
   return {
     note,
     target: {
       authorId: note.authorId,
       authorSupervisorId: note.author.supervisorId ?? undefined,
       clinicianId: note.client.treatingClinicianId,
+      coverage: (await coverageOf(prisma, [treating], today)).get(note.clientId),
+      today,
     },
   };
 }
@@ -75,7 +81,8 @@ export async function createProgressNote(
   return guarded(
     {
       actor, action: 'create', resource: 'progress_note', clientId: appt.clientId,
-      target: { clinicianId: appt.clinicianId },
+      // The session's clinician writes it down; so does the client's coverer, holding it (D-16).
+      target: { ...(await clientTarget(appt.clientId)), clinicianId: appt.clinicianId },
     },
     (tx) =>
       tx.progressNote.create({
@@ -220,22 +227,28 @@ export async function amendProgressNote(actor: Actor, noteId: string, content: s
  * because that is exactly what D-04 granted; everybody else still sees only
  * what they or a supervisee wrote.
  */
-export async function listProgressNotes(actor: Actor, clientId: string) {
-  const [{ clinicianId }, supervisees] = await Promise.all([
-    clientTarget(clientId),
+export async function listProgressNotes(actor: Actor, clientId: string, clock: Clock = systemClock) {
+  const [target, supervisees] = await Promise.all([
+    clientTarget(clientId, clock),
     prisma.user.findMany({ where: { supervisorId: actor.id }, select: { id: true } }),
   ]);
+  const { clinicianId } = target;
   const readable = [actor.id, ...supervisees.map((s) => s.id)];
   const treating = clinicianId === actor.id;
+  // The coverer reads the record the treating clinician reads, for the window
+  // (leave D-04). Asked of the matrix, and only a read a leave alone decided
+  // counts: break-glass passes the same cell and must not widen the list.
+  const covering = !treating && !!can(actor, 'read', 'progress_note', target).coveringLeaveId;
 
   return guarded(
     {
       actor, action: 'read', resource: 'progress_note', clientId,
-      target: { authorId: actor.id, clinicianId },
+      // Without `authorId` for the coverer, so the audit row names the leave.
+      target: covering ? target : { authorId: actor.id, clinicianId },
     },
     (tx) =>
       tx.progressNote.findMany({
-        where: { clientId, ...(treating ? {} : { authorId: { in: readable } }) },
+        where: { clientId, ...(treating || covering ? {} : { authorId: { in: readable } }) },
         select: {
           id: true, status: true, signedAt: true, coSignedAt: true, createdAt: true,
           author: { select: { id: true, name: true, role: true } },

@@ -205,27 +205,27 @@ describe('editing', () => {
 
 describe('affordances drive what gets rendered', () => {
   it('give front desk the operational tier and nothing clinical', () => {
-    expect(clientAffordances(actor(desk), therapist.id)).toEqual({
+    expect(clientAffordances(actor(desk), { clinicianId: therapist.id })).toEqual({
       edit: true, setFee: false, readProgressNotes: false, readScreeners: false,
       readAttendance: false, authorsProcessNotes: false, isTreatingClinician: false,
     });
   });
 
   it('give the treating clinician the clinical tier', () => {
-    expect(clientAffordances(actor(therapist), therapist.id)).toEqual({
+    expect(clientAffordances(actor(therapist), { clinicianId: therapist.id })).toEqual({
       edit: true, setFee: false, readProgressNotes: true, readScreeners: true,
       readAttendance: true, authorsProcessNotes: true, isTreatingClinician: true,
     });
   });
 
   it('give the practice manager the business tier only', () => {
-    expect(clientAffordances(actor(admin), therapist.id)).toMatchObject({
+    expect(clientAffordances(actor(admin), { clinicianId: therapist.id })).toMatchObject({
       setFee: true, readProgressNotes: false, readScreeners: false, readAttendance: true,
     });
   });
 
   it('cost nothing in the audit log — drawing a button is not an access', async () => {
-    clientAffordances(actor(desk), therapist.id);
+    clientAffordances(actor(desk), { clinicianId: therapist.id });
     expect(await prisma.auditEvent.count()).toBe(0);
   });
 });
@@ -239,7 +239,7 @@ describe("a supervisor and their supervisee's client", () => {
     const got = await getClient(actor(boss), theirClient.id);
     expect(got.id).toBe(theirClient.id);
 
-    const can = clientAffordances(actor(boss), assoc.id, boss.id);
+    const can = clientAffordances(actor(boss), { clinicianId: assoc.id, treatingSupervisorId: boss.id });
     expect(can).toMatchObject({
       readScreeners: true, readAttendance: true, authorsProcessNotes: true, isTreatingClinician: false,
     });

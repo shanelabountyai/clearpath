@@ -311,7 +311,13 @@ export type DepartureBlocker =
   /** An unread alert on a client nobody receives, and no supervisor to route it to. */
   | { kind: 'unread_alert'; clientId: string; alertId: string }
   /** A departing supervisor's associate, with no active supervisor named to take them. */
-  | { kind: 'supervisee_unassigned'; superviseeId: string };
+  | { kind: 'supervisee_unassigned'; superviseeId: string }
+  /**
+   * A leave of the leaver's that has not ended (leave P0-8, D-09). Two plans
+   * moving one caseload on overlapping days is a half-moved state; ending the
+   * leave early, or cancelling it, is one edit.
+   */
+  | { kind: 'leave_open'; leaveId: string };
 
 /** Sessions that have not happened yet. Derived, so a new status cannot be forgotten here. */
 const OPEN_SESSIONS = (Object.keys(SESSION_TRANSITIONS) as SessionStatus[])
@@ -324,9 +330,9 @@ type DepartureRow = {
   id: string; userId: string; lastDayOn: Date; receivingSupervisorId: string | null;
 };
 
-async function blockersOf(db: Tx | typeof prisma, d: DepartureRow): Promise<DepartureBlocker[]> {
+async function blockersOf(db: Tx | typeof prisma, d: DepartureRow, today: LocalDate): Promise<DepartureBlocker[]> {
   const from = lastDayStart(d.lastDayOn);
-  const [leaver, caseload, assignments, alerts, supervisees, receivingSupervisor] = await Promise.all([
+  const [leaver, caseload, assignments, alerts, supervisees, receivingSupervisor, leaves] = await Promise.all([
     db.user.findUniqueOrThrow({ where: { id: d.userId }, select: { supervisorId: true } }),
     db.client.findMany({ where: caseloadOf(d.userId), select: { id: true } }),
     db.departureAssignment.findMany({
@@ -344,6 +350,11 @@ async function blockersOf(db: Tx | typeof prisma, d: DepartureRow): Promise<Depa
     d.receivingSupervisorId
       ? db.user.findUnique({ where: { id: d.receivingSupervisorId }, select: { id: true, role: true, active: true } })
       : null,
+    // Upcoming or active: not cancelled, and the last day not yet behind us.
+    db.leave.findMany({
+      where: { userId: d.userId, cancelledAt: null, toDate: { gte: new Date(`${today}T00:00:00Z`) } },
+      select: { id: true },
+    }),
   ]);
 
   const decided = new Map(assignments.map((a) => [a.clientId, a]));
@@ -394,6 +405,7 @@ async function blockersOf(db: Tx | typeof prisma, d: DepartureRow): Promise<Depa
     ORDER BY m."startAt"
   `;
   for (const c of clashes) blockers.push({ kind: 'hour_clash', ...c });
+  for (const l of leaves) blockers.push({ kind: 'leave_open', leaveId: l.id });
 
   return blockers;
 }
@@ -401,12 +413,12 @@ async function blockersOf(db: Tx | typeof prisma, d: DepartureRow): Promise<Depa
 const DEPARTURE_ROW = { id: true, userId: true, lastDayOn: true, receivingSupervisorId: true, status: true } as const;
 
 /** The plan screen's answer to "is this departure ready?" Read-guarded, because it names clients. */
-export async function departureBlockers(actor: Actor, departureId: string) {
+export async function departureBlockers(actor: Actor, departureId: string, clock: Clock = systemClock) {
   const d = await prisma.departure.findUnique({ where: { id: departureId }, select: DEPARTURE_ROW });
   if (!d) throw new NotFound('Departure');
   return guarded(
     { actor, action: 'read', resource: 'departure', resourceId: departureId, target: { subjectUserId: d.userId } },
-    (tx) => blockersOf(tx, d),
+    (tx) => blockersOf(tx, d, localDateOf(clock.now())),
   );
 }
 
@@ -552,7 +564,7 @@ export async function departureWorklist(actor: Actor, clock: Clock = systemClock
     });
     return Promise.all(open.map(async (d) => {
       const [blockers, unsignedNotes] = await Promise.all([
-        blockersOf(tx, d),
+        blockersOf(tx, d, today),
         tx.progressNote.count({ where: { authorId: d.userId, status: 'draft' } }),
       ]);
       const blocking: Partial<Record<DepartureBlocker['kind'], number>> = {};
@@ -602,7 +614,7 @@ const CLIENT_NAME = { id: true, code: true, firstName: true, lastName: true } as
  * them from `clients`. Once executed the caseload belongs to other people, so
  * the list is what the plan decided.
  */
-export async function getDeparturePlan(actor: Actor, departureId: string) {
+export async function getDeparturePlan(actor: Actor, departureId: string, clock: Clock = systemClock) {
   const d = await prisma.departure.findUnique({ where: { id: departureId }, select: DEPARTURE_ROW });
   if (!d) throw new NotFound('Departure');
 
@@ -630,7 +642,7 @@ export async function getDeparturePlan(actor: Actor, departureId: string) {
             decidedBy: { select: { name: true } },
           },
         }),
-        d.status === 'planned' ? blockersOf(tx, d) : Promise.resolve([] as DepartureBlocker[]),
+        d.status === 'planned' ? blockersOf(tx, d, localDateOf(clock.now())) : Promise.resolve([] as DepartureBlocker[]),
       ]);
 
       const decided = new Map(assignments.map((a) => [a.clientId, a]));
@@ -737,7 +749,10 @@ export async function executeDeparture(actor: Actor, departureId: string, clock:
         if (localDateOf(now) < d.lastDayOn.toISOString().slice(0, 10)) {
           throw new Conflict('A departure cannot execute before its last day', 'before_last_day');
         }
-        const blockers = (await blockersOf(tx, d)).filter((b) => b.kind !== 'hour_clash');
+        const blockers = (await blockersOf(tx, d, localDateOf(now))).filter((b) => b.kind !== 'hour_clash');
+        if (blockers.some((b) => b.kind === 'leave_open')) {
+          throw new Conflict('This person has a leave that has not ended. End or cancel it first', 'leave_open');
+        }
         if (blockers.length) {
           throw new Conflict(`This departure has ${blockers.length} unresolved item(s)`, 'departure_not_ready');
         }

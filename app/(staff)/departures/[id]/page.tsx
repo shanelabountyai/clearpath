@@ -57,6 +57,7 @@ async function DeparturePlanPage({ params, searchParams }: {
   const clashes = of('hour_clash');
   const unreadAlerts = of('unread_alert').length;
   const orphans = of('supervisee_unassigned').length;
+  const openLeaves = of('leave_open').length;
 
   return (
     <>
@@ -204,6 +205,9 @@ async function DeparturePlanPage({ params, searchParams }: {
                     )}
                     {orphans > 0 && (
                       <li>{plural(orphans, 'associate')} supervised by {plan.user.name}, and nobody named to take them.</li>
+                    )}
+                    {openLeaves > 0 && (
+                      <li>{plan.user.name} has a leave that has not ended. End it early or cancel it first.</li>
                     )}
                   </ul>
                 )}

@@ -6,6 +6,8 @@ import { clientTarget } from '../clients/repository';
 import { prisma, type Tx } from '../db';
 import { Conflict, NotFound } from '../errors';
 import { queueToClient, queueToClinician } from '../messaging/outbox';
+import { alertRecipient } from '../staff/coverage';
+import { localDateOf } from '../time';
 import { missingLanguages, renderSubmission, validateSubmission, type Answers, type TemplateSchema } from './schema';
 import { scoreSubmission, type ScoringRules } from './scoring';
 
@@ -230,9 +232,11 @@ export async function submitForm(
     });
 
     if (score.needsReview) {
+      // Hard rule 9 on a day the treating clinician is away: the coverer (P0-5).
+      const to = await alertRecipient(tx, request.clientId, localDateOf(now));
       await tx.alert.create({
         data: {
-          recipientId: request.client.treatingClinicianId,
+          ...to,
           clientId: request.clientId,
           submissionId: submission.id,
           kind: score.reasons.some((r) => r.startsWith('critical:'))
@@ -243,7 +247,7 @@ export async function submitForm(
       });
       await queueToClinician(
         {
-          userId: request.client.treatingClinicianId,
+          userId: to.recipientId,
           templateKey: 'screener_alert',
           subject: 'A response needs your review',
           // Codes and a client code, never answers and never the score.

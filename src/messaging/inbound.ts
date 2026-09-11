@@ -3,6 +3,8 @@ import type { Actor } from '../auth/permissions';
 import { systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
 import { NotFound } from '../errors';
+import { alertRecipient } from '../staff/coverage';
+import { localDateOf } from '../time';
 import { fold, LANGUAGES, queueToClient, type Language } from './outbox';
 
 /**
@@ -229,11 +231,12 @@ export async function receiveInbound(
       }
 
       if (classification === 'unparsed') {
-        // Hard rule 9: one person, the treating clinician, never a shared
-        // surface. Reason codes only — the alert says a client wrote, not what.
+        // Hard rule 9: one person, the treating clinician or their coverer,
+        // never a shared surface. Reason codes only — the alert says a client
+        // wrote, not what.
         await tx.alert.create({
           data: {
-            recipientId: sender.treatingClinicianId,
+            ...(await alertRecipient(tx, sender.id, localDateOf(now))),
             clientId: sender.id,
             kind: 'inbound_unparsed',
             reasons: ['inbound:unparsed'],

@@ -381,12 +381,12 @@ async function InquiriesPage({
             <form action={setAccepting} className="mt-3 flex items-center gap-2 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
               {/* No subject field: the action reads it off the session, so there
                   is nothing here to point at another clinician. */}
-              <input type="hidden" name="accepting" value={own.accepting ? 'no' : 'yes'} />
+              <input type="hidden" name="accepting" value={own.declared ? 'no' : 'yes'} />
               <p className="flex-1 text-caption text-muted">
-                You are {own.accepting ? 'taking new clients' : 'not taking anybody new'}.
+                You are {own.declared ? 'taking new clients' : 'not taking anybody new'}.
               </p>
               <button className="rounded-[var(--radius)] border px-2.5 py-1 text-caption font-medium" style={{ borderColor: 'var(--border-strong)' }}>
-                {own.accepting ? 'Close my books' : 'Open my books'}
+                {own.declared ? 'Close my books' : 'Open my books'}
               </button>
             </form>
           )}

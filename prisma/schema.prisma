@@ -742,6 +742,8 @@ model Alert {
   coveringLeave   Leave?  @relation(fields: [coveringLeaveId], references: [id], onDelete: Restrict)
 
   @@index([recipientId, acknowledgedAt])
+  /// The boundary sweep reads unread alerts a leave moved.
+  @@index([coveringLeaveId])
 }
 
 enum OutboxChannel {

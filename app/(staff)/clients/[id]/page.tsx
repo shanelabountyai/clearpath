@@ -1,12 +1,12 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { attendanceSummary } from '../../../../src/scheduling/lifecycle';
-import { clientAffordances, effectiveFeeCents, getClient } from '../../../../src/clients/repository';
+import { clientAffordances, clientTarget, effectiveFeeCents, getClient } from '../../../../src/clients/repository';
 import { formStatus, listSubmissions } from '../../../../src/forms/service';
 import { listProcessNotes, listProgressNotes } from '../../../../src/notes/service';
 import { breakGlassWouldHelp, may } from '../../../../src/auth/guard';
 import { prisma } from '../../../../src/db';
-import { Forbidden } from '../../../../src/errors';
+import { Forbidden, NotFound } from '../../../../src/errors';
 import { requireSession } from '../../../../src/session';
 import { localDateOf, minutesToHHMM, utcToZoned } from '../../../../src/time';
 import {
@@ -29,24 +29,18 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
   const { id } = await params;
   const { actor } = await requireSession();
 
-  const treating = await prisma.client.findUnique({
-    where: { id },
-    select: { treatingClinicianId: true, treatingClinician: { select: { name: true, supervisorId: true } } },
+  // Resolved once, coverage included, for the refusal and the affordances alike.
+  const target = await clientTarget(id).catch((e) => {
+    if (e instanceof NotFound) notFound();
+    throw e;
   });
-  if (!treating) notFound();
 
   let client;
   try {
     client = await getClient(actor, id);
   } catch (e) {
     if (!(e instanceof Forbidden)) throw e;
-    const couldBreakGlass = breakGlassWouldHelp({
-      actor, action: 'read', resource: 'client',
-      target: {
-        clinicianId: treating.treatingClinicianId,
-        treatingSupervisorId: treating.treatingClinician.supervisorId ?? undefined,
-      },
-    });
+    const couldBreakGlass = breakGlassWouldHelp({ actor, action: 'read', resource: 'client', target });
     return couldBreakGlass ? (
       <BreakGlassPrompt resource="this client record" />
     ) : (
@@ -59,11 +53,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
     );
   }
 
-  const can = clientAffordances(
-    actor,
-    client.treatingClinicianId,
-    client.treatingClinician.supervisorId ?? undefined,
-  );
+  const can = clientAffordances(actor, target);
   const fee = await effectiveFeeCents(id);
 
   const upcoming = await prisma.appointment.findMany({

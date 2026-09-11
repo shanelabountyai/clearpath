@@ -11,6 +11,7 @@ import { BreakGlassPrompt } from '../../break-glass';
 import { advanceStatus, cancelSession, moveSession, startProgressNote, waiveSessionFee } from '../actions';
 import { systemClock } from '@/src/clock';
 import { Button } from '@/src/ui/primitives';
+import { clientTarget } from '@/src/clients/repository';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,7 +39,8 @@ export default async function AppointmentPage({
   const wouldBeLate = classifyCancellation(appt.startAt, systemClock.now(), windowHours) === 'late_cancelled';
   const next = TRANSITIONS[appt.status as Status];
   const canWriteNote = may({
-    actor, action: 'create', resource: 'progress_note', target: { clinicianId: appt.clinicianId },
+    actor, action: 'create', resource: 'progress_note',
+    target: { ...(await clientTarget(appt.clientId)), clinicianId: appt.clinicianId },
   });
   // Front desk sees the fee and the reason it applies; only the practice
   // manager sees a way to reverse it. The matrix decides, here as everywhere.

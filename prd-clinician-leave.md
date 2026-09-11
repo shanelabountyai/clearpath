@@ -2,7 +2,7 @@
 
 **Sample business:** "Stillwater Counseling" (as in the parent PRD) — 6 clinicians, 4 rooms, ~70 standing weekly clients
 **Builder:** Solo, in Claude Code
-**Status:** v0.2 — **reviewed 2026-09-10** (D-14 to D-17 added); Phase 1 built. Decided 2026-09-10: PRD first, then build in phases. Feature PRD, child of `prd-clearpath-counseling-ops.md`; the P2 that `prd-clinician-departure.md` deferred by name
+**Status:** v0.2 — **reviewed 2026-09-10** (D-14 to D-17 added); Phases 1–3 built. Decided 2026-09-10: PRD first, then build in phases. Feature PRD, child of `prd-clearpath-counseling-ops.md`; the P2 that `prd-clinician-departure.md` deferred by name
 **Learning objectives:** a clinical read grant that is *derived* from a dated row and the injected clock rather than written on the first day and revoked on the last; what hard rule 9's "exactly one reader" means when that one person is away; and the pair with departure — everything that PRD made terminal, made to end on a date without anybody having to end it
 
 ---
@@ -86,7 +86,7 @@ None of this is a bug. Every rule above is right for a clinician who is at work.
 
 - `leavePhase(leave, today)` is a pure function: `upcoming | active | ended | cancelled`, from `fromDate`, `toDate`, `cancelledAt` and the practice-local date of the injected clock.
 - The one stored transition is `upcoming → cancelled`. It lives in a `TRANSITIONS` table in `src/staff/leave.ts`, shaped like `scheduling/lifecycle.ts`, per hard rule 8.
-- **Early return is an edit to `toDate`, never a transition.** It may only shorten to today, and it only works while the leave is active. **Extending** is also an edit, and `leave_no_overlap` decides it.
+- **Early return is an edit to `toDate`, never a transition.** It may shorten as far as yesterday, which is "back today" (D-18): the leave has ended when the edit commits. It only works while the leave is active, and a leave whose first day is today cannot end before it. **Extending** is also an edit, and `leave_no_overlap` decides it.
 - **An ended leave is frozen.** No date edit, no coverage edit. It is the record of who could read what, and on which days.
 - Rejected: a stored `active` status set by a runner on the first day. A grant that starts or ends by a write is a grant that is wrong on any day the runner did not run (D-02).
 
@@ -217,6 +217,7 @@ None of this is a bug. Every rule above is right for a clinician who is at work.
 | D-15 | A supervisor keeps `leave.update: always`, and their write is a grant | Settled in review. Story 2 is a clinical-fit judgement, which is supervision's work. The departure shape does not carry over: there, admin's `depart` turns a supervisor's proposal into access; here, a `LeaveCoverage` row or a `toDate` extension on an active leave widens read access when it is written. Admin-only was narrower and put fit with the practice manager. A split `leave_coverage` resource was more precise, at the cost of a matrix row D-08 argued against. Accepted with the audit row as the control |
 | D-16 | The coverer holds routine sessions as well as crisis contact: all five D-04 cells | Settled in review; closes the first Open Question. An eight-week leave means displaced sessions, and a session held with nothing written down is a worse record. A crisis-only practice drops `progress_note.create` and `process_note.create` |
 | D-17 | Supervisor coverage stays P1 | Settled in review; closes the third Open Question. `supervises()` decides every supervisee note and co-signature, so the widening is larger than the clinician case and gets its own review before it is built |
+| D-18 | Early return may set `toDate` to yesterday, and that edit returns the leave's unread alerts | Settled 2026-09-11 in Phase 3. Shortening only to today left the leave on until midnight. The "ends" move P0-5 put in the edit then had nothing to move, and a clinician back at their desk had their alerts going to a colleague all day. Ending the leave at the edit stops access and alerts together, at the moment a person says so. A leave whose first day is today still runs to midnight, because `leave_ends_after_it_starts` refuses anything else |
 
 ## Risks and objections
 
@@ -231,7 +232,7 @@ None of this is a bug. Every rule above is right for a clinician who is at work.
 - ~~**(Product)** Does the coverer hold routine sessions, or only crisis contact?~~ **Settled: both (D-16).** V1: both. `progress_note.create` is in D-04 because an eight-week leave means displaced sessions, and a session held with nothing written down is a worse record. A practice that covers crisis only would drop two cells.
 - **(Product)** Should Nour keep read access while away? V1: yes. They remain the treating clinician and may sign a draft. Revoking access during leave is a disciplinary act with a different name, not a leave.
 - ~~**(Product)** Is supervisor coverage (P1-3) actually P0?~~ **Settled: stays P1 (D-17).** A supervisor away for eight weeks leaves associates' notes unsigned against a compliance clock. It is P1 only because its widening is larger and should be reviewed on its own.
-- **(Builder)** Which runner hosts the boundary sweep: `purge:run`, whose D-16 argued for one schedule, or `reminders:run`? Settle in Phase 3.
+- ~~**(Builder)** Which runner hosts the boundary sweep: `purge:run`, whose D-16 argued for one schedule, or `reminders:run`?~~ **Settled in Phase 3: `reminders:run`.** The sweep is idempotent and late rather than wrong when missed, which is that runner's contract. Its only cost is lateness, and a nightly purge would leave an unread critical alert with somebody away for most of a day. `purge:run` shares a schedule because its sweeps destroy data, and this one destroys nothing.
 
 ## Timeline / Phasing
 

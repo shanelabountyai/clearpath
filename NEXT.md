@@ -1,52 +1,53 @@
 # Next
 
-**Item:** clinician leave, Phase 3: wiring (`prd-clinician-leave.md` v0.2).
-Opus fits: resolution decides clinical access at every call site.
+**Item:** clinician leave, Phase 4: the leave plan screen (record, name the
+coverer, split clients, early return), front desk's view, and P1-2 markers
+(`prd-clinician-leave.md` v0.2). Then the capstone demo: the Lagging scenario
+as a seeded leave and a spec, on an advanced clock.
+Model: Sonnet fits the screens. Use Opus for P0-8's continuous coverer scan,
+because it decides who is shown as able to cover.
 
-## What just landed
+## What just landed (Phase 3)
 
-- Phase 2: `Leave`, `LeaveCoverage`, `Alert.coveringLeaveId` (migration
-  `20260911125525_clinician_leave`, applied to dev, test and e2e).
-  `leave_no_overlap` (gist, inclusive `daterange`, not cancelled),
-  `leave_ends_after_it_starts`, `leave_coverer_is_not_away`,
-  `leave_calendar_row_while_live` (`overrideId` set exactly while not
-  cancelled, `Restrict`), and the `leave_coverage_coverer_is_not_away`
-  trigger. All asserted against a real connection.
-- `src/staff/leave-plan.ts`: `createLeave`, `nameCoverer`, `decideCoverage`,
-  `editLeaveDates`, `cancelLeave`. Each is one `guarded` transaction with the
-  override and the audit row. `TRANSITIONS` (`upcoming → cancelled` only) is in
-  `leave.ts`, which is still import-free. `mayTreat` is now exported from
-  `departure.ts`.
-- WRITEUP §36 "Phase 2" subsection, plus five decisions-log rows.
-
-## Phase 3 scope
-
-Coverage resolution in `clientTarget` and `caseloadWhere`, and every
-hand-built target (grep `treatingSupervisorId:`). Then `alertRecipient` at both
-alert-creation sites, the boundary sweep, derived capacity
-(`acceptingNewClients && !onLeave(today)`), `reason: 'leave:<id>'` on
-coverage-decided reads, and the `leave_open` departure blocker.
+- `src/staff/coverage.ts`: `coverageOf` (which leave, which coverer),
+  `routeOf`, `alertRecipient`. `clientTarget(clientId, clock)`,
+  `progressContext`, `createProgressNote`, the client and appointment pages,
+  and `caseloadWhere` all resolve through it. `permissions.ts` still decides
+  the day (D-14).
+- The caseload list admits covered clients with `may` per resolved target,
+  scoped inside `AND` so a search's `OR` cannot overwrite it.
+- `listProgressNotes` widens for the coverer by `can(...).coveringLeaveId`,
+  never `allowed`, because break-glass passes the same cell.
+- Both alert sites call `alertRecipient`. `runLeaveAlertSweep` (on
+  `reminders:run`, settled) reconciles unread alerts to today's routing in one
+  transaction. Migration `20260911135021_alert_covering_leave_index`, applied
+  to dev, test and e2e.
+- `guarded` writes `reason: 'leave:<id>'` when a decision rested on a leave.
+- `clinicianCapacity`: `accepting` is derived, and `declared` is the
+  clinician's own toggle (the inquiries page uses it).
+- `leave_open` departure blocker. Execution refuses with that code.
+- **D-18 (user decision):** early return may set `toDate` to yesterday ("back
+  today"). The edit ends the leave and returns its unread alerts in the same
+  transaction.
+- WRITEUP §36 "Phase 3" subsection, seven decisions-log rows, and PRD D-18.
 
 ## Watch for
 
-- **The resolver test** must show a `LeaveCoverage` row naming Kai beating the
-  leave-level coverer.
-- **Early return's alert move.** P0-5 says the `toDate` edit performs the
-  "ends" alert move in its own transaction. `editLeaveDates` does not do it
-  yet.
-- **Date edits do not re-check coverers.** Only a named coverer is refused at
-  the door. An extension into the coverer's own leave or departure is for the
-  Phase 4 plan-screen scan.
-- **`Alert.coveringLeaveId` has no index.** Add one in the migration that
-  makes the sweep query on it.
-- **Runner for the sweep** (`purge:run` or `reminders:run`) is still an open
-  question in the PRD. Settle it in this phase.
+- **Date edits still do not re-check coverers.** P0-8's plan-screen scan: a
+  coverer departing, going inactive, or on leave inside the window.
+- **A mid-leave `decideCoverage` moves unread alerts only on the next sweep**,
+  not in its own transaction. That is fine hourly. Decide whether the screen
+  should do it on the spot.
+- **Client page refusal copy** still says "treating clinician or supervisor",
+  and the break-glass prompt does not mention coverage.
+- **No scheduler runs `reminders:run` or `purge:run`**: neither appears in
+  `vercel.json` or `.github`.
 
 ## Gate
 
-3122/3122 unit (3098 + 24 new), typecheck clean. e2e not rerun: no spec
-touched, new columns are nullable, and nothing calls the service yet. The e2e
-database is migrated. Last e2e: 53 + 1 skipped = 54.
+Full unit sweep 3135/3135 before D-18. After D-18: typecheck clean and
+`src/staff` 110/110 (`editLeaveDates` has no other caller yet). Nine mutations
+checked, all red. e2e: 53 passed + 1 skipped = 54.
 
 ## Loose threads (carried)
 

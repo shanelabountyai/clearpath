@@ -114,6 +114,7 @@ async function WorkListsPage() {
                     b.hour_clash && `${plural(b.hour_clash, 'session')} clashing`,
                     b.unread_alert && plural(b.unread_alert, 'unread alert'),
                     b.supervisee_unassigned && `${plural(b.supervisee_unassigned, 'associate')} unsupervised`,
+                    b.leave_open && 'a leave not yet ended',
                   ].filter((x): x is string => !!x);
                   return (
                     <li key={d.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body">

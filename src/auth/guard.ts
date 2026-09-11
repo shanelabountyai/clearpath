@@ -28,7 +28,9 @@ interface GuardRequest {
    * A reason CODE for the action itself, where the action has one — a fee
    * waiver's `goodwill`, and the amount it reversed. Never free text and never
    * clinical: this column is read by the one role that may not open a record.
-   * Break-glass justification still fills it when nothing else does.
+   * A read that only a leave made possible carries `leave:<leaveId>` when the
+   * action has no code of its own (leave P0-9). Break-glass justification
+   * still fills it when nothing else does.
    */
   reason?: string;
 }
@@ -45,7 +47,9 @@ async function record(db: Tx | typeof prisma, req: GuardRequest, decision: Decis
       allowed: decision.allowed,
       rule: decision.rule,
       breakGlass: decision.breakGlass,
-      reason: req.reason ?? req.actor.breakGlass?.reason ?? null,
+      reason: req.reason ??
+        (decision.coveringLeaveId && `leave:${decision.coveringLeaveId}`) ??
+        req.actor.breakGlass?.reason ?? null,
     },
   });
 }
