@@ -1,0 +1,334 @@
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { fixedClock } from '../clock';
+import { prisma } from '../db';
+import { Forbidden } from '../errors';
+import { actor, makeClient, makeUser, resetDb, settings } from '../test/harness';
+import { zonedToUtc, type LocalDate } from '../time';
+import { cancelLeave, createLeave, decideCoverage, editLeaveDates, nameCoverer } from './leave-plan';
+
+/** Midday in the practice's zone, so no test sits on a midnight it did not mean to. */
+const on = (d: LocalDate) => fixedClock(zonedToUtc(d, 12 * 60));
+const RECORDED = on('2026-09-11');
+const dbDate = (d: LocalDate) => new Date(`${d}T00:00:00Z`);
+const NOUR_AWAY = { fromDate: '2026-10-05', toDate: '2026-11-27' };
+
+beforeEach(async () => {
+  await resetDb();
+  await settings();
+});
+afterAll(() => prisma.$disconnect());
+
+/** Ray runs the practice, Sam supervises Nour, Dev and Kai could each cover. */
+async function practice() {
+  const ray = await makeUser('admin');
+  const sam = await makeUser('supervisor');
+  const nour = await makeUser('therapist', { supervisorId: sam.id });
+  const dev = await makeUser('therapist');
+  const kai = await makeUser('therapist');
+  const client = await makeClient(nour.id);
+  return { ray, sam, nour, dev, kai, client };
+}
+
+async function onLeave() {
+  const p = await practice();
+  const leave = await createLeave(
+    actor(p.ray), { userId: p.nour.id, ...NOUR_AWAY, coveringClinicianId: p.dev.id }, RECORDED,
+  );
+  return { ...p, leave };
+}
+
+const leaveAudit = () =>
+  prisma.auditEvent.findMany({ where: { resource: 'leave' }, orderBy: { at: 'asc' } });
+
+// ─────────────────── what the database refuses ───────────────────
+
+describe('the leave row, against a real connection (P0-1, P0-7)', () => {
+  type People = Awaited<ReturnType<typeof practice>>;
+
+  /** A raw row with its calendar row, bypassing the service. */
+  async function row(p: People, over: { userId?: string; fromDate?: LocalDate; toDate?: LocalDate } & Record<string, unknown> = {}) {
+    const { userId = p.nour.id, fromDate = NOUR_AWAY.fromDate, toDate = NOUR_AWAY.toDate, ...rest } = over;
+    const override = await prisma.availabilityOverride.create({
+      data: { userId, fromDate: dbDate(fromDate), toDate: dbDate(toDate) },
+    });
+    return prisma.leave.create({
+      data: {
+        userId, fromDate: dbDate(fromDate), toDate: dbDate(toDate),
+        coveringClinicianId: p.dev.id, plannedById: p.ray.id, overrideId: override.id, ...rest,
+      },
+    });
+  }
+
+  it('refuses a last day before the first, and takes a leave of one day', async () => {
+    const p = await practice();
+    await expect(row(p, { toDate: '2026-10-04' })).rejects.toThrow(/leave_ends_after_it_starts/);
+    await expect(row(p, { toDate: '2026-10-05' })).resolves.toBeTruthy();
+  });
+
+  it('refuses the person away as the leave\'s coverer', async () => {
+    const p = await practice();
+    await expect(row(p, { coveringClinicianId: p.nour.id })).rejects.toThrow(/leave_coverer_is_not_away/);
+  });
+
+  it('refuses two live leaves sharing even one day, and allows the day after, another person, and a cancelled leave\'s dates', async () => {
+    const p = await practice();
+    const first = await row(p);
+
+    // Inclusive at both ends: the 27th is in both.
+    await expect(row(p, { fromDate: '2026-11-27', toDate: '2026-12-04' })).rejects.toThrow(/leave_no_overlap/);
+    await expect(row(p, { fromDate: '2026-11-28', toDate: '2026-12-04' })).resolves.toBeTruthy();
+    await expect(row(p, { userId: p.kai.id })).resolves.toBeTruthy();
+
+    await prisma.leave.update({ where: { id: first.id }, data: { cancelledAt: new Date(), overrideId: null } });
+    await expect(row(p, { fromDate: '2026-10-12', toDate: '2026-10-16' })).resolves.toBeTruthy();
+  });
+
+  it('holds the calendar row exactly while the leave is live', async () => {
+    const p = await practice();
+    await expect(row(p, { overrideId: null })).rejects.toThrow(/leave_calendar_row_while_live/);
+    await expect(row(p, { cancelledAt: new Date() })).rejects.toThrow(/leave_calendar_row_while_live/);
+    await expect(row(p, { cancelledAt: new Date(), overrideId: null })).resolves.toBeTruthy();
+  });
+
+  it('will not let the calendar row be deleted out from under a live leave', async () => {
+    const p = await practice();
+    const leave = await row(p);
+    await expect(prisma.availabilityOverride.delete({ where: { id: leave.overrideId! } }))
+      .rejects.toThrow(/Leave_overrideId_fkey|foreign key/i);
+  });
+
+  it('refuses the person away as a client\'s coverer, on insert and on update', async () => {
+    const p = await practice();
+    const leave = await row(p);
+    const cover = (coveringClinicianId: string) => prisma.leaveCoverage.create({
+      data: { leaveId: leave.id, clientId: p.client.id, coveringClinicianId, decidedById: p.sam.id },
+    });
+
+    await expect(cover(p.nour.id)).rejects.toThrow(/leave_coverage_coverer_is_not_away/);
+    const kai = await cover(p.kai.id);
+    await expect(prisma.leaveCoverage.update({ where: { id: kai.id }, data: { coveringClinicianId: p.nour.id } }))
+      .rejects.toThrow(/leave_coverage_coverer_is_not_away/);
+  });
+
+  it('holds one coverage decision per client per leave', async () => {
+    const p = await practice();
+    const leave = await row(p);
+    const data = { leaveId: leave.id, clientId: p.client.id, coveringClinicianId: p.kai.id, decidedById: p.sam.id };
+    await prisma.leaveCoverage.create({ data });
+    await expect(prisma.leaveCoverage.create({ data })).rejects.toThrow(/leaveId_clientId/);
+  });
+
+  it('lets an alert name the leave that chose its reader', async () => {
+    const p = await practice();
+    const leave = await row(p);
+    const alert = await prisma.alert.create({
+      data: { recipientId: p.dev.id, clientId: p.client.id, kind: 'inbound_unparsed', coveringLeaveId: leave.id },
+    });
+    expect(alert.coveringLeaveId).toBe(leave.id);
+  });
+});
+
+// ─────────────────── recording a leave ───────────────────
+
+describe('recording a leave (story 1, P0-7, P0-9)', () => {
+  it('writes the leave, its calendar row and one audit row, together', async () => {
+    const { ray, nour, dev, leave } = await onLeave();
+
+    expect(leave).toMatchObject({
+      userId: nour.id, coveringClinicianId: dev.id, plannedById: ray.id, cancelledAt: null,
+      fromDate: dbDate(NOUR_AWAY.fromDate), toDate: dbDate(NOUR_AWAY.toDate),
+    });
+    // D-12: the calendar says `Leave` and nothing about why.
+    expect(await prisma.availabilityOverride.findUniqueOrThrow({ where: { id: leave.overrideId! } })).toMatchObject({
+      userId: nour.id, kind: 'unavailable', startMinute: null, endMinute: null, reason: 'Leave',
+      fromDate: dbDate(NOUR_AWAY.fromDate), toDate: dbDate(NOUR_AWAY.toDate),
+    });
+    expect(await leaveAudit()).toMatchObject([
+      { actorId: ray.id, action: 'create', resourceId: leave.id, clientId: null, allowed: true, reason: null },
+    ]);
+  });
+
+  it('answers overlapping weeks with a Conflict, and leaves no calendar row or audit row behind', async () => {
+    const { ray, nour, kai } = await onLeave();
+    await expect(createLeave(
+      actor(ray), { userId: nour.id, fromDate: '2026-11-27', toDate: '2026-12-04', coveringClinicianId: kai.id }, RECORDED,
+    )).rejects.toMatchObject({ name: 'Conflict', code: 'leave_overlaps' });
+
+    expect(await prisma.availabilityOverride.count()).toBe(1);
+    expect(await leaveAudit()).toHaveLength(1);
+  });
+
+  it('is the practice manager\'s to record: a supervisor is refused, on the record', async () => {
+    const { sam, nour, dev } = await practice();
+    await expect(createLeave(actor(sam), { userId: nour.id, ...NOUR_AWAY, coveringClinicianId: dev.id }, RECORDED))
+      .rejects.toThrow(Forbidden);
+    expect(await leaveAudit()).toMatchObject([{ actorId: sam.id, action: 'create', allowed: false }]);
+    expect(await prisma.leave.count()).toBe(0);
+  });
+
+  it('refuses a leave that starts before today, or ends before it starts', async () => {
+    const { ray, nour, dev } = await practice();
+    const record = (fromDate: LocalDate, toDate: LocalDate) =>
+      createLeave(actor(ray), { userId: nour.id, fromDate, toDate, coveringClinicianId: dev.id }, RECORDED);
+
+    await expect(record('2026-09-10', '2026-09-20')).rejects.toMatchObject({ code: 'leave_starts_past' });
+    await expect(record('2026-10-05', '2026-10-04')).rejects.toMatchObject({ code: 'leave_ends_before_start' });
+    // Today is not the past.
+    await expect(record('2026-09-11', '2026-09-11')).resolves.toBeTruthy();
+  });
+
+  it('refuses a coverer who is not a clinician here for the whole leave (D-13, P0-8)', async () => {
+    const { ray, sam, nour, dev, kai } = await practice();
+    const associate = await makeUser('associate', { supervisorId: sam.id });
+    const desk = await makeUser('front_desk');
+    const gone = await makeUser('therapist');
+    await prisma.user.update({ where: { id: gone.id }, data: { active: false } });
+    const leaving = await makeUser('therapist');
+    await prisma.departure.create({
+      data: {
+        userId: leaving.id, plannedById: ray.id,
+        noticeAt: new Date('2026-09-01T09:00:00Z'), lastDayOn: dbDate('2026-11-20'),
+      },
+    });
+    // Kai's own week off, in the middle of Nour's.
+    await createLeave(actor(ray), { userId: kai.id, fromDate: '2026-10-19', toDate: '2026-10-23', coveringClinicianId: dev.id }, RECORDED);
+
+    for (const [who, id] of Object.entries({
+      associate: associate.id, desk: desk.id, admin: ray.id, gone: gone.id,
+      nour: nour.id, leaving: leaving.id, away: kai.id,
+    })) {
+      await expect(
+        createLeave(actor(ray), { userId: nour.id, ...NOUR_AWAY, coveringClinicianId: id }, RECORDED), who,
+      ).rejects.toMatchObject({ code: 'coverer_unavailable' });
+    }
+    expect(await prisma.leave.count({ where: { userId: nour.id } })).toBe(0);
+
+    // A supervisor may cover: their notes need nobody's countersignature.
+    await expect(createLeave(actor(ray), { userId: nour.id, ...NOUR_AWAY, coveringClinicianId: sam.id }, RECORDED))
+      .resolves.toBeTruthy();
+  });
+});
+
+// ─────────────────── who covers ───────────────────
+
+describe('who covers which client (story 2, D-15)', () => {
+  it('splits one client to Kai on the record, and naming Dev again removes the row rather than copying the leave', async () => {
+    const { ray, sam, dev, kai, client, leave } = await onLeave();
+
+    await decideCoverage(actor(sam), leave.id, { clientId: client.id, coveringClinicianId: kai.id }, RECORDED);
+    expect(await prisma.leaveCoverage.findMany()).toMatchObject([
+      { leaveId: leave.id, clientId: client.id, coveringClinicianId: kai.id, decidedById: sam.id },
+    ]);
+
+    await decideCoverage(actor(ray), leave.id, { clientId: client.id, coveringClinicianId: dev.id }, RECORDED);
+    expect(await prisma.leaveCoverage.count()).toBe(0);
+
+    expect((await leaveAudit()).filter((r) => r.action === 'update').map((r) => [r.actorId, r.clientId, r.reason]))
+      .toEqual([[sam.id, client.id, 'leave:coverage_decided'], [ray.id, client.id, 'leave:coverage_decided']]);
+  });
+
+  it('refuses a client who is not on the caseload, and a coverer who could not cover', async () => {
+    const { sam, nour, dev, client, leave } = await onLeave();
+    const devsOwn = await makeClient(dev.id);
+    const associate = await makeUser('associate', { supervisorId: sam.id });
+
+    await expect(decideCoverage(actor(sam), leave.id, { clientId: devsOwn.id, coveringClinicianId: sam.id }, RECORDED))
+      .rejects.toMatchObject({ code: 'not_on_caseload' });
+    for (const id of [associate.id, nour.id]) {
+      await expect(decideCoverage(actor(sam), leave.id, { clientId: client.id, coveringClinicianId: id }, RECORDED))
+        .rejects.toMatchObject({ code: 'coverer_unavailable' });
+    }
+    expect(await prisma.leaveCoverage.count()).toBe(0);
+  });
+
+  it('is front desk\'s to read and not to write, on the record', async () => {
+    const { kai, client, leave } = await onLeave();
+    const desk = await makeUser('front_desk');
+    await expect(decideCoverage(actor(desk), leave.id, { clientId: client.id, coveringClinicianId: kai.id }, RECORDED))
+      .rejects.toThrow(Forbidden);
+    expect(await prisma.auditEvent.count({ where: { actorId: desk.id, resource: 'leave', allowed: false } })).toBe(1);
+  });
+
+  it('holds a coverer\'s own week off against them only while it is still to come', async () => {
+    const { ray, sam, dev, kai, client, leave } = await onLeave();
+    await createLeave(actor(ray), { userId: kai.id, fromDate: '2026-10-06', toDate: '2026-10-09', coveringClinicianId: dev.id }, RECORDED);
+    const split = (d: LocalDate) =>
+      decideCoverage(actor(sam), leave.id, { clientId: client.id, coveringClinicianId: kai.id }, on(d));
+
+    await expect(split('2026-10-07')).rejects.toMatchObject({ code: 'coverer_unavailable' });
+    await expect(split('2026-10-12')).resolves.toMatchObject({ coveringClinicianId: kai.id });
+  });
+
+  it('names a new coverer for the leave, and drops the per-client row that now says the same thing', async () => {
+    const { ray, sam, kai, client, leave } = await onLeave();
+    await decideCoverage(actor(sam), leave.id, { clientId: client.id, coveringClinicianId: kai.id }, RECORDED);
+
+    await nameCoverer(actor(ray), leave.id, kai.id, RECORDED);
+    expect(await prisma.leave.findUniqueOrThrow({ where: { id: leave.id } })).toMatchObject({ coveringClinicianId: kai.id });
+    expect(await prisma.leaveCoverage.count()).toBe(0);
+    expect((await leaveAudit()).at(-1)).toMatchObject({ actorId: ray.id, reason: 'leave:coverer_named' });
+  });
+});
+
+// ─────────────────── dates, early return, cancellation ───────────────────
+
+describe('a leave\'s dates, and its one transition (P0-2, D-10)', () => {
+  const override = (id: string) => prisma.availabilityOverride.findUniqueOrThrow({ where: { id } });
+
+  it('moves the calendar row with the leave', async () => {
+    const { sam, leave } = await onLeave();
+    await editLeaveDates(actor(sam), leave.id, { fromDate: '2026-10-12', toDate: '2026-12-04' }, RECORDED);
+
+    const moved = { fromDate: dbDate('2026-10-12'), toDate: dbDate('2026-12-04') };
+    expect(await prisma.leave.findUniqueOrThrow({ where: { id: leave.id } })).toMatchObject(moved);
+    expect(await override(leave.overrideId!)).toMatchObject(moved);
+    expect((await leaveAudit()).at(-1)).toMatchObject({ actorId: sam.id, reason: 'leave:dates_edited' });
+  });
+
+  it('ends early by shortening to today and no further, keeps its first day, and is frozen once ended', async () => {
+    const { ray, kai, client, leave } = await onLeave();
+    const midway = on('2026-10-20');
+    const edit = (fromDate: LocalDate, toDate: LocalDate, clock = midway) =>
+      editLeaveDates(actor(ray), leave.id, { fromDate, toDate }, clock);
+
+    await expect(edit('2026-10-05', '2026-10-19')).rejects.toMatchObject({ code: 'leave_ends_past' });
+    await expect(edit('2026-10-06', '2026-11-27')).rejects.toMatchObject({ code: 'leave_started' });
+    await edit('2026-10-05', '2026-10-20');
+    expect(await override(leave.overrideId!)).toMatchObject({ toDate: dbDate('2026-10-20') });
+
+    const after = on('2026-10-21');
+    await expect(edit('2026-10-05', '2026-10-30', after)).rejects.toMatchObject({ code: 'leave_frozen' });
+    await expect(decideCoverage(actor(ray), leave.id, { clientId: client.id, coveringClinicianId: kai.id }, after))
+      .rejects.toMatchObject({ code: 'leave_frozen' });
+    await expect(nameCoverer(actor(ray), leave.id, kai.id, after)).rejects.toMatchObject({ code: 'leave_frozen' });
+    await expect(cancelLeave(actor(ray), leave.id, after)).rejects.toMatchObject({ code: 'bad_transition' });
+  });
+
+  it('extends only where leave_no_overlap allows, and a refused extension leaves the calendar row where it was', async () => {
+    const { ray, nour, kai, leave } = await onLeave();
+    await createLeave(actor(ray), { userId: nour.id, fromDate: '2026-12-14', toDate: '2026-12-18', coveringClinicianId: kai.id }, RECORDED);
+
+    await expect(editLeaveDates(actor(ray), leave.id, { fromDate: '2026-10-05', toDate: '2026-12-14' }, RECORDED))
+      .rejects.toMatchObject({ code: 'leave_overlaps' });
+    expect(await override(leave.overrideId!)).toMatchObject({ toDate: dbDate('2026-11-27') });
+  });
+
+  it('cancels an upcoming leave, takes its calendar row, frees the dates, and freezes the row', async () => {
+    const { ray, nour, dev, leave } = await onLeave();
+    const cancelled = await cancelLeave(actor(ray), leave.id, RECORDED);
+
+    expect(cancelled).toMatchObject({ cancelledAt: RECORDED.now(), overrideId: null });
+    expect(await prisma.availabilityOverride.count()).toBe(0);
+    expect((await leaveAudit()).at(-1)).toMatchObject({ actorId: ray.id, resourceId: leave.id, reason: 'leave:cancelled' });
+
+    await expect(editLeaveDates(actor(ray), leave.id, NOUR_AWAY, RECORDED)).rejects.toMatchObject({ code: 'leave_frozen' });
+    await expect(createLeave(actor(ray), { userId: nour.id, ...NOUR_AWAY, coveringClinicianId: dev.id }, RECORDED))
+      .resolves.toBeTruthy();
+  });
+
+  it('will not cancel a leave that has started — it ends by early return, and keeps the days it was on', async () => {
+    const { ray, leave } = await onLeave();
+    await expect(cancelLeave(actor(ray), leave.id, on('2026-10-05'))).rejects.toMatchObject({ code: 'bad_transition' });
+    expect(await prisma.availabilityOverride.count()).toBe(1);
+  });
+});

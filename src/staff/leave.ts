@@ -30,3 +30,22 @@ export function leavePhase(leave: LeaveDates, today: LocalDate): LeavePhase {
   if (today > leave.toDate) return 'ended';
   return 'active';
 }
+
+/**
+ * The one stored transition (P0-2, hard rule 8), in the register
+ * `scheduling/lifecycle.ts` set.
+ *
+ * Only an upcoming leave cancels. An active one has already been a grant for
+ * at least a day, so it ends by shortening `toDate` to today and the record
+ * keeps the days it was on. Ended and cancelled go nowhere: they are the record
+ * of who could read what, and on which days.
+ */
+export const TRANSITIONS: Record<LeavePhase, readonly LeavePhase[]> = {
+  upcoming: ['cancelled'],
+  active: [],
+  ended: [],
+  cancelled: [],
+};
+
+export const canTransition = (from: LeavePhase, to: LeavePhase): boolean =>
+  TRANSITIONS[from].includes(to);

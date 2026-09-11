@@ -169,7 +169,7 @@ export async function previewProcessNotePurge(actor: Actor, clock: Clock = syste
  * name: treating somebody is writing their record, so the question is whether
  * the matrix would let them write a note for a client of their own.
  */
-const mayTreat = (u: { id: string; role: Role }) => may({
+export const mayTreat = (u: { id: string; role: Role }) => may({
   actor: { id: u.id, role: u.role }, action: 'create', resource: 'progress_note',
   target: { clinicianId: u.id },
 });

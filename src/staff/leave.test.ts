@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { addDays, localDateOf, zonedToUtc } from '../time';
-import { leavePhase, type LeaveDates } from './leave';
+import { TRANSITIONS, canTransition, leavePhase, type LeaveDates, type LeavePhase } from './leave';
 
 const NOUR: LeaveDates = { fromDate: '2026-10-05', toDate: '2026-11-27' };
 
@@ -49,5 +49,17 @@ describe('a leave’s phase is a function of its dates and today', () => {
     expect(lateOnTheLastDay.toISOString().slice(0, 10)).toBe('2026-11-28');
     expect(leavePhase(NOUR, localDateOf(lateOnTheLastDay))).toBe('active');
     expect(leavePhase(NOUR, localDateOf(justAfterMidnight))).toBe('ended');
+  });
+});
+
+describe('the one stored transition (P0-2)', () => {
+  const PHASES = Object.keys(TRANSITIONS) as LeavePhase[];
+
+  it('cancels an upcoming leave, and nothing else moves', () => {
+    for (const from of PHASES) {
+      for (const to of PHASES) {
+        expect(canTransition(from, to), `${from} -> ${to}`).toBe(from === 'upcoming' && to === 'cancelled');
+      }
+    }
   });
 });

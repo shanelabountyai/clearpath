@@ -3070,6 +3070,38 @@ and a grant with no end date. A test pins it.
   wires the resolvers, no call site passes `coverage`, so the widening denies
   everywhere, which is what failing closed looks like before the wiring.
 
+### Phase 2: the row the function reads
+
+`Leave` and `LeaveCoverage` hold only what `covers` needs and what a person
+decided: the dates, the coverer, per-client overrides, and `cancelledAt`.
+There is no status column, and the one stored transition, `upcoming →
+cancelled`, is a `TRANSITIONS` table in `leave.ts`. An active leave cannot be
+cancelled, because it has already been a grant for at least a day. It ends by
+shortening `toDate` to today, and the record keeps the days it was on.
+
+The database refuses what is a fact about the rows. `leave_no_overlap` is a
+gist exclusion on an inclusive `daterange`, so two leaves sharing even one day
+are refused, and a cancelled leave's dates are free again.
+`leave_calendar_row_while_live` is a biconditional: a live leave has its
+`AvailabilityOverride` and a cancelled one has none. With `Restrict` on the
+link, nobody can delete the calendar row out from under a leave. A CHECK stops
+the person away covering their own leave. A per-client coverage row cannot
+see the leave from a CHECK, so the same rule is a trigger there.
+
+The service (`staff/leave-plan.ts`, kept out of `leave.ts` to avoid the import
+cycle) refuses what only today can decide. A leave cannot be backdated, an
+active leave keeps its first day, and an ended or cancelled leave is frozen.
+The coverer check at the door asks the matrix, not a role name: `mayTreat`
+and not `requiresCoSignature`. Then it asks whether that person is here for
+the rest of the window: active, not leaving before it ends, and not away
+themselves on any day still to come. Mutation-checked: removing the
+co-signature check, counting the coverer's own leave from its first day rather
+than today, or keeping a per-client row that duplicates the leave each turns a
+test red.
+
+Phase 2 writes nothing that grants anything yet. No resolver reads these rows
+until Phase 3, so every call site still denies the coverer.
+
 ## Decisions log
 
 | Decision | Why |
@@ -3269,6 +3301,11 @@ and a grant with no end date. A test pins it.
 | Whether a leave is on today is decided in `permissions.ts`, from dates on the `Target` (leave D-14) | A resolver that sets the coverer only on an active day makes a date-shaped access decision outside the one file hard rule 1 allows. The caller resolves which leave and which coverer; the matrix decides when |
 | A supervisor's `leave.update` is a grant, and they keep it (leave D-15) | Who covers which client is clinical fit, which is supervision's work. A departure has admin's `depart` between proposal and access and a leave has nothing, so the audit row is the control |
 | Five cells' audit rule names change for every reader, not only the coverer | `client.read` and `form_submission.read` now record `treatingCoveringOrSupervising`, `progress_note.read` records `authorSupervisorTreatingOrCovering`, and both creates record `treatingOrCovering`. The name is the enumeration of who could have read, and a claimant arriving without renaming it is what D-15 said a register exists to stop. Whether a read actually relied on a leave is `coveringLeaveId`, not the name |
+| `Leave.overrideId` is nullable, with a CHECK that it is set exactly while the leave is not cancelled | P0-7 says cancellation removes the calendar row. A required column would keep a cancelled leave blocking weeks the clinician is at work. A nullable one with no CHECK would allow a live leave that front desk can book straight through |
+| The per-client coverer rule is a trigger, not a denormalised `userId` on `LeaveCoverage` | A CHECK cannot see the leave. A copied column with a composite foreign key would work too, but it adds a column whose only job is to be compared. `Leave.userId` is never updated, so the trigger reads a stable fact |
+| A leave cannot be backdated, and an active one cannot be cancelled | The row records which days a colleague could read this caseload. A leave that starts last week, or one that vanishes after being on, claims reads nobody could have made, or erases reads that were made |
+| The coverer's own leave counts against them only from today | A week off that already ended does not stop somebody covering the rest of a colleague's leave. Counting from the leave's first day refused a coverer for days already behind them |
+| Naming the leave's own coverer for a client deletes the override row | "There is no row for same as the leave" (P0-1) is kept by the write, so changing the leave's coverer also removes rows that now duplicate it. A copy would go stale the next time the leave's coverer changed |
 | `covers` refuses an associate even when a row names one | The write will refuse the row (D-13). Refusing again at read time means the rule does not rest on the write having run |
 
 ## What this project deliberately is not

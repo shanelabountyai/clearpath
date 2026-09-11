@@ -1,44 +1,52 @@
 # Next
 
-**Item:** clinician leave, Phase 2: schema (`prd-clinician-leave.md` v0.2).
-Opus fits: exclusion constraint, CHECKs, and audit in the same transaction.
+**Item:** clinician leave, Phase 3: wiring (`prd-clinician-leave.md` v0.2).
+Opus fits: resolution decides clinical access at every call site.
 
 ## What just landed
 
-- Review settled D-14 to D-17 (2026-09-10). The date check lives in
-  `permissions.ts`, a supervisor's `leave.update` is a grant, the coverer gets
-  all five cells, and supervisor coverage stays P1.
-- Phase 1: `src/staff/leave.ts` (`leavePhase`), the `leave` matrix row, the
-  `covers` rule and three rules built on it, `Target.coverage`/`today`,
-  `Decision.coveringLeaveId`, process-note denials, fail-closed tests, and
-  WRITEUP §36. Mutation-checked: removing the toDate compare, the phase
-  check, the `today` guard or the associate refusal each turns tests red.
+- Phase 2: `Leave`, `LeaveCoverage`, `Alert.coveringLeaveId` (migration
+  `20260911125525_clinician_leave`, applied to dev, test and e2e).
+  `leave_no_overlap` (gist, inclusive `daterange`, not cancelled),
+  `leave_ends_after_it_starts`, `leave_coverer_is_not_away`,
+  `leave_calendar_row_while_live` (`overrideId` set exactly while not
+  cancelled, `Restrict`), and the `leave_coverage_coverer_is_not_away`
+  trigger. All asserted against a real connection.
+- `src/staff/leave-plan.ts`: `createLeave`, `nameCoverer`, `decideCoverage`,
+  `editLeaveDates`, `cancelLeave`. Each is one `guarded` transaction with the
+  override and the audit row. `TRANSITIONS` (`upcoming → cancelled` only) is in
+  `leave.ts`, which is still import-free. `mayTreat` is now exported from
+  `departure.ts`.
+- WRITEUP §36 "Phase 2" subsection, plus five decisions-log rows.
 
-## Phase 2 scope
+## Phase 3 scope
 
-`Leave`, `LeaveCoverage`, `leave_no_overlap` (gist on a daterange where not
-cancelled), the CHECKs (`toDate >= fromDate`, coverer is not the person away),
-`Alert.coveringLeaveId`, and the `AvailabilityOverride` written in the same
-transaction. Every write audit-logged. Constraints asserted against a real
-connection. D-13's coverer check at the door: `mayTreat` plus
-`!requiresCoSignature`, asked of the matrix and never of a role name.
+Coverage resolution in `clientTarget` and `caseloadWhere`, and every
+hand-built target (grep `treatingSupervisorId:`). Then `alertRecipient` at both
+alert-creation sites, the boundary sweep, derived capacity
+(`acceptingNewClients && !onLeave(today)`), `reason: 'leave:<id>'` on
+coverage-decided reads, and the `leave_open` departure blocker.
 
 ## Watch for
 
-- **Keep `src/staff/leave.ts` import-free.** `permissions.ts` imports it, so
-  a guard or db import there is a cycle through every request. Put the
-  service in its own file.
-- **The rule names in audit rows changed** for five cells, for every reader.
-  Nothing in `src`, `app`, `e2e` or `scripts` matched on the old names.
-- **Phase 3's resolver test** must show a `LeaveCoverage` override beating the
-  leave-level coverer. In pure logic it is only "the id on the target".
-- **Early return** is refused below `fromDate` by the CHECK. The PRD's
-  "shorten to today" rule already avoids that case; keep it.
+- **The resolver test** must show a `LeaveCoverage` row naming Kai beating the
+  leave-level coverer.
+- **Early return's alert move.** P0-5 says the `toDate` edit performs the
+  "ends" alert move in its own transaction. `editLeaveDates` does not do it
+  yet.
+- **Date edits do not re-check coverers.** Only a named coverer is refused at
+  the door. An extension into the coverer's own leave or departure is for the
+  Phase 4 plan-screen scan.
+- **`Alert.coveringLeaveId` has no index.** Add one in the migration that
+  makes the sweep query on it.
+- **Runner for the sweep** (`purge:run` or `reminders:run`) is still an open
+  question in the PRD. Settle it in this phase.
 
 ## Gate
 
-3098/3098 unit, typecheck clean. e2e not rerun: no spec touched, and no
-call site passes `coverage` yet. Last e2e: 53 + 1 skipped = 54.
+3122/3122 unit (3098 + 24 new), typecheck clean. e2e not rerun: no spec
+touched, new columns are nullable, and nothing calls the service yet. The e2e
+database is migrated. Last e2e: 53 + 1 skipped = 54.
 
 ## Loose threads (carried)
 

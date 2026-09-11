@@ -67,6 +67,12 @@ model User {
   caseloadReceived    DepartureAssignment[] @relation("departureReceiver")
   dispositionsDecided DepartureAssignment[] @relation("departureDecider")
 
+  leaves           Leave[]         @relation("leaveUser")
+  leavesPlanned    Leave[]         @relation("leavePlanner")
+  leavesCovering   Leave[]         @relation("leaveCoverer")
+  coverageCovering LeaveCoverage[] @relation("leaveCoverageCoverer")
+  coverageDecided  LeaveCoverage[] @relation("leaveCoverageDecider")
+
   /// P2: whether this clinician is taking somebody new right now — the
   /// declared half of the capacity signal, and theirs alone to set. It is a
   /// signal and never a gate: front desk still assigns to a closed clinician
@@ -158,6 +164,7 @@ model Client {
   inquiry              Inquiry?
   /// The decisions made about this client when a clinician left.
   departureAssignments DepartureAssignment[]
+  leaveCoverage        LeaveCoverage[]
 
   @@index([treatingClinicianId])
 }
@@ -279,6 +286,10 @@ model AvailabilityOverride {
   endMinute   Int?
   /// Operational, never clinical. Shown to front desk.
   reason      String?
+
+  /// The leave that owns this row, if one does (leave P0-7). The calendar's
+  /// source and never coverage's: a bare override grants nobody anything.
+  leave Leave?
 
   @@index([userId, fromDate])
 }
@@ -724,6 +735,11 @@ model Alert {
 
   createdAt      DateTime  @default(now())
   acknowledgedAt DateTime?
+
+  /// Set when coverage chose the recipient (leave P0-5), so the boundary sweep
+  /// moves back exactly the unread alerts a leave moved, and nothing else.
+  coveringLeaveId String?
+  coveringLeave   Leave?  @relation(fields: [coveringLeaveId], references: [id], onDelete: Restrict)
 
   @@index([recipientId, acknowledgedAt])
 }
@@ -1264,4 +1280,75 @@ model DepartureAssignment {
   @@unique([departureId, clientId])
   @@index([clientId])
   @@index([receivingClinicianId])
+}
+
+// ─────────────────────────────── leave ───────────────────────────────
+
+/// A dated absence, and who covers the caseload behind it (leave P0-1).
+///
+/// The treating clinician never changes (D-01). Coverage is a second reader
+/// with an end date, and whether it is on today is derived from these dates by
+/// `leavePhase` in `permissions.ts` (D-02, D-14). There is no status column:
+/// the one stored transition is `cancelledAt`, and an early return is an edit
+/// to `toDate`. No reason is stored, because front desk reads the row (D-12).
+model Leave {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation("leaveUser", fields: [userId], references: [id], onDelete: Restrict)
+
+  /// Inclusive, practice-local, in the idiom of `AvailabilityOverride`.
+  fromDate DateTime @db.Date
+  toDate   DateTime @db.Date
+
+  /// Required (D-03): "every client is covered" holds from the first row. A
+  /// `leave_coverer_is_not_away` CHECK refuses the person away.
+  coveringClinicianId String
+  coveringClinician   User   @relation("leaveCoverer", fields: [coveringClinicianId], references: [id], onDelete: Restrict)
+
+  /// Admin, the only role holding `leave.create`.
+  plannedById String
+  plannedBy   User   @relation("leavePlanner", fields: [plannedById], references: [id], onDelete: Restrict)
+
+  cancelledAt DateTime?
+
+  /// The calendar row this leave owns (P0-7). Present exactly while the leave
+  /// is not cancelled — `leave_calendar_row_while_live` — and `Restrict`, so
+  /// the row cannot be deleted out from under a leave that still claims it.
+  overrideId String?               @unique
+  override   AvailabilityOverride? @relation(fields: [overrideId], references: [id], onDelete: Restrict)
+
+  coverage LeaveCoverage[]
+  alerts   Alert[]
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([coveringClinicianId])
+}
+
+/// One client covered by somebody other than the leave's coverer (P0-1).
+///
+/// An override, never a copy: there is no row for "same as the leave", so a
+/// decision naming the leave's own coverer removes the row instead of writing
+/// one. A trigger, `leave_coverage_coverer_is_not_away`, refuses the person
+/// away — a CHECK cannot see the leave.
+model LeaveCoverage {
+  id String @id @default(cuid())
+
+  leaveId String
+  leave   Leave  @relation(fields: [leaveId], references: [id], onDelete: Cascade)
+
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
+
+  coveringClinicianId String
+  coveringClinician   User   @relation("leaveCoverageCoverer", fields: [coveringClinicianId], references: [id], onDelete: Restrict)
+
+  decidedById String
+  decidedBy   User     @relation("leaveCoverageDecider", fields: [decidedById], references: [id], onDelete: Restrict)
+  decidedAt   DateTime @default(now())
+
+  @@unique([leaveId, clientId])
+  @@index([coveringClinicianId])
 }
