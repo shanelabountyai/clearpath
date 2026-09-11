@@ -4,6 +4,7 @@ import { requireSession } from '../../../src/session';
 import { ownCaseloadOnly } from '../../../src/auth/permissions';
 import { Badge, EmptyState, PageHeader, TierBanner, money } from '../../../src/ui/primitives';
 import { withDenial } from '@/src/ui/denied';
+import { dayLabel } from '../departures/ui';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,7 +63,12 @@ async function ClientsPage({ searchParams }: { searchParams: Promise<{ q?: strin
                     </Link>
                   </td>
                   <td className="border-b px-3 py-2 font-mono text-caption text-muted" style={{ borderColor: 'var(--border)' }}>{c.code}</td>
-                  <td className="border-b px-3 py-2 text-muted" style={{ borderColor: 'var(--border)' }}>{c.treatingClinician.name}</td>
+                  <td className="border-b px-3 py-2 text-muted" style={{ borderColor: 'var(--border)' }}>
+                    {c.treatingClinician.name}
+                    {c.coveringUntil && (
+                      <span className="ml-1.5"><Badge tone="accent">you cover until {dayLabel(c.coveringUntil)}</Badge></span>
+                    )}
+                  </td>
                   <td className="border-b px-3 py-2" style={{ borderColor: 'var(--border)' }}>
                     {c.feeCents === null ? <span className="text-subtle">Standard</span> : (
                       <Badge tone="info">{money(c.feeCents)} sliding</Badge>

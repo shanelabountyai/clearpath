@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { queryAuditLog } from '../../../src/reports/audit';
 import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
@@ -10,7 +11,7 @@ export const dynamic = 'force-dynamic';
 async function AuditPage({
   searchParams,
 }: {
-  searchParams: Promise<{ clientId?: string; actorId?: string; resource?: string; flagged?: string; denied?: string; cursor?: string }>;
+  searchParams: Promise<{ clientId?: string; actorId?: string; resource?: string; flagged?: string; denied?: string; reason?: string; cursor?: string }>;
 }) {
   const { actor } = await requireSession();
   const q = await searchParams;
@@ -21,6 +22,7 @@ async function AuditPage({
     resource: q.resource || undefined,
     flaggedOnly: q.flagged === '1',
     deniedOnly: q.denied === '1',
+    reason: q.reason || undefined,
     cursor: q.cursor,
     limit: 120,
   });
@@ -74,6 +76,10 @@ async function AuditPage({
               ))}
             </select>
           </div>
+          <div>
+            <label htmlFor="reason" className="block text-micro font-medium tracking-wide text-subtle uppercase">Reason code</label>
+            <input id="reason" name="reason" defaultValue={q.reason ?? ''} placeholder="leave:…" className="mt-1 rounded-[var(--radius)] border px-2 py-1.5 font-mono text-body" style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }} />
+          </div>
           <label className="flex items-center gap-1.5 text-body">
             <input type="checkbox" name="flagged" value="1" defaultChecked={q.flagged === '1'} /> Break-glass only
           </label>
@@ -120,7 +126,13 @@ async function AuditPage({
                     {r.breakGlass && <Badge tone="danger" glyph="⚠">break-glass</Badge>}{' '}
                     {r.allowed ? <Badge tone="success" glyph="✓">allowed</Badge> : <Badge tone="warning" glyph="⊘">denied</Badge>}
                   </td>
-                  <td className="border-b px-3 py-1.5 text-muted" style={{ borderColor: 'var(--border)' }}>{r.reason ?? ''}</td>
+                  <td className="border-b px-3 py-1.5 text-muted" style={{ borderColor: 'var(--border)' }}>
+                    {/* Only a code is a link. A break-glass justification is somebody's free text,
+                        and free text never goes in a URL (hard rule 3). */}
+                    {r.reason && CODE.test(r.reason) ? (
+                      <Link href={`/audit?reason=${encodeURIComponent(r.reason)}`} className="font-mono hover:underline">{r.reason}</Link>
+                    ) : (r.reason ?? '')}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -135,6 +147,9 @@ async function AuditPage({
     </>
   );
 }
+
+/** `leave:<id>`, `departure:decided_transfer`: a namespace and an identifier, nothing a person typed. */
+const CODE = /^[a-z_]+:[\w-]+$/;
 
 export default withDenial(AuditPage, {
   title: 'The audit log is the auditor’s',

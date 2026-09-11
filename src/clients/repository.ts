@@ -4,6 +4,7 @@ import { systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
 import { NotFound } from '../errors';
 import { coverageOf } from '../staff/coverage';
+import { leavePhase } from '../staff/leave';
 import { localDateOf } from '../time';
 
 /**
@@ -167,9 +168,10 @@ const OWN_CASELOAD = (actor: Actor) => ({ clinicianId: actor.id, treatingSupervi
  * record opens that actually matter.
  */
 export async function listClients(actor: Actor, opts: { search?: string; clock?: Clock } = {}) {
-  const scope = await caseloadWhere(actor, opts.clock);
+  const clock = opts.clock ?? systemClock;
+  const scope = await caseloadWhere(actor, clock);
 
-  return guarded(
+  const rows = await guarded(
     { actor, action: 'read', resource: 'client', target: OWN_CASELOAD(actor) },
     (tx) =>
       tx.client.findMany({
@@ -189,6 +191,16 @@ export async function listClients(actor: Actor, opts: { search?: string; clock?:
         orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
       }),
   );
+
+  // Leave P1-2: "covering until …" on the rows a person has because they cover
+  // them today. Display only — the matrix already decided which rows these are.
+  const today = localDateOf(clock.now());
+  const others = ownCaseloadOnly(actor) ? rows.filter((c) => c.treatingClinician.id !== actor.id) : [];
+  const coverage = await coverageOf(prisma, others.map((c) => ({ id: c.id, treatingClinicianId: c.treatingClinician.id })), today);
+  return rows.map((c) => {
+    const k = coverage.get(c.id);
+    return { ...c, coveringUntil: k?.coveringClinicianId === actor.id && leavePhase(k, today) === 'active' ? k.toDate : null };
+  });
 }
 
 /**

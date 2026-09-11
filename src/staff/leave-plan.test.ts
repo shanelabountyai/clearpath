@@ -4,7 +4,7 @@ import { prisma } from '../db';
 import { Forbidden } from '../errors';
 import { actor, makeClient, makeUser, resetDb, settings } from '../test/harness';
 import { zonedToUtc, type LocalDate } from '../time';
-import { cancelLeave, createLeave, decideCoverage, editLeaveDates, nameCoverer } from './leave-plan';
+import { cancelLeave, createLeave, decideCoverage, editLeaveDates, getLeavePlan, listLeaves, nameCoverer } from './leave-plan';
 
 /** Midday in the practice's zone, so no test sits on a midnight it did not mean to. */
 const on = (d: LocalDate) => fixedClock(zonedToUtc(d, 12 * 60));
@@ -333,5 +333,64 @@ describe('a leave\'s dates, and its one transition (P0-2, D-10)', () => {
     const { ray, leave } = await onLeave();
     await expect(cancelLeave(actor(ray), leave.id, on('2026-10-05'))).rejects.toMatchObject({ code: 'bad_transition' });
     expect(await prisma.availabilityOverride.count()).toBe(1);
+  });
+});
+
+// ─────────────────── the plan screen (Phase 4) ───────────────────
+
+describe('the plan screen\'s read (Phase 4, P0-8)', () => {
+  it('lists the caseload with each client\'s coverer, and who decided a split', async () => {
+    const { sam, nour, kai, client, leave } = await onLeave();
+    const other = await makeClient(nour.id);
+    await decideCoverage(actor(sam), leave.id, { clientId: client.id, coveringClinicianId: kai.id }, RECORDED);
+
+    const plan = await getLeavePlan(actor(sam), leave.id, RECORDED);
+    expect(plan).toMatchObject({ phase: 'upcoming', ...NOUR_AWAY, unavailable: [] });
+    const byId = new Map(plan.clients.map((c) => [c.id, c]));
+    expect(byId.get(client.id)?.coverage).toMatchObject({ coveringClinicianId: kai.id, decidedBy: { name: sam.name } });
+    expect(byId.get(other.id)?.coverage).toBeNull();
+  });
+
+  it('scans every named coverer after naming, and offers only who could cover the rest', async () => {
+    const { ray, sam, dev, kai, client, leave } = await onLeave();
+    await decideCoverage(actor(sam), leave.id, { clientId: client.id, coveringClinicianId: kai.id }, RECORDED);
+    const plan = (clock = RECORDED) => getLeavePlan(actor(ray), leave.id, clock);
+    expect((await plan()).unavailable).toEqual([]);
+
+    // Kai books a week off inside Nour's, and Dev gives notice before Nour is back.
+    // Each is its own fact to record; the leave learns of it here, not at the door.
+    await createLeave(actor(ray), { userId: kai.id, fromDate: '2026-10-19', toDate: '2026-10-23', coveringClinicianId: sam.id }, RECORDED);
+    await prisma.departure.create({
+      data: { userId: dev.id, plannedById: ray.id, noticeAt: RECORDED.now(), lastDayOn: dbDate('2026-11-20') },
+    });
+    expect((await plan()).unavailable.sort()).toEqual([dev.id, kai.id].sort());
+    expect((await plan()).coverers.map((c) => c.id)).toEqual([sam.id]);
+
+    // Once Kai is back, Kai is here for the rest of it.
+    const back = await plan(on('2026-10-26'));
+    expect(back.unavailable).toEqual([dev.id]);
+    expect(back.coverers.map((c) => c.id).sort()).toEqual([kai.id, sam.id].sort());
+  });
+
+  it('is read by front desk and by the person away, and refused to a colleague, on the record', async () => {
+    const { nour, dev, leave } = await onLeave();
+    const desk = await makeUser('front_desk');
+    await expect(getLeavePlan(actor(desk), leave.id, RECORDED)).resolves.toBeTruthy();
+    await expect(getLeavePlan(actor(nour), leave.id, RECORDED)).resolves.toBeTruthy();
+    await expect(getLeavePlan(actor(dev), leave.id, RECORDED)).rejects.toThrow(Forbidden);
+    expect(await prisma.auditEvent.count({ where: { actorId: dev.id, resource: 'leave', allowed: false } })).toBe(1);
+  });
+
+  it('lists the leaves not yet over for front desk, and not for a clinician', async () => {
+    const { ray, nour, dev, kai, leave } = await onLeave();
+    const desk = await makeUser('front_desk');
+    const kaiAway = await createLeave(actor(ray), { userId: kai.id, fromDate: '2026-09-14', toDate: '2026-09-18', coveringClinicianId: dev.id }, RECORDED);
+    const withdrawn = await createLeave(actor(ray), { userId: dev.id, fromDate: '2026-12-01', toDate: '2026-12-04', coveringClinicianId: kai.id }, RECORDED);
+    await cancelLeave(actor(ray), withdrawn.id, RECORDED);
+
+    expect((await listLeaves(actor(desk), on('2026-09-15'))).map((l) => [l.id, l.phase, l.coveringClinician.name]))
+      .toEqual([[kaiAway.id, 'active', dev.name], [leave.id, 'upcoming', dev.name]]);
+    expect((await listLeaves(actor(desk), on('2026-09-19'))).map((l) => l.id)).toEqual([leave.id]);
+    await expect(listLeaves(actor(nour), RECORDED)).rejects.toThrow(Forbidden);
   });
 });

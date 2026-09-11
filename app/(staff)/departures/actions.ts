@@ -1,32 +1,15 @@
 'use server';
 
 import { redirect } from 'next/navigation';
-import { Conflict } from '@/src/errors';
 import { requireSession } from '@/src/session';
 import {
   cancelDeparture, decideAssignment, executeDeparture, planDeparture, setReceivingSupervisor,
   type Disposition,
 } from '@/src/staff/departure';
+import { orBack } from './ui';
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 const orNull = (f: FormData, k: string) => str(f, k) || null;
-
-/**
- * Run one act, or come back to `path` saying why not.
- *
- * Only a `Conflict`'s code travels: it is the whole vocabulary the page renders.
- * A denial is not caught — every control on these pages is drawn from the
- * matrix that would refuse it, so a `Forbidden` here is a hand-rolled POST, and
- * it is on the record either way.
- */
-async function orBack<T>(path: string, act: () => Promise<T>): Promise<T> {
-  try {
-    return await act();
-  } catch (e) {
-    if (e instanceof Conflict) redirect(`${path}?error=${e.code ?? 'conflict'}`);
-    throw e;
-  }
-}
 
 export async function recordNotice(f: FormData) {
   const { actor } = await requireSession();

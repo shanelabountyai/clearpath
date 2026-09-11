@@ -2,7 +2,7 @@
 
 **Sample business:** "Stillwater Counseling" (as in the parent PRD) — 6 clinicians, 4 rooms, ~70 standing weekly clients
 **Builder:** Solo, in Claude Code
-**Status:** v0.2 — **reviewed 2026-09-10** (D-14 to D-17 added); Phases 1–3 built. Decided 2026-09-10: PRD first, then build in phases. Feature PRD, child of `prd-clearpath-counseling-ops.md`; the P2 that `prd-clinician-departure.md` deferred by name
+**Status:** v0.2 — **reviewed 2026-09-10** (D-14 to D-17 added); Phases 1–4 built, capstone seeded (D-19 added). Decided 2026-09-10: PRD first, then build in phases. Feature PRD, child of `prd-clearpath-counseling-ops.md`; the P2 that `prd-clinician-departure.md` deferred by name
 **Learning objectives:** a clinical read grant that is *derived* from a dated row and the injected clock rather than written on the first day and revoked on the last; what hard rule 9's "exactly one reader" means when that one person is away; and the pair with departure — everything that PRD made terminal, made to end on a date without anybody having to end it
 
 ---
@@ -218,6 +218,7 @@ None of this is a bug. Every rule above is right for a clinician who is at work.
 | D-16 | The coverer holds routine sessions as well as crisis contact: all five D-04 cells | Settled in review; closes the first Open Question. An eight-week leave means displaced sessions, and a session held with nothing written down is a worse record. A crisis-only practice drops `progress_note.create` and `process_note.create` |
 | D-17 | Supervisor coverage stays P1 | Settled in review; closes the third Open Question. `supervises()` decides every supervisee note and co-signature, so the widening is larger than the clinician case and gets its own review before it is built |
 | D-18 | Early return may set `toDate` to yesterday, and that edit returns the leave's unread alerts | Settled 2026-09-11 in Phase 3. Shortening only to today left the leave on until midnight. The "ends" move P0-5 put in the edit then had nothing to move, and a clinician back at their desk had their alerts going to a colleague all day. Ending the leave at the edit stops access and alerts together, at the moment a person says so. A leave whose first day is today still runs to midnight, because `leave_ends_after_it_starts` refuses anything else |
+| D-19 | A leave write that changes who reads an alert today moves that leave's unread alerts in its own transaction | Settled 2026-09-11 in Phase 4. Phase 3 moved them only on the hourly sweep, apart from an early return. After a supervisor split a client to Kai mid-leave, the matrix refused Dev the record at once, while the alert behind it stayed with Dev until the next run. Recording a leave that starts today, naming a coverer, deciding a client and moving dates all now call the same `rerouteAlerts` the sweep uses. The sweep is still what moves alerts at the date boundaries, when nobody writes anything |
 
 ## Risks and objections
 

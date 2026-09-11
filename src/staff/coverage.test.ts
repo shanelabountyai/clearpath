@@ -13,7 +13,7 @@ import { actor, makeClient, makeUser, resetDb, settings } from '../test/harness'
 import { zonedToUtc, type LocalDate } from '../time';
 import { alertRecipient } from './coverage';
 import { departureBlockers, executeDeparture, planDeparture } from './departure';
-import { cancelLeave, createLeave, decideCoverage, editLeaveDates, runLeaveAlertSweep } from './leave-plan';
+import { cancelLeave, createLeave, decideCoverage, editLeaveDates, nameCoverer, runLeaveAlertSweep } from './leave-plan';
 
 /** Midday in the practice's zone, so no test sits on a midnight it did not mean to. */
 const on = (d: LocalDate) => fixedClock(zonedToUtc(d, 12 * 60));
@@ -110,6 +110,17 @@ describe('the caseload list (caseloadWhere)', () => {
     expect(await ids(p.dev, BACK)).toEqual([]);
   });
 
+  it('marks what a person covers with the leave\'s last day, and nothing else (P1-2)', async () => {
+    const p = await onLeave();
+    const marks = async (who: { id: string; role: Role }) =>
+      (await listClients(actor(who), { clock: DAY_TWO })).map((c) => [c.id, c.coveringUntil]);
+    expect(await marks(p.dev)).toEqual([[p.mine.id, NOUR_AWAY.toDate]]);
+    expect(await marks(p.nour)).toEqual(expect.arrayContaining([[p.mine.id, null], [p.split.id, null]]));
+    expect((await marks(p.desk)).every(([, until]) => until === null)).toBe(true);
+    // Sam reads these rows as Nour's supervisor, not as the one covering them.
+    expect((await marks(p.sam)).every(([, until]) => until === null)).toBe(true);
+  });
+
   it('keeps the scope when a search brings its own OR', async () => {
     const p = await onLeave();
     expect(await ids(p.dev, DAY_TWO, 'Test')).toEqual([p.mine.id]);
@@ -188,10 +199,11 @@ describe('the boundary sweep', () => {
     expect(await at(unreadSplit.id)).toMatchObject({ recipientId: p.kai.id, coveringLeaveId: p.leave.id });
     expect(await at(seen.id)).toMatchObject({ recipientId: p.nour.id, coveringLeaveId: null });
 
-    // Sam hands the split client back to the leave's coverer; the unread alert follows.
+    // Sam hands the split client back to the leave's coverer; the unread alert
+    // follows in that write (D-19), so the sweep finds nothing left to do.
     await decideCoverage(actor(p.sam), p.leave.id, { clientId: p.split.id, coveringClinicianId: p.dev.id }, DAY_TWO);
-    expect(await runLeaveAlertSweep(DAY_TWO)).toEqual([unreadSplit.id]);
     expect(await at(unreadSplit.id)).toMatchObject({ recipientId: p.dev.id });
+    expect(await runLeaveAlertSweep(DAY_TWO)).toEqual([]);
 
     // Dev reads one in the window. "Dev saw this on 14 October" stays true.
     await prisma.alert.update({ where: { id: unread.id }, data: { acknowledgedAt: zonedToUtc('2026-10-14', 600) } });
@@ -204,9 +216,39 @@ describe('the boundary sweep', () => {
     const moves = await prisma.auditEvent.findMany({ where: { reason: { startsWith: 'leave:alert_' } }, orderBy: { at: 'asc' } });
     expect(moves.map((m) => [m.actorId, m.resource, m.resourceId, m.clientId, m.reason])).toEqual([
       ...[p.mine.id, p.split.id].map((c) => ['system', 'leave', p.leave.id, c, 'leave:alert_to_coverer']).sort(),
-      ['system', 'leave', p.leave.id, p.split.id, 'leave:alert_to_coverer'],
+      [p.sam.id, 'leave', p.leave.id, p.split.id, 'leave:alert_to_coverer'],
       ['system', 'leave', p.leave.id, p.split.id, 'leave:alert_returned'],
     ]);
+  });
+});
+
+describe('a write that changes today\'s reader moves the alerts itself (D-19)', () => {
+  it('a leave recorded to start today takes the unread alerts in its own transaction', async () => {
+    const ray = await makeUser('admin');
+    const nour = await makeUser('therapist');
+    const dev = await makeUser('therapist');
+    const client = await makeClient(nour.id);
+    const unread = await prisma.alert.create({ data: { recipientId: nour.id, clientId: client.id, kind: 'inbound_unparsed' } });
+
+    const leave = await createLeave(actor(ray), { userId: nour.id, ...NOUR_AWAY, coveringClinicianId: dev.id }, FIRST);
+
+    expect(await prisma.alert.findUniqueOrThrow({ where: { id: unread.id } }))
+      .toMatchObject({ recipientId: dev.id, coveringLeaveId: leave.id });
+    expect(await prisma.auditEvent.findFirst({ where: { reason: 'leave:alert_to_coverer' } })).toMatchObject({ actorId: ray.id });
+    expect(await runLeaveAlertSweep(FIRST)).toEqual([]);
+  });
+
+  it('a new coverer named mid-leave is handed the unread alerts the old one held', async () => {
+    const p = await onLeave();
+    const unread = await prisma.alert.create({
+      data: { recipientId: p.dev.id, clientId: p.mine.id, kind: 'inbound_unparsed', coveringLeaveId: p.leave.id },
+    });
+    const sub = await makeUser('therapist');
+
+    await nameCoverer(actor(p.ray), p.leave.id, sub.id, DAY_TWO);
+
+    expect(await prisma.alert.findUniqueOrThrow({ where: { id: unread.id } }))
+      .toMatchObject({ recipientId: sub.id, coveringLeaveId: p.leave.id });
   });
 });
 

@@ -18,6 +18,8 @@ interface AuditFilters {
   /** Break-glass entries and denials — the two things an audit is usually for. */
   flaggedOnly?: boolean;
   deniedOnly?: boolean;
+  /** A reason code, exactly: `leave:<id>` lists every read one leave made possible (leave P0-9). */
+  reason?: string;
   limit?: number;
   cursor?: string;
 }
@@ -34,6 +36,7 @@ export async function queryAuditLog(actor: Actor, filters: AuditFilters = {}) {
         ...(filters.resource ? { resource: filters.resource } : {}),
         ...(filters.flaggedOnly ? { breakGlass: true } : {}),
         ...(filters.deniedOnly ? { allowed: false } : {}),
+        ...(filters.reason ? { reason: filters.reason } : {}),
         ...(filters.from || filters.to
           ? { at: { ...(filters.from ? { gte: filters.from } : {}), ...(filters.to ? { lte: filters.to } : {}) } }
           : {}),

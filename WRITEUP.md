@@ -3167,6 +3167,82 @@ that leaves the alerts with Dev, and the one that mattered most:
   passes that cell. The obvious version handed the practice manager every
   progress note on the client. A test pins it.
 
+### Phase 4: the screens, and the lived-through leave
+
+**The plan screen** is one read and one audit row, `getLeavePlan`. Client names
+ride on `leave.read`, as a departure plan's ride on `departure.read`: names and
+codes at the demographic tier front desk already reads. The caseload shown is
+the one still treated, plus any client this leave decided about who has since
+moved on, so a split never drops silently off the record.
+
+**P0-8's scan is the door's own question.** `unavailableCoverers` answers
+"which of these people could not cover the rest of this leave" for any number
+of people in three queries. `assertCoverer` asks it of one person when a
+coverer is named. The plan screen asks it on every read, of each coverer the
+leave names and of everybody else for the pickers. The screen therefore offers
+exactly the people the write would accept, and a coverer who books their own
+week off later shows as a blocker the next time anyone looks. A blocked coverer
+is named without a reason: a colleague's leave or notice is theirs, the person
+away reads this screen, and the fix is the same either way.
+
+**D-19: a write moves its own alerts.** Phase 3 left one case to the hourly
+sweep. After a supervisor split a client to Kai mid-leave, the matrix refused
+Dev the record at once, and the alert behind it stayed with Dev until the next
+run. `settleAlerts` now runs inside `createLeave`, `nameCoverer`,
+`decideCoverage` and `editLeaveDates`. It hands this leave's unread alerts to
+`rerouteAlerts`, the sweep's own helper. Phase 3's early-return branch became
+this general rule, and the sweep went back to its one job: the date boundaries,
+when nobody writes anything.
+
+**Front desk's view** is `/leave`: who is away or about to be, until when, who
+covers, and how many clients somebody else covers. **The markers** (P1-2) are
+display only, because the matrix already decided which rows these are. The
+caseload list says "you cover until" on rows the reader has only because they
+cover them. The record says "Hana away until … · covering: Dev" at the
+demographic tier, per client, so a split client names Kai.
+
+**The audit log could not filter on what P0-9 wrote.** Every covered read said
+`leave:<id>`, and the auditor's screen had no way to ask for it. The query
+takes an exact `reason`, and a code-shaped reason in the table is a link to its
+own filter. Only code-shaped ones are: a break-glass justification is free text
+somebody typed, and free text never goes in a URL (hard rule 3).
+
+**The capstone** is `leave-demo.spec.ts` over a seeded leave with its own
+therapist, Hana, for the reason Maren has one. Nour's week of annual leave
+stays a bare override, because `scheduling.spec.ts` reads it and P1-1 counts it.
+The leave is dated from the real clock, not the seed's today, because the point
+is a leave that is on while the specs run. It was recorded two days ago. The
+screener landed on day two and the text on day three, each through the real
+path on its own day's clock. The spec follows Dev from the alert to the
+screener and both records, with no break-glass row. It shows front desk the
+coverer client by client. Then it asks `getClient` for the day after the last
+on an advanced clock, before anything has run: refused, while the unread alert
+still sits with Dev, because access never waited on the sweep. The manager
+brings Hana back today, and only the unread alert goes home. Last, the
+auditor's `leave:<id>` filter lists Dev's reads, none after return, and no
+audit row names Hana's private note with anybody else as the reader.
+
+The spec's first draft asserted "no `process_note` read on these clients by
+anyone but Hana", and it failed on a correct system. Dev's record page lists
+Dev's own private notes on a covered client, filtered to Dev in SQL, and that
+list is an audit row like any other. The rule is about whose note is read, so
+the assertion has to name the note, not the client.
+
+Four mutations, each turned red: no alert move in `decideCoverage`, none in
+`createLeave`, the scan ignoring a coverer's own leave, and the caseload marker
+shown to whoever reads the row rather than to the coverer.
+
+### What Phase 4 deliberately does not do
+
+- **No list of ended leaves.** An ended leave is the audit log's to tell, and
+  the log can now be filtered by its id.
+- **No reason for a blocked coverer**, as above.
+- **No P1-1, P1-3, P1-4 or P1-5.** The uncovered-absence count, supervisor
+  coverage, "while you were away" and the work-list section are each their own
+  item.
+- **No scheduler.** `reminders:run` still has nothing that runs it, so the
+  boundary sweep runs only when invoked.
+
 ## Decisions log
 
 | Decision | Why |
@@ -3380,6 +3456,13 @@ that leaves the alerts with Dev, and the one that mattered most:
 | Capacity returns `accepting` (derived) and `declared` (the clinician's toggle) | Front desk reads the first. The clinician's own button must describe the value they set, or "Open my books" during a leave writes a value that changes nothing on screen |
 | A departure over an open leave refuses with its own `leave_open` code | The fix is one edit on a different screen. `departure_not_ready` would send the admin looking through a plan that has nothing wrong with it |
 | "Back today" saves `toDate` as yesterday, and that edit returns the leave's unread alerts (leave D-18) | Shortening only to today left the leave on until midnight. The edit had no alerts to return, and a clinician at their desk had theirs going to a colleague all day. Ending the leave at the edit stops access and alerts together, when a person says so |
+| The leave plan screen offers only coverers the write would accept, from the function the write asks (leave P0-8) | Two statements of "who can cover" drift. One function asked at the door, on every read and for the pickers means a picker cannot offer somebody the write refuses, and a later conflict shows up on the next read |
+| A blocked coverer is named without a reason | A colleague's own leave or notice is theirs, and the person away reads the plan screen. The fix, naming somebody else, is the same whatever the reason |
+| Leave writes move their own unread alerts (leave D-19) | A mid-leave split refused Dev the record at once, while the alert behind it waited for the hourly sweep. The sweep keeps the date boundaries, when nobody writes |
+| The seeded leave has its own therapist, dated from the real clock | Converting Nour's annual leave would break `scheduling.spec.ts` and put the specs' therapist under coverage mid-sweep. A leave dated from the seed's fixed today would never be on while the specs run |
+| The audit log filters on an exact reason code, and links only code-shaped reasons | P0-9 wrote `leave:<id>` so an auditor could list one leave's reads. A break-glass justification is free text, and hard rule 3 keeps free text out of URLs |
+| `orBack` lives in the shared plan UI module, not in an actions file | Every export of a `'use server'` file is a callable endpoint. Sharing the helper from the actions file would have published it |
+| The seed walks past sessions in a total order, `(startAt, client code)` | Standing sessions share start times across clinicians, and the PRNG's rolls are dealt in query order. Ties broken however Postgres chose made a different history on each run; once, two later sections both asked about one session, and the seed crashed on a duplicate reminder row. Client code is deterministic, and a client never holds two sessions at one instant |
 
 ## What this project deliberately is not
 

@@ -64,6 +64,10 @@ export function navFor(actor: Actor): NavItem[] {
       { href: '/departures', label: 'Departures', glyph: '⇥' },
     ],
     [
+      may({ actor, action: 'read', resource: 'leave' }),
+      { href: '/leave', label: 'Leave', glyph: '☾' },
+    ],
+    [
       may({ actor, action: 'read', resource: 'user' }),
       { href: '/practice', label: 'Practice', glyph: '⚙' },
     ],

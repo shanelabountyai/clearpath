@@ -19,6 +19,7 @@ const {
   createProgressNote, signProgressNote, coSignProgressNote, createProcessNote, closeProcessNote, amendProcessNote,
 } = await import('../src/notes/service');
 const { planDeparture, decideAssignment } = await import('../src/staff/departure');
+const { createLeave, decideCoverage } = await import('../src/staff/leave-plan');
 const { guarded } = await import('../src/auth/guard');
 const { addDays, localDateOf, zonedToUtc } = await import('../src/time');
 const { bookGroupSession } = await import('../src/scheduling/groups');
@@ -236,7 +237,11 @@ async function main() {
   const past = await prisma.appointment.findMany({
     where: { startAt: { lt: zonedToUtc(TODAY, 0) } },
     select: { id: true, clientId: true, clinicianId: true, startAt: true },
-    orderBy: { startAt: 'asc' },
+    // A total order. Standing sessions share start times across clinicians,
+    // and the PRNG's rolls are dealt in this order, so ties broken however
+    // Postgres liked made a different history on each run — once, a session
+    // two later sections both asked about, and a duplicate reminder row.
+    orderBy: [{ startAt: 'asc' }, { client: { code: 'asc' } }],
   });
 
   const settings = await prisma.practiceSettings.findUniqueOrThrow({ where: { id: 1 } });
@@ -1034,6 +1039,52 @@ async function main() {
   });
   log(`${maren.name} leaves ${lastDayOn}: 15 clients (12 to ${dev.name}, ${kai.name} and ${priya.name}, 2 discharged, 1 referred out), 4 drafts, 2 unread alerts, 1 hour clash on ${leaving[CLASH]!.code}`);
 
+  // ── a clinician away, and who covers (leave PRD, Success Metrics → Lagging) ──
+  //
+  // Its own therapist, for the reason Maren has one. Nour's week of annual
+  // leave stays a bare override: `scheduling.spec.ts` reads it, and it is
+  // P1-1's uncovered absence. Three clients: one for the screener, one for the
+  // text, one split to Kai.
+  //
+  // Dated from the real clock, not the seed's today, because the point is a
+  // leave that is on while the specs run: recorded and begun two days ago, back
+  // in five. The screener lands on day two and the text on day three, each
+  // through the real path on its own day's clock, so each is routed the way it
+  // was on that day. `leave-demo.spec.ts` is the walkthrough.
+  const hana = await mk('Hana Lindqvist', 'therapist');
+  const away: { id: string; code: string }[] = [];
+  for (const [i, n] of [86, 87, 88].entries()) {
+    const client = await prisma.client.create({
+      data: {
+        code: `TC-0${n}`, firstName: 'Test', lastName: `Client 0${n} ${SURNAMES[i]}`,
+        dateOfBirth: new Date(Date.UTC(1981 + i, i, 11 + i)),
+        email: `client${n}@example.test`, phone: `555-01${n}`,
+        emergencyContactName: `Emergency Contact ${n}`, emergencyContactPhone: `555-02${n}`,
+        emergencyContactRelation: 'Sibling', treatingClinicianId: hana.id,
+        language: 'en', referralSource: REFERRAL_MIX[n % REFERRAL_MIX.length]!,
+      },
+    });
+    away.push({ id: client.id, code: client.code });
+  }
+  await createProcessNote(actor(hana), {
+    clientId: away[0]!.id,
+    content: 'Written the week before, and still mine while I am away: the ending of this block is what worries me.',
+  });
+
+  const realToday = localDateOf(systemClock.now());
+  const recorded = fixedClock(zonedToUtc(addDays(realToday, -2), 9 * 60));
+  const leave = await createLeave(admin, {
+    userId: hana.id, fromDate: addDays(realToday, -2), toDate: addDays(realToday, 4), coveringClinicianId: dev.id,
+  }, recorded);
+  recorded.advance(60 * 60_000);
+  await decideCoverage(actor(rosa), leave.id, { clientId: away[2]!.id, coveringClinicianId: kai.id }, recorded);
+
+  const dayTwo = fixedClock(zonedToUtc(addDays(realToday, -1), 10 * 60));
+  const screener = await issueForm(desk, { clientId: away[0]!.id, templateKey: 'wellbeing-check-in', clock: dayTwo });
+  await submitForm(screener.token, { ...zeros(), item_9: 2, difficulty: 'very' }, { clock: dayTwo });
+  await receiveInbound({ from: `555-01${87}`, body: 'can we talk before next week' });
+  log(`${hana.name} away ${leave.fromDate.toISOString().slice(0, 10)} to ${leave.toDate.toISOString().slice(0, 10)}, ${dev.name} covering, 1 of 3 clients split to ${kai.name}; a flagged screener on day two, a text on day three`);
+
   // The carrier, over the whole quarter. Everything already due goes out and
   // comes back `delivered`; the three failures seeded above are terminal, so
   // this cannot undo them, and messages scheduled into the future stay
@@ -1061,6 +1112,7 @@ Sign in as any of these (there is no password — the switcher is a dev tool):
   Auditor       ${auditorUser.name}
 
 ${manager.name} has ${maren.name}'s departure planned, with one hour clash still in it.
+${hana.name} is away, with ${dev.name} covering and one client split to ${kai.name}.
 
 The demo: sign in as ${rosa.name}, co-sign one of ${priya.name}'s progress notes,
 then open the same client's process notes. Then sign in as ${auditorUser.name}

@@ -51,7 +51,7 @@ function assertNotFrozen(leave: { phase: string }) {
 }
 
 /**
- * Could this person cover the rest of a leave (D-13, P0-8)?
+ * Which of these people could not cover the rest of a leave (D-13, P0-8)?
  *
  * Asked of the matrix, never of a role name: somebody who could write a note
  * for a client of their own, and whose notes need nobody's countersignature —
@@ -59,28 +59,46 @@ function assertNotFrozen(leave: { phase: string }) {
  * blind. Then here for the window: active, not the person away, not leaving
  * before it ends, and not away themselves on any day still to come.
  *
- * Refused at the door only. A coverer who books their own week off later is
- * recording their own fact; the plan screen scans for that (Phase 4).
+ * One question with two askers. `assertCoverer` asks it of one person at the
+ * door. The plan screen asks it of every coverer the leave names, on every
+ * read, because Dev booking their own week off later is Dev's fact to record,
+ * not Nour's leave's to refuse — and of everybody, for the pickers.
  */
+async function unavailableCoverers(
+  db: Tx | typeof prisma,
+  leave: { userId: string; fromDate: LocalDate; toDate: LocalDate },
+  ids: readonly string[],
+  today: LocalDate,
+): Promise<string[]> {
+  const unique = [...new Set(ids)];
+  const from = leave.fromDate > today ? leave.fromDate : today;
+  const [users, departing, away] = await Promise.all([
+    db.user.findMany({ where: { id: { in: unique } }, select: { id: true, role: true, active: true } }),
+    db.departure.findMany({
+      where: { userId: { in: unique }, status: 'planned', lastDayOn: { lt: dbDate(leave.toDate) } }, select: { userId: true },
+    }),
+    db.leave.findMany({
+      where: {
+        userId: { in: unique }, cancelledAt: null,
+        fromDate: { lte: dbDate(leave.toDate) }, toDate: { gte: dbDate(from) },
+      },
+      select: { userId: true },
+    }),
+  ]);
+  const able = new Set(
+    users.filter((u) => u.active && u.id !== leave.userId && mayTreat(u) && !requiresCoSignature(u.role)).map((u) => u.id),
+  );
+  for (const { userId } of [...departing, ...away]) able.delete(userId);
+  return unique.filter((id) => !able.has(id));
+}
+
 async function assertCoverer(
   tx: Tx,
-  leave: { userId: string; fromDate: LocalDate; toDate: LocalDate; id?: string },
+  leave: { userId: string; fromDate: LocalDate; toDate: LocalDate },
   covererId: string,
   today: LocalDate,
 ) {
-  const from = leave.fromDate > today ? leave.fromDate : today;
-  const u = await tx.user.findUnique({ where: { id: covererId }, select: { id: true, role: true, active: true } });
-  const unavailable = !u?.active || u.id === leave.userId || !mayTreat(u) || requiresCoSignature(u.role) ||
-    (await tx.departure.count({
-      where: { userId: covererId, status: 'planned', lastDayOn: { lt: dbDate(leave.toDate) } },
-    })) > 0 ||
-    (await tx.leave.count({
-      where: {
-        userId: covererId, cancelledAt: null,
-        fromDate: { lte: dbDate(leave.toDate) }, toDate: { gte: dbDate(from) },
-      },
-    })) > 0;
-  if (unavailable) {
+  if ((await unavailableCoverers(tx, leave, [covererId], today)).length > 0) {
     throw new Conflict('A coverer must be a clinician who is here for the whole leave', 'coverer_unavailable');
   }
 }
@@ -113,13 +131,16 @@ export async function createLeave(
           // D-12: the calendar is read by front desk, so the reason is the word and nothing more.
           data: { userId: input.userId, fromDate: dbDate(input.fromDate), toDate: dbDate(input.toDate), reason: 'Leave' },
         });
-        return tx.leave.create({
+        const leave = await tx.leave.create({
           data: {
             id, userId: input.userId,
             fromDate: dbDate(input.fromDate), toDate: dbDate(input.toDate),
             coveringClinicianId: input.coveringClinicianId, plannedById: actor.id, overrideId: override.id,
           },
         });
+        // A leave that starts today is on the moment it commits.
+        await settleAlerts(tx, actor, leave, today);
+        return leave;
       },
     );
   } catch (e) {
@@ -145,7 +166,9 @@ export async function nameCoverer(actor: Actor, leaveId: string, coveringClinici
     async (tx) => {
       await assertCoverer(tx, leave, coveringClinicianId, leave.today);
       await tx.leaveCoverage.deleteMany({ where: { leaveId, coveringClinicianId } });
-      return tx.leave.update({ where: { id: leaveId }, data: { coveringClinicianId } });
+      const named = await tx.leave.update({ where: { id: leaveId }, data: { coveringClinicianId } });
+      await settleAlerts(tx, actor, leave, leave.today);
+      return named;
     },
   );
 }
@@ -176,17 +199,20 @@ export async function decideCoverage(
       if (!(await tx.client.count({ where: { id: clientId, treatingClinicianId: leave.userId, status: 'active' } }))) {
         throw new Conflict('That client is not on this caseload', 'not_on_caseload');
       }
+      let row = null;
       if (coveringClinicianId === leave.coveringClinicianId) {
         await tx.leaveCoverage.deleteMany({ where: { leaveId, clientId } });
-        return null;
+      } else {
+        await assertCoverer(tx, leave, coveringClinicianId, leave.today);
+        const decision = { coveringClinicianId, decidedById: actor.id, decidedAt: clock.now() };
+        row = await tx.leaveCoverage.upsert({
+          where: { leaveId_clientId: { leaveId, clientId } },
+          create: { leaveId, clientId, ...decision },
+          update: decision,
+        });
       }
-      await assertCoverer(tx, leave, coveringClinicianId, leave.today);
-      const decision = { coveringClinicianId, decidedById: actor.id, decidedAt: clock.now() };
-      return tx.leaveCoverage.upsert({
-        where: { leaveId_clientId: { leaveId, clientId } },
-        create: { leaveId, clientId, ...decision },
-        update: decision,
-      });
+      await settleAlerts(tx, actor, leave, leave.today);
+      return row;
     },
   );
 }
@@ -200,7 +226,8 @@ export async function decideCoverage(
  * D-18): the leave has ended when this commits, so the coverer's next read is
  * refused and the alerts the leave moved go back in this transaction (P0-5).
  * Extending an active leave widens a grant, like a coverage decision, and is
- * audited the same way.
+ * audited the same way. An upcoming leave moved to start today is on when this
+ * commits, and its alerts go to the coverer here too (D-19).
  */
 export async function editLeaveDates(
   actor: Actor,
@@ -232,10 +259,7 @@ export async function editLeaveDates(
         const dates = { fromDate: dbDate(fromDate), toDate: dbDate(toDate) };
         await tx.availabilityOverride.update({ where: { id: leave.overrideId! }, data: dates });
         const edited = await tx.leave.update({ where: { id: leaveId }, data: dates });
-        if (toDate < leave.today) {
-          const stamped = await tx.alert.findMany({ where: { coveringLeaveId: leaveId, acknowledgedAt: null }, select: ALERT_ROW });
-          await rerouteAlerts(tx, actor, stamped, leave.today);
-        }
+        await settleAlerts(tx, actor, leave, leave.today);
         return edited;
       },
     );
@@ -309,6 +333,29 @@ async function rerouteAlerts(tx: Tx, actor: Actor, alerts: readonly AlertRow[], 
 }
 
 /**
+ * Put this leave's unread alerts where routing says they belong today, in the
+ * write that changed the answer (D-19): a leave starting today, a coverer named
+ * or a client split mid-leave, an early return.
+ *
+ * Without it the alert waited for the next sweep with somebody the matrix had
+ * already stopped reading the record behind it. Idempotent like the sweep, so
+ * a write that changes nobody's reader moves nothing.
+ */
+async function settleAlerts(tx: Tx, actor: Actor, leave: { id: string; userId: string }, today: LocalDate) {
+  const alerts = await tx.alert.findMany({
+    where: {
+      acknowledgedAt: null,
+      OR: [
+        { coveringLeaveId: leave.id },
+        { coveringLeaveId: null, recipientId: leave.userId, client: { treatingClinicianId: leave.userId } },
+      ],
+    },
+    select: ALERT_ROW,
+  });
+  return rerouteAlerts(tx, actor, alerts, today);
+}
+
+/**
  * The boundary sweep (P0-5, D-06): every unread alert a leave touches ends up
  * with whoever `alertRecipient` would choose today.
  *
@@ -339,4 +386,93 @@ export async function runLeaveAlertSweep(clock: Clock = systemClock) {
   const inPlay = candidates.filter((a) => a.coveringLeaveId !== null || a.recipientId === a.client.treatingClinicianId);
   if (inPlay.length === 0) return [];
   return prisma.$transaction((tx) => rerouteAlerts(tx as Tx, SYSTEM_ACTOR, inPlay, today));
+}
+
+// ─────────────────────── the plan screen (Phase 4) ───────────────────────
+
+/**
+ * Front desk's view (story 1): who is away or about to be, until when, and
+ * who covers. Names and dates, never a reason, because there is none (D-12).
+ *
+ * Not yet over and not cancelled. An ended leave is the audit log's to tell.
+ */
+export async function listLeaves(actor: Actor, clock: Clock = systemClock) {
+  const today = localDateOf(clock.now());
+  return guarded({ actor, action: 'read', resource: 'leave' }, async (tx) => {
+    const rows = await tx.leave.findMany({
+      where: { cancelledAt: null, toDate: { gte: dbDate(today) } },
+      select: {
+        id: true, fromDate: true, toDate: true,
+        user: { select: { name: true } }, coveringClinician: { select: { name: true } },
+        _count: { select: { coverage: true } },
+      },
+      orderBy: { fromDate: 'asc' },
+    });
+    return rows.map((r) => {
+      const dates = { fromDate: localDate(r.fromDate), toDate: localDate(r.toDate) };
+      return { ...r, ...dates, phase: leavePhase(dates, today) };
+    });
+  });
+}
+
+/**
+ * The plan screen, in one read and one audit row.
+ *
+ * Client names ride on `leave.read`, as a departure plan's ride on
+ * `departure.read`: names and codes at the demographic tier front desk already
+ * reads, and nothing a coverage decision does not need. The caseload is the
+ * one still treated, plus any client this leave decided about who has since
+ * moved on, so a split is never silently dropped from the record.
+ *
+ * `unavailable` is P0-8's continuous scan: each coverer the plan names who
+ * could not cover the rest of it, on today's facts. `coverers` is who the
+ * pickers offer. Both are empty once the leave is frozen.
+ */
+export async function getLeavePlan(actor: Actor, leaveId: string, clock: Clock = systemClock) {
+  const leave = await leaveRow(leaveId, clock);
+
+  return guarded(
+    { actor, action: 'read', resource: 'leave', resourceId: leaveId, target: { subjectUserId: leave.userId } },
+    async (tx) => {
+      const [detail, clients, everyone] = await Promise.all([
+        tx.leave.findUniqueOrThrow({
+          where: { id: leaveId },
+          select: {
+            user: { select: { name: true } },
+            plannedBy: { select: { name: true } },
+            coveringClinician: { select: { id: true, name: true } },
+          },
+        }),
+        tx.client.findMany({
+          where: { OR: [{ treatingClinicianId: leave.userId, status: 'active' }, { leaveCoverage: { some: { leaveId } } }] },
+          select: {
+            id: true, code: true, firstName: true, lastName: true,
+            leaveCoverage: {
+              where: { leaveId },
+              select: {
+                coveringClinicianId: true, decidedAt: true,
+                coveringClinician: { select: { name: true } }, decidedBy: { select: { name: true } },
+              },
+            },
+          },
+          orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+        }),
+        tx.user.findMany({ where: { active: true }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+      ]);
+
+      const live = leave.phase === 'upcoming' || leave.phase === 'active';
+      const named = new Set([leave.coveringClinicianId, ...clients.flatMap((c) => c.leaveCoverage.map((r) => r.coveringClinicianId))]);
+      const cannot = new Set(
+        live ? await unavailableCoverers(tx, leave, [...named, ...everyone.map((u) => u.id)], leave.today) : [],
+      );
+
+      return {
+        ...leave,
+        ...detail,
+        clients: clients.map(({ leaveCoverage, ...c }) => ({ ...c, coverage: leaveCoverage[0] ?? null })),
+        unavailable: [...named].filter((id) => cannot.has(id)),
+        coverers: live ? everyone.filter((u) => !cannot.has(u.id)) : [],
+      };
+    },
+  );
 }

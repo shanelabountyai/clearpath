@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { guarded } from '../auth/guard';
+import { auditEvent, guarded } from '../auth/guard';
 import { fixedClock, DAY, HOUR } from '../clock';
 import { prisma } from '../db';
 import { Forbidden } from '../errors';
@@ -364,6 +364,14 @@ describe('the auditor', () => {
     const { rows } = await queryAuditLog(actor(auditorUser), { deniedOnly: true });
     expect(rows.every((r) => r.allowed === false)).toBe(true);
     expect(rows.some((r) => r.resource === 'process_note')).toBe(true);
+  });
+
+  it('filters to one reason code, so the reads a single leave made possible list together (leave P0-9)', async () => {
+    await someActivity();
+    await auditEvent(actor(therapist), 'read', 'client', { reason: 'leave:one' });
+    await auditEvent(actor(therapist), 'read', 'client', { reason: 'leave:other' });
+    const { rows } = await queryAuditLog(actor(auditorUser), { reason: 'leave:one' });
+    expect(rows.map((r) => [r.actorId, r.reason])).toEqual([[therapist.id, 'leave:one']]);
   });
 
   it('answers "who touched client X"', async () => {

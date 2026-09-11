@@ -15,6 +15,7 @@ export async function GET(request: Request) {
     resource: p.get('resource') || undefined,
     flaggedOnly: p.get('flagged') === '1',
     deniedOnly: p.get('denied') === '1',
+    reason: p.get('reason') || undefined,
     limit: 1000,
   });
 

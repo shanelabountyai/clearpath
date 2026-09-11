@@ -16,6 +16,8 @@ import { addProcessNote, saveFee, saveLanguage, saveReminderStages, sendForm, se
 import { BreakGlassPrompt } from '../../break-glass';
 import { systemClock } from '@/src/clock';
 import { Button } from '@/src/ui/primitives';
+import { leavePhase } from '@/src/staff/leave';
+import { dayLabel } from '../../departures/ui';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,14 +48,21 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
     ) : (
       <div className="mx-auto max-w-2xl py-8">
         <LockedPanel title="This is not one of your clients">
-          Client records are open to the treating clinician and, where the clinician works
-          under supervision, to their supervisor. You are neither for this record.
+          Client records are open to the treating clinician, to whoever covers their leave
+          and, where the clinician works under supervision, to their supervisor. You are
+          none of these for this record.
         </LockedPanel>
       </div>
     );
   }
 
   const can = clientAffordances(actor, target);
+  // Leave P1-2, at the demographic tier: front desk tells a caller who covers.
+  // Names and a date, never why.
+  const cover = target.coverage && leavePhase(target.coverage, target.today) === 'active' ? target.coverage : null;
+  const coverer = cover
+    ? await prisma.user.findUniqueOrThrow({ where: { id: cover.coveringClinicianId }, select: { name: true } })
+    : null;
   const fee = await effectiveFeeCents(id);
 
   const upcoming = await prisma.appointment.findMany({
@@ -80,6 +89,11 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
           <>
             <span className="font-mono">{client.code}</span> · treating clinician{' '}
             {client.treatingClinician.name}
+            {cover && coverer && (
+              <span className="block">
+                {client.treatingClinician.name} away until {dayLabel(cover.toDate)} · covering: {coverer.name}
+              </span>
+            )}
             {client.departureAssignments.map((t) => (
               <span key={t.id} className="block">
                 Transferred from {t.departure.user.name} to {t.receivingClinician?.name},{' '}
