@@ -65,6 +65,10 @@ export const LEAVE_REFUSAL: Record<string, string> = {
     'The person chosen cannot cover this: they are not a clinician who signs their own notes, or they are away, leaving or gone for some of it.',
   not_on_caseload: 'That client is no longer on this caseload, so there is nothing to decide.',
   bad_transition: 'A leave that has started cannot be cancelled. It ends early instead, and keeps the days it was on.',
+  supervision_uncovered:
+    'This person supervises somebody. Name a supervisor to countersign in their place while they are away.',
+  supervision_cover_unavailable:
+    'The person chosen cannot cover this supervision: they are not a supervisor, or they are away, leaving or gone for some of it.',
 };
 
 export function Refusal({ code, messages = REFUSAL }: { code?: string; messages?: Record<string, string> }) {

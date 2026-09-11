@@ -1,11 +1,11 @@
-import { guarded } from '../auth/guard';
-import { can, requiresCoSignature, type Actor } from '../auth/permissions';
+import { guarded, may } from '../auth/guard';
+import { can, requiresCoSignature, type Actor, type Target } from '../auth/permissions';
 import { systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
 import { clientTarget } from '../clients/repository';
 import { Conflict, NotFound } from '../errors';
-import { coverageOf } from '../staff/coverage';
-import { localDateOf } from '../time';
+import { coverageOf, supervisionCoverageOf, supervisionCoveredBy } from '../staff/coverage';
+import { localDateOf, type LocalDate } from '../time';
 
 /**
  * Two classes of clinical note, with deliberately different rules.
@@ -56,13 +56,20 @@ async function progressContext(noteId: string, clock: Clock = systemClock) {
   if (!note) throw new NotFound('ProgressNote');
   const today = localDateOf(clock.now());
   const treating = { id: note.clientId, treatingClinicianId: note.client.treatingClinicianId };
+  const supervisorId = note.author.supervisorId;
+  const [coverage, supervision] = await Promise.all([
+    coverageOf(prisma, [treating], today),
+    supervisionCoverageOf(prisma, [supervisorId], today),
+  ]);
   return {
     note,
     target: {
       authorId: note.authorId,
-      authorSupervisorId: note.author.supervisorId ?? undefined,
+      authorSupervisorId: supervisorId ?? undefined,
       clinicianId: note.client.treatingClinicianId,
-      coverage: (await coverageOf(prisma, [treating], today)).get(note.clientId),
+      coverage: coverage.get(note.clientId),
+      // Whoever covers the author's supervisor, who countersigns in their place (leave D-21).
+      authorSupervisorCoverage: supervisorId ? supervision.get(supervisorId) : undefined,
       today,
     },
   };
@@ -153,7 +160,8 @@ export async function signProgressNote(
 }
 
 export async function coSignProgressNote(actor: Actor, noteId: string, opts: { clock?: Clock } = {}) {
-  const { note, target } = await progressContext(noteId);
+  // The clock decides the target too: a supervision cover countersigns only inside the window (leave D-21).
+  const { note, target } = await progressContext(noteId, opts.clock);
   if (note.status === 'draft') throw new Conflict('The author has not signed this note yet', 'not_signed');
   if (note.status === 'cosigned') throw new Conflict('This note is already co-signed', 'already_cosigned');
   // P0-4b. A co-signature countersigns somebody's signature, and an abandoned
@@ -173,6 +181,25 @@ export async function coSignProgressNote(actor: Actor, noteId: string, opts: { c
         data: { status: 'cosigned', coSignedById: actor.id, coSignedAt: now },
       }),
   );
+}
+
+/**
+ * Whether to draw the co-sign button, decided on the target the co-signature
+ * itself is, so the cover for an away supervisor sees it too. Silent, like `may`.
+ */
+export async function mayCoSign(actor: Actor, noteId: string) {
+  const { target } = await progressContext(noteId);
+  return may({ actor, action: 'cosign', resource: 'progress_note', target });
+}
+
+/**
+ * The supervisors whose supervision this person covers today, and their
+ * supervisees — each leave admitted by the co-sign cell it exists for (leave D-21).
+ */
+async function coveredSupervision(actor: Actor, today: LocalDate) {
+  return (await supervisionCoveredBy(prisma, actor.id, today)).filter((r) => can(actor, 'cosign', 'progress_note', {
+    authorSupervisorId: r.supervisorId, authorSupervisorCoverage: r.coverage, today,
+  }).allowed);
 }
 
 export async function getProgressNote(actor: Actor, noteId: string) {
@@ -228,12 +255,15 @@ export async function amendProgressNote(actor: Actor, noteId: string, content: s
  * what they or a supervisee wrote.
  */
 export async function listProgressNotes(actor: Actor, clientId: string, clock: Clock = systemClock) {
-  const [target, supervisees] = await Promise.all([
+  const today = localDateOf(clock.now());
+  const [target, supervisees, standingIn] = await Promise.all([
     clientTarget(clientId, clock),
     prisma.user.findMany({ where: { supervisorId: actor.id }, select: { id: true } }),
+    coveredSupervision(actor, today),
   ]);
   const { clinicianId } = target;
-  const readable = [actor.id, ...supervisees.map((s) => s.id)];
+  // The cover for an away supervisor reads what that supervisor's supervisees wrote (leave D-21).
+  const readable = [actor.id, ...supervisees.map((s) => s.id), ...standingIn.flatMap((r) => r.superviseeIds)];
   const treating = clinicianId === actor.id;
   // The coverer reads the record the treating clinician reads, for the window
   // (leave D-04). Asked of the matrix, and only a read a leave alone decided
@@ -244,7 +274,11 @@ export async function listProgressNotes(actor: Actor, clientId: string, clock: C
     {
       actor, action: 'read', resource: 'progress_note', clientId,
       // Without `authorId` for the coverer, so the audit row names the leave.
-      target: covering ? target : { authorId: actor.id, clinicianId },
+      // ponytail: a supervision cover's row names the first leave they cover,
+      // whether or not its supervisees wrote on this client; count per leave if an auditor needs it exact.
+      target: covering ? target
+        : standingIn[0] ? { authorSupervisorId: standingIn[0].supervisorId, authorSupervisorCoverage: standingIn[0].coverage, today }
+        : { authorId: actor.id, clinicianId },
     },
     (tx) =>
       tx.progressNote.findMany({
@@ -267,36 +301,41 @@ export async function listProgressNotes(actor: Actor, clientId: string, clock: C
  */
 export async function coSignQueue(actor: Actor, opts: { clock?: Clock } = {}) {
   const now = (opts.clock ?? systemClock).now();
-  const supervisees = await prisma.user.findMany({
-    where: { supervisorId: actor.id },
-    select: { id: true },
-  });
-  if (supervisees.length === 0) return [];
+  const today = localDateOf(now);
+  const [supervisees, standingIn] = await Promise.all([
+    prisma.user.findMany({ where: { supervisorId: actor.id }, select: { id: true } }),
+    coveredSupervision(actor, today),
+  ]);
 
-  return guarded(
-    {
-      actor, action: 'read', resource: 'progress_note',
-      target: { authorId: actor.id, authorSupervisorId: actor.id },
-    },
-    async (tx) => {
-      const notes = await tx.progressNote.findMany({
-        where: { status: 'signed', authorId: { in: supervisees.map((s) => s.id) } },
-        select: {
-          id: true, signedAt: true, clientId: true,
-          author: { select: { id: true, name: true } },
-          client: { select: { code: true, firstName: true, lastName: true } },
-          appointment: { select: { startAt: true } },
-        },
-        orderBy: { signedAt: 'asc' },
-      });
-      return notes.map((n) => ({
-        ...n,
-        waitingDays: n.signedAt
-          ? Math.floor((now.getTime() - n.signedAt.getTime()) / 86_400_000)
-          : 0,
-      }));
-    },
-  );
+  // One guarded read per door: their own supervisees, and each leave they
+  // cover, so every covered read carries its own `leave:<id>` (leave P0-9).
+  const doors: { target: Target; authors: string[] }[] = [
+    ...(supervisees.length ? [{ target: { authorId: actor.id, authorSupervisorId: actor.id }, authors: supervisees.map((s) => s.id) }] : []),
+    ...standingIn.map((r) => ({
+      target: { authorSupervisorId: r.supervisorId, authorSupervisorCoverage: r.coverage, today },
+      authors: r.superviseeIds,
+    })),
+  ];
+  const lists = await Promise.all(doors.map(({ target, authors }) => guarded(
+    { actor, action: 'read', resource: 'progress_note', target },
+    (tx) => tx.progressNote.findMany({
+      where: { status: 'signed', authorId: { in: authors } },
+      select: {
+        id: true, signedAt: true, clientId: true,
+        author: { select: { id: true, name: true } },
+        client: { select: { code: true, firstName: true, lastName: true } },
+        appointment: { select: { startAt: true } },
+      },
+    }),
+  )));
+  return lists.flat()
+    .sort((a, b) => (a.signedAt?.getTime() ?? 0) - (b.signedAt?.getTime() ?? 0))
+    .map((n) => ({
+      ...n,
+      waitingDays: n.signedAt
+        ? Math.floor((now.getTime() - n.signedAt.getTime()) / 86_400_000)
+        : 0,
+    }));
 }
 
 // ────────────────────────────── process notes ──────────────────────────────

@@ -63,6 +63,65 @@ export async function coverageOf(
   return out;
 }
 
+/**
+ * Each supervisor's open leave, and who covers their supervision under it
+ * (leave P1-3). The same "which leave" as `coverageOf` — the earliest not
+ * cancelled and not yet over — and the same refusal to decide whether it is on
+ * today: `coversAuthorSupervisor` does that (D-14). A leave naming no
+ * supervision cover resolves to nothing, and nothing grants.
+ */
+export async function supervisionCoverageOf(
+  db: Db,
+  supervisorIds: readonly (string | null | undefined)[],
+  today: LocalDate,
+): Promise<Map<string, Coverage>> {
+  const out = new Map<string, Coverage>();
+  const ids = [...new Set(supervisorIds.filter((id): id is string => !!id))];
+  if (ids.length === 0) return out;
+
+  const leaves = await db.leave.findMany({
+    where: { userId: { in: ids }, cancelledAt: null, toDate: { gte: dbDate(today) } },
+    orderBy: { fromDate: 'asc' },
+    select: { id: true, userId: true, coveringSupervisorId: true, fromDate: true, toDate: true, cancelledAt: true },
+  });
+  const seen = new Set<string>();
+  for (const l of leaves) {
+    if (seen.has(l.userId)) continue;
+    seen.add(l.userId);
+    if (!l.coveringSupervisorId) continue;
+    out.set(l.userId, {
+      leaveId: l.id, coveringClinicianId: l.coveringSupervisorId,
+      fromDate: localDate(l.fromDate), toDate: localDate(l.toDate), cancelledAt: l.cancelledAt,
+    });
+  }
+  return out;
+}
+
+/**
+ * The supervisors this person is named to cover on a leave not yet over, each
+ * with their supervisees and the coverage the matrix decides on. Not filtered
+ * by today: the caller asks `can` with the cell it is about to use, so a list
+ * never names somebody the record would refuse. The cover is never counted as
+ * their own supervisee, since nobody countersigns their own note.
+ */
+export async function supervisionCoveredBy(db: Db, actorId: string, today: LocalDate) {
+  const leaves = await db.leave.findMany({
+    where: { coveringSupervisorId: actorId, cancelledAt: null, toDate: { gte: dbDate(today) } },
+    select: {
+      id: true, userId: true, fromDate: true, toDate: true, cancelledAt: true,
+      user: { select: { supervisees: { where: { id: { not: actorId } }, select: { id: true } } } },
+    },
+  });
+  return leaves.map((l) => ({
+    supervisorId: l.userId,
+    superviseeIds: l.user.supervisees.map((s) => s.id),
+    coverage: {
+      leaveId: l.id, coveringClinicianId: actorId,
+      fromDate: localDate(l.fromDate), toDate: localDate(l.toDate), cancelledAt: l.cancelledAt,
+    } satisfies Coverage,
+  }));
+}
+
 export interface AlertRoute {
   recipientId: string;
   /** Set exactly when coverage chose the recipient, so the boundary sweep knows what to move back. */

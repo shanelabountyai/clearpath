@@ -5,7 +5,7 @@ import { Forbidden } from '../errors';
 import { actor, makeClient, makeUser, resetDb, settings } from '../test/harness';
 import { zonedToUtc, type LocalDate } from '../time';
 import {
-  cancelLeave, createLeave, decideCoverage, editLeaveDates, getLeavePlan, leaveWorklist, listLeaves, nameCoverer,
+  cancelLeave, createLeave, decideCoverage, editLeaveDates, getLeavePlan, leaveWorklist, listLeaves, nameCoverer, nameSupervisionCover,
   runLeaveAlertSweep, uncoveredAbsenceAlerts,
 } from './leave-plan';
 
@@ -71,6 +71,12 @@ describe('the leave row, against a real connection (P0-1, P0-7)', () => {
   it('refuses the person away as the leave\'s coverer', async () => {
     const p = await practice();
     await expect(row(p, { coveringClinicianId: p.nour.id })).rejects.toThrow(/leave_coverer_is_not_away/);
+  });
+
+  it('refuses the person away as their own supervision cover, and takes no cover at all (P1-3)', async () => {
+    const p = await practice();
+    await expect(row(p, { coveringSupervisorId: p.nour.id })).rejects.toThrow(/leave_supervision_cover_is_not_away/);
+    await expect(row(p)).resolves.toMatchObject({ coveringSupervisorId: null });
   });
 
   it('refuses two live leaves sharing even one day, and allows the day after, another person, and a cancelled leave\'s dates', async () => {
@@ -209,6 +215,67 @@ describe('recording a leave (story 1, P0-7, P0-9)', () => {
     // A supervisor may cover: their notes need nobody's countersignature.
     await expect(createLeave(actor(ray), { userId: nour.id, ...NOUR_AWAY, coveringClinicianId: sam.id }, RECORDED))
       .resolves.toBeTruthy();
+  });
+});
+
+describe('who covers the supervision (P1-3, D-22)', () => {
+  /** Sam supervises Nour and is away; Rosa, a second supervisor, could stand in. */
+  async function samAway() {
+    const p = await practice();
+    const rosa = await makeUser('supervisor');
+    return { ...p, rosa, input: { userId: p.sam.id, ...NOUR_AWAY, coveringClinicianId: p.dev.id } };
+  }
+
+  it('refuses a leave for somebody who supervises anyone until a supervision cover is named', async () => {
+    const { ray, rosa, input } = await samAway();
+    await expect(createLeave(actor(ray), input, RECORDED)).rejects.toMatchObject({ code: 'supervision_uncovered' });
+    expect(await prisma.leave.count()).toBe(0);
+    await expect(createLeave(actor(ray), { ...input, coveringSupervisorId: rosa.id }, RECORDED))
+      .resolves.toMatchObject({ coveringSupervisorId: rosa.id });
+  });
+
+  it('asks nothing of a leave for somebody who supervises nobody', async () => {
+    const { leave } = await onLeave();
+    expect(leave.coveringSupervisorId).toBeNull();
+  });
+
+  it('refuses a cover who could not countersign, or is not here for the whole leave', async () => {
+    const { ray, sam, dev, rosa, input } = await samAway();
+    const gone = await makeUser('supervisor');
+    await prisma.user.update({ where: { id: gone.id }, data: { active: false } });
+    // Rosa's own week off, in the middle of Sam's.
+    await createLeave(actor(ray), { userId: rosa.id, fromDate: '2026-10-19', toDate: '2026-10-23', coveringClinicianId: dev.id }, RECORDED);
+
+    for (const [who, id] of Object.entries({ therapist: dev.id, admin: ray.id, gone: gone.id, away: sam.id, 'on leave': rosa.id })) {
+      await expect(createLeave(actor(ray), { ...input, coveringSupervisorId: id }, RECORDED), who)
+        .rejects.toMatchObject({ code: 'supervision_cover_unavailable' });
+    }
+    expect(await prisma.leave.count({ where: { userId: sam.id } })).toBe(0);
+  });
+
+  it('names, changes and clears the cover on the record, and will not clear it while anybody is supervised', async () => {
+    const { ray, rosa, nour, input } = await samAway();
+    const other = await makeUser('supervisor');
+    const leave = await createLeave(actor(ray), { ...input, coveringSupervisorId: rosa.id }, RECORDED);
+
+    await expect(nameSupervisionCover(actor(rosa), leave.id, other.id, RECORDED)).resolves.toMatchObject({ coveringSupervisorId: other.id });
+    await expect(nameSupervisionCover(actor(ray), leave.id, null, RECORDED)).rejects.toMatchObject({ code: 'supervision_uncovered' });
+    await prisma.user.update({ where: { id: nour.id }, data: { supervisorId: null } });
+    await expect(nameSupervisionCover(actor(ray), leave.id, null, RECORDED)).resolves.toMatchObject({ coveringSupervisorId: null });
+
+    const named = await prisma.auditEvent.findMany({ where: { resource: 'leave', reason: 'leave:supervision_cover_named' } });
+    expect(named.map((r) => r.allowed)).toEqual([true, true]);
+  });
+
+  it('is scanned on the plan screen: a cover booking their own leave blocks it, and the picker offers only supervisors here', async () => {
+    const { ray, dev, rosa, input } = await samAway();
+    const leave = await createLeave(actor(ray), { ...input, coveringSupervisorId: rosa.id }, RECORDED);
+    const plan = () => getLeavePlan(actor(ray), leave.id, RECORDED);
+    expect(await plan()).toMatchObject({ supervisees: 1, supervisionBlocked: false, coveringSupervisor: { id: rosa.id } });
+    expect((await plan()).supervisors.map((u) => u.id)).toEqual([rosa.id]);
+
+    await createLeave(actor(ray), { userId: rosa.id, fromDate: '2026-10-19', toDate: '2026-10-23', coveringClinicianId: dev.id }, RECORDED);
+    expect(await plan()).toMatchObject({ supervisionBlocked: true, supervisors: [] });
   });
 });
 

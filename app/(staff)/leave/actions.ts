@@ -3,7 +3,7 @@
 import { redirect } from 'next/navigation';
 import { systemClock } from '@/src/clock';
 import { requireSession } from '@/src/session';
-import { cancelLeave, createLeave, decideCoverage, editLeaveDates, nameCoverer } from '@/src/staff/leave-plan';
+import { cancelLeave, createLeave, decideCoverage, editLeaveDates, nameCoverer, nameSupervisionCover } from '@/src/staff/leave-plan';
 import { addDays, localDateOf } from '@/src/time';
 import { orBack } from '../departures/ui';
 
@@ -16,8 +16,16 @@ export async function recordLeave(f: FormData) {
     fromDate: str(f, 'fromDate'),
     toDate: str(f, 'toDate'),
     coveringClinicianId: str(f, 'coveringClinicianId'),
+    coveringSupervisorId: str(f, 'coveringSupervisorId') || null,
   }));
   redirect(`/leave/${leave.id}`);
+}
+
+export async function chooseSupervisionCover(f: FormData) {
+  const { actor } = await requireSession();
+  const id = str(f, 'id');
+  await orBack(`/leave/${id}`, () => nameSupervisionCover(actor, id, str(f, 'coveringSupervisorId') || null));
+  redirect(`/leave/${id}`);
 }
 
 export async function chooseCoverer(f: FormData) {

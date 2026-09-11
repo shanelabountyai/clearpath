@@ -3,13 +3,14 @@ import { includesSuperviseeCaseloads, ownCaseloadOnly, type Actor, type Target }
 import { systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
 import { NotFound } from '../errors';
-import { coverageOf } from '../staff/coverage';
+import { coverageOf, supervisionCoverageOf, supervisionCoveredBy } from '../staff/coverage';
 import { leavePhase } from '../staff/leave';
 import { localDateOf } from '../time';
 
 /**
  * The relationship facts a check needs about a client: who treats them, who
- * supervises that person, and who covers the client while they are away.
+ * supervises that person, who covers the client while they are away, and who
+ * covers that supervisor's supervision while they are (leave P1-3).
  * Resolved once, from data, and handed to the matrix — which is what lets
  * reassigning a supervisor, or recording a leave, change access with no deploy.
  *
@@ -27,12 +28,17 @@ export async function clientTarget(clientId: string, clock: Clock = systemClock)
   });
   if (!row) throw new NotFound('Client');
   const today = localDateOf(clock.now());
-  const coverage = (await coverageOf(prisma, [row], today)).get(clientId);
+  const supervisorId = row.treatingClinician.supervisorId;
+  const [coverage, supervision] = await Promise.all([
+    coverageOf(prisma, [row], today).then((m) => m.get(clientId)),
+    supervisionCoverageOf(prisma, [supervisorId], today).then((m) => (supervisorId ? m.get(supervisorId) : undefined)),
+  ]);
   return {
     clinicianId: row.treatingClinicianId,
-    treatingSupervisorId: row.treatingClinician.supervisorId ?? undefined,
+    treatingSupervisorId: supervisorId ?? undefined,
     today,
     ...(coverage && { coverage }),
+    ...(supervision && { treatingSupervisorCoverage: supervision }),
   } satisfies Target;
 }
 
@@ -108,7 +114,8 @@ export async function getClient(actor: Actor, clientId: string, clock: Clock = s
 /**
  * The clients a role is scoped to, as a `where` fragment.
  *
- * A supervisor's caseload is their own plus their supervisees'. Anybody
+ * A supervisor's caseload is their own plus their supervisees', and the
+ * supervisees of any supervisor whose supervision they cover today. Anybody
  * covering a leave also has the clients they cover today. Front desk gets no
  * fragment because they book for everyone, and the practice manager never
  * reaches a query that uses this — their client read is break-glass.
@@ -117,14 +124,17 @@ export async function getClient(actor: Actor, clientId: string, clock: Clock = s
  */
 async function caseloadWhere(actor: Actor, clock: Clock = systemClock) {
   if (!ownCaseloadOnly(actor)) return {};
-  const [supervisees, covered] = await Promise.all([
-    includesSuperviseeCaseloads(actor)
+  const today = localDateOf(clock.now());
+  const supervising = includesSuperviseeCaseloads(actor);
+  const [supervisees, covered, standingIn] = await Promise.all([
+    supervising
       ? prisma.user.findMany({ where: { supervisorId: actor.id }, select: { id: true } }).then((us) => us.map((u) => u.id))
       : [],
-    coveredClientIds(actor, localDateOf(clock.now())),
+    coveredClientIds(actor, today),
+    supervising ? coveredSuperviseeIds(actor, today) : [],
   ]);
   return {
-    AND: [{ OR: [{ treatingClinicianId: { in: [actor.id, ...supervisees] } }, { id: { in: covered } }] }],
+    AND: [{ OR: [{ treatingClinicianId: { in: [actor.id, ...supervisees, ...standingIn] } }, { id: { in: covered } }] }],
   };
 }
 
@@ -154,6 +164,19 @@ async function coveredClientIds(actor: Actor, today: string): Promise<string[]> 
       target: { clinicianId: c.treatingClinicianId, coverage: coverage.get(c.id), today },
     }))
     .map((c) => c.id);
+}
+
+/**
+ * The supervisees whose caseloads this person reaches today by covering their
+ * supervisor, each leave admitted by the `client.read` the record asks.
+ */
+async function coveredSuperviseeIds(actor: Actor, today: string): Promise<string[]> {
+  return (await supervisionCoveredBy(prisma, actor.id, today))
+    .filter((r) => may({
+      actor, action: 'read', resource: 'client',
+      target: { treatingSupervisorId: r.supervisorId, treatingSupervisorCoverage: r.coverage, today },
+    }))
+    .flatMap((r) => r.superviseeIds);
 }
 
 /** The relationship facts a caseload-wide read asserts about itself. */

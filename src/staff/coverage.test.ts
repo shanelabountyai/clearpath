@@ -8,7 +8,7 @@ import { Forbidden } from '../errors';
 import { wellbeingCheckIn } from '../forms/fixtures';
 import { issueForm, publishTemplate, submitForm } from '../forms/service';
 import { receiveInbound } from '../messaging/inbound';
-import { listProgressNotes } from '../notes/service';
+import { coSignProgressNote, coSignQueue, listProgressNotes } from '../notes/service';
 import { actor, makeClient, makeUser, resetDb, settings } from '../test/harness';
 import { zonedToUtc, type LocalDate } from '../time';
 import { alertRecipient } from './coverage';
@@ -141,6 +141,69 @@ describe('progress notes on a covered client', () => {
 
     const [covered] = await prisma.auditEvent.findMany({ where: { actorId: p.dev.id, resource: 'progress_note' }, orderBy: { at: 'asc' } });
     expect(covered?.reason).toBe(`leave:${p.leave.id}`);
+  });
+});
+
+describe('a supervisor away, and who countersigns in their place (P1-3, D-21)', () => {
+  /** Rosa supervises Priya and is away; Dev, a supervisor, covers Rosa's supervision. Priya's signed note is waiting. */
+  async function rosaAway() {
+    const ray = await makeUser('admin');
+    const rosa = await makeUser('supervisor');
+    const dev = await makeUser('supervisor');
+    const kai = await makeUser('therapist');
+    const priya = await makeUser('associate', { supervisorId: rosa.id });
+    const client = await makeClient(priya.id);
+    const appt = await prisma.appointment.create({
+      data: { clientId: client.id, clinicianId: priya.id, modality: 'telehealth', startAt: zonedToUtc('2026-09-29', 600), endAt: zonedToUtc('2026-09-29', 650) },
+    });
+    const note = await prisma.progressNote.create({
+      data: { appointmentId: appt.id, clientId: client.id, authorId: priya.id, content: 'synthetic', status: 'signed', signedAt: zonedToUtc('2026-10-02', 600) },
+    });
+    const leave = await createLeave(
+      actor(ray), { userId: rosa.id, ...NOUR_AWAY, coveringClinicianId: kai.id, coveringSupervisorId: dev.id }, RECORDED,
+    );
+    return { ray, rosa, dev, kai, priya, client, note, leave };
+  }
+
+  it('queues the supervisee\'s signed note for the cover on both boundary days and neither side, each read naming the leave', async () => {
+    const p = await rosaAway();
+    for (const day of [FIRST, LAST]) expect((await coSignQueue(actor(p.dev), { clock: day })).map((n) => n.id)).toEqual([p.note.id]);
+    for (const day of [DAY_BEFORE, BACK]) expect(await coSignQueue(actor(p.dev), { clock: day })).toEqual([]);
+    // Rosa is still the supervisor of record, and still sees it.
+    expect((await coSignQueue(actor(p.rosa), { clock: DAY_TWO })).map((n) => n.id)).toEqual([p.note.id]);
+
+    const reads = await prisma.auditEvent.findMany({ where: { actorId: p.dev.id, resource: 'progress_note' } });
+    expect(reads.map((r) => r.reason)).toEqual([`leave:${p.leave.id}`, `leave:${p.leave.id}`]);
+  });
+
+  it('lets the cover countersign inside the window and refuses them after it, on the record', async () => {
+    const p = await rosaAway();
+    await expect(coSignProgressNote(actor(p.dev), p.note.id, { clock: BACK })).rejects.toBeInstanceOf(Forbidden);
+    await expect(coSignProgressNote(actor(p.dev), p.note.id, { clock: LAST }))
+      .resolves.toMatchObject({ status: 'cosigned', coSignedById: p.dev.id });
+
+    const rows = await prisma.auditEvent.findMany({ where: { actorId: p.dev.id, action: 'cosign' }, orderBy: { at: 'asc' } });
+    expect(rows.map((r) => [r.allowed, r.reason])).toEqual([[false, null], [true, `leave:${p.leave.id}`]]);
+  });
+
+  it('opens the supervisee\'s client, their caseload and their notes for the window, and none of it after', async () => {
+    const p = await rosaAway();
+    const ids = async (clock: Clock) => (await listClients(actor(p.dev), { clock })).map((c) => c.id);
+
+    await expect(getClient(actor(p.dev), p.client.id, DAY_TWO)).resolves.toBeTruthy();
+    await expect(getClient(actor(p.dev), p.client.id, BACK)).rejects.toBeInstanceOf(Forbidden);
+    expect(await ids(DAY_TWO)).toEqual([p.client.id]);
+    expect(await ids(BACK)).toEqual([]);
+    expect(await listProgressNotes(actor(p.dev), p.client.id, DAY_TWO)).toHaveLength(1);
+
+    const [opened] = await prisma.auditEvent.findMany({ where: { actorId: p.dev.id, resource: 'client', allowed: true, resourceId: p.client.id } });
+    expect(opened?.reason).toBe(`leave:${p.leave.id}`);
+  });
+
+  it('gives the clinician covering Rosa\'s own clients nothing of her supervision', async () => {
+    const p = await rosaAway();
+    expect(await coSignQueue(actor(p.kai), { clock: DAY_TWO })).toEqual([]);
+    await expect(getClient(actor(p.kai), p.client.id, DAY_TWO)).rejects.toBeInstanceOf(Forbidden);
   });
 });
 

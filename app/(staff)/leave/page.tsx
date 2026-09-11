@@ -4,7 +4,7 @@ import { requiresCoSignature } from '@/src/auth/permissions';
 import { clinicianCapacity } from '@/src/clients/inquiry';
 import { systemClock } from '@/src/clock';
 import { requireSession } from '@/src/session';
-import { mayTreat } from '@/src/staff/departure';
+import { maySupervise, mayTreat } from '@/src/staff/departure';
 import { listLeaves } from '@/src/staff/leave-plan';
 import { localDateOf } from '@/src/time';
 import { Badge, Button, Card, EmptyState, PageHeader, TierBanner } from '@/src/ui/primitives';
@@ -68,6 +68,12 @@ async function LeavePage({ searchParams }: { searchParams: Promise<{ error?: str
               <DateInput name="toDate" label="Last day away" min={today} />
               <Pick name="coveringClinicianId" label="Who covers"
                 options={clinicians.filter((c) => mayTreat(c) && !requiresCoSignature(c.role)).map((c) => ({ value: c.id, label: c.name }))} />
+              {/* P1-3: required when the person away supervises anybody; the door says so if it is missed. */}
+              <Pick name="coveringSupervisorId" label="Supervision cover"
+                options={[
+                  { value: '', label: 'Nobody — they supervise nobody' },
+                  ...clinicians.filter(maySupervise).map((c) => ({ value: c.id, label: c.name })),
+                ]} />
               <Button>Record leave</Button>
             </form>
           </Card>

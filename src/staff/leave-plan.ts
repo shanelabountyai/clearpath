@@ -7,7 +7,7 @@ import { Conflict, NotFound } from '../errors';
 import { SYSTEM_ACTOR } from '../scheduling/reminders';
 import { addDays, localDateOf, type LocalDate } from '../time';
 import { coverageOf, routeOf } from './coverage';
-import { mayTreat } from './departure';
+import { maySupervise, mayTreat } from './departure';
 import { canTransition, leavePhase } from './leave';
 
 /**
@@ -104,6 +104,49 @@ async function assertCoverer(
 }
 
 /**
+ * Which of these people could not cover a supervisor's supervision for the
+ * rest of a leave (P1-3, D-22)? Everything `unavailableCoverers` asks, and one
+ * question more of the matrix: could they countersign, as `maySupervise` asks
+ * of a departure's receiver. Anybody else is a co-signature nobody can give.
+ */
+async function unavailableSupervisors(
+  db: Tx | typeof prisma,
+  leave: { userId: string; fromDate: LocalDate; toDate: LocalDate },
+  ids: readonly string[],
+  today: LocalDate,
+): Promise<string[]> {
+  const unique = [...new Set(ids)];
+  const [cannot, users] = await Promise.all([
+    unavailableCoverers(db, leave, unique, today),
+    db.user.findMany({ where: { id: { in: unique } }, select: { id: true, role: true } }),
+  ]);
+  const able = new Set(users.filter(maySupervise).map((u) => u.id));
+  return unique.filter((id) => cannot.includes(id) || !able.has(id));
+}
+
+/**
+ * The door for a supervision cover (D-22). Somebody who supervises anyone must
+ * name one, so a supervisee's signed notes always have somebody at work to
+ * countersign them. Somebody who supervises nobody need not.
+ */
+async function assertSupervisionCover(
+  tx: Tx,
+  leave: { userId: string; fromDate: LocalDate; toDate: LocalDate },
+  coveringSupervisorId: string | null,
+  today: LocalDate,
+) {
+  if (coveringSupervisorId === null) {
+    if (await tx.user.count({ where: { supervisorId: leave.userId } })) {
+      throw new Conflict('Somebody must cover their supervision while they are away', 'supervision_uncovered');
+    }
+    return;
+  }
+  if ((await unavailableSupervisors(tx, leave, [coveringSupervisorId], today)).length > 0) {
+    throw new Conflict('Supervision must be covered by a supervisor who is here for the whole leave', 'supervision_cover_unavailable');
+  }
+}
+
+/**
  * Record a leave, its coverer and its calendar row, in one transaction.
  *
  * Admin alone (`leave.create`), because creating closes the books for the
@@ -113,7 +156,10 @@ async function assertCoverer(
  */
 export async function createLeave(
   actor: Actor,
-  input: { userId: string; fromDate: LocalDate; toDate: LocalDate; coveringClinicianId: string },
+  input: {
+    userId: string; fromDate: LocalDate; toDate: LocalDate; coveringClinicianId: string;
+    coveringSupervisorId?: string | null;
+  },
   clock: Clock = systemClock,
 ) {
   const today = localDateOf(clock.now());
@@ -127,6 +173,7 @@ export async function createLeave(
       { actor, action: 'create', resource: 'leave', resourceId: id, target: { subjectUserId: input.userId } },
       async (tx) => {
         await assertCoverer(tx, input, input.coveringClinicianId, today);
+        await assertSupervisionCover(tx, input, input.coveringSupervisorId ?? null, today);
         const override = await tx.availabilityOverride.create({
           // D-12: the calendar is read by front desk, so the reason is the word and nothing more.
           data: { userId: input.userId, fromDate: dbDate(input.fromDate), toDate: dbDate(input.toDate), reason: 'Leave' },
@@ -136,6 +183,7 @@ export async function createLeave(
             id, userId: input.userId,
             fromDate: dbDate(input.fromDate), toDate: dbDate(input.toDate),
             coveringClinicianId: input.coveringClinicianId, plannedById: actor.id, overrideId: override.id,
+            coveringSupervisorId: input.coveringSupervisorId ?? null,
           },
         });
         // A leave that starts today is on the moment it commits.
@@ -169,6 +217,33 @@ export async function nameCoverer(actor: Actor, leaveId: string, coveringClinici
       const named = await tx.leave.update({ where: { id: leaveId }, data: { coveringClinicianId } });
       await settleAlerts(tx, actor, leave, leave.today);
       return named;
+    },
+  );
+}
+
+/**
+ * Name, change or clear who covers the supervision (P1-3). On an active leave
+ * this write is the grant, as a coverage decision is (D-15), and the audit row
+ * is the control. Clearing it is refused while anybody is still supervised.
+ * No alert moves: supervision routes none.
+ */
+export async function nameSupervisionCover(
+  actor: Actor,
+  leaveId: string,
+  coveringSupervisorId: string | null,
+  clock: Clock = systemClock,
+) {
+  const leave = await leaveRow(leaveId, clock);
+  assertNotFrozen(leave);
+
+  return guarded(
+    {
+      actor, action: 'update', resource: 'leave', resourceId: leaveId,
+      target: { subjectUserId: leave.userId }, reason: 'leave:supervision_cover_named',
+    },
+    async (tx) => {
+      await assertSupervisionCover(tx, leave, coveringSupervisorId, leave.today);
+      return tx.leave.update({ where: { id: leaveId }, data: { coveringSupervisorId } });
     },
   );
 }
@@ -486,7 +561,10 @@ export async function uncoveredAbsenceAlerts(actor: Actor, clock: Clock = system
  *
  * `unavailable` is P0-8's continuous scan: each coverer the plan names who
  * could not cover the rest of it, on today's facts. `coverers` is who the
- * pickers offer. Both are empty once the leave is frozen.
+ * pickers offer. Both are empty once the leave is frozen. The supervision
+ * cover gets the same scan (P1-3): `supervisors` for its picker, and
+ * `supervisionBlocked` when the one named could not, or nobody is named for
+ * somebody who supervises anyone.
  */
 export async function getLeavePlan(actor: Actor, leaveId: string, clock: Clock = systemClock) {
   const leave = await leaveRow(leaveId, clock);
@@ -494,13 +572,14 @@ export async function getLeavePlan(actor: Actor, leaveId: string, clock: Clock =
   return guarded(
     { actor, action: 'read', resource: 'leave', resourceId: leaveId, target: { subjectUserId: leave.userId } },
     async (tx) => {
-      const [detail, clients, everyone] = await Promise.all([
+      const [detail, clients, everyone, supervisees] = await Promise.all([
         tx.leave.findUniqueOrThrow({
           where: { id: leaveId },
           select: {
             user: { select: { name: true } },
             plannedBy: { select: { name: true } },
             coveringClinician: { select: { id: true, name: true } },
+            coveringSupervisor: { select: { id: true, name: true } },
           },
         }),
         tx.client.findMany({
@@ -517,7 +596,8 @@ export async function getLeavePlan(actor: Actor, leaveId: string, clock: Clock =
           },
           orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
         }),
-        tx.user.findMany({ where: { active: true }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+        tx.user.findMany({ where: { active: true }, select: { id: true, name: true, role: true }, orderBy: { name: 'asc' } }),
+        tx.user.count({ where: { supervisorId: leave.userId } }),
       ]);
 
       const live = leave.phase === 'upcoming' || leave.phase === 'active';
@@ -526,12 +606,18 @@ export async function getLeavePlan(actor: Actor, leaveId: string, clock: Clock =
         live ? await unavailableCoverers(tx, leave, [...named, ...everyone.map((u) => u.id)], leave.today) : [],
       );
 
+      const supervisors = live ? everyone.filter((u) => !cannot.has(u.id) && maySupervise(u)) : [];
+      const cover = detail.coveringSupervisor;
+
       return {
         ...leave,
         ...detail,
         clients: clients.map(({ leaveCoverage, ...c }) => ({ ...c, coverage: leaveCoverage[0] ?? null })),
         unavailable: [...named].filter((id) => cannot.has(id)),
-        coverers: live ? everyone.filter((u) => !cannot.has(u.id)) : [],
+        coverers: live ? everyone.filter((u) => !cannot.has(u.id)).map(({ id, name }) => ({ id, name })) : [],
+        supervisees,
+        supervisors: supervisors.map(({ id, name }) => ({ id, name })),
+        supervisionBlocked: live && (cover ? !supervisors.some((u) => u.id === cover.id) : supervisees > 0),
       };
     },
   );

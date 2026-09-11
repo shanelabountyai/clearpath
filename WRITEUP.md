@@ -3285,6 +3285,65 @@ and `some` counts an alert once.
 - **No capacity judgement.** The caseload count is shown and not compared to
   anything. Whether fourteen extra clients is too many is the practice's call.
 
+### P1-3: a supervisor away, and who countersigns
+
+**The problem.** Priya is an associate, and her signed notes wait in Rosa's
+co-sign queue against a compliance clock. Rosa is away for eight weeks. A
+clinician leave covers Rosa's own clients and nothing covers her supervision:
+`supervises()` reads `authorSupervisorId` and nothing else, so the only person
+who could countersign was the one away. D-17 held this back for its own review,
+because the same function decides `progress_note.read` for every note a
+supervisee has ever written.
+
+**What the review found.** Supervision is two facts, not one. `supervises`
+decides the note and the co-signature from the author's supervisor;
+`supervisesTreating` decides the client, fee, attendance and screener from the
+treating clinician's. For an older note those are different people, so the
+cover could not ride on `coverage`, which hangs off the treating clinician. The
+note read has no client bound, so a mirror hands the cover everything those
+supervisees ever wrote. And six call sites found supervision by
+`supervisorId: actor.id` or a hand-built target. Each would have denied the
+cover: closed, and still broken.
+
+**The design.** `Leave.coveringSupervisorId`, optional. Two `Target` facts,
+`authorSupervisorCoverage` and `treatingSupervisorCoverage`, each carrying its
+leave's dates, so the date decision stays in `permissions.ts` (D-14).
+`coversAuthorSupervisor` and `coversTreatingSupervisor` require the supervisor
+role and an active phase. The cells (D-21): `cosign` through a renamed rule,
+`supervisorOfAuthorOrCovering`, and read on `progress_note`, `client` and
+`form_submission` through the two covering rules, widened in place (D-23).
+Those are a clinician coverer's reads, and none of their writes. `can()` strips
+all three coverages to decide whether a leave made the difference.
+
+Resolution follows the clinician case. `supervisionCoverageOf` sits beside
+`clientTarget` and `progressContext`. `supervisionCoveredBy` feeds the lists:
+the co-sign queue, which takes one guarded read per leave so each audit row
+names its own; the caseload; and the note list. Each list filters through
+`can` on the cell it serves. The note page asks `mayCoSign`, which uses the
+co-signature's own target. The door refuses a leave for anybody who supervises
+without a cover (`supervision_uncovered`), and anybody `maySupervise` refuses
+as the cover. The plan screen scans the cover on every read (D-22).
+
+Three mutations, each one red test: without the supervisor-role check; with
+supervision coverage left on the target when attributing the leave; and with
+notes read through the treating supervisor's cover instead of the author's.
+
+**What it deliberately does not do.**
+
+- **No associate coverers** (D-24). D-13 stands, because the fix widens a third
+  relationship and reverses a pinned denial.
+- **No per-client split of supervision.** One cover per leave; a supervisee
+  split across supervisors is a rota.
+- **No alert routing.** Supervision routes none, so a departure executed while
+  the leaver's supervisor is away still hands its unassigned alerts to the
+  supervisor who is not there. Rare, and listed under the PRD's risks.
+- **No claim about licensure.** Whether a cover may countersign for somebody
+  else's associate is a board's question.
+- **The note list's audit row names the first leave a cover holds**, whether or
+  not that leave's supervisees wrote on the client (`ponytail:` in
+  `listProgressNotes`). Exact attribution is a count per leave.
+- **No work-list count** of blocked supervision covers. The plan screen shows it.
+
 ### The scheduler: Vercel Cron for `reminders:run` and `purge:run`
 
 **The problem.** Both runners were commands with nothing to call them on the
@@ -3534,6 +3593,9 @@ unset secret.
 | `orBack` lives in the shared plan UI module, not in an actions file | Every export of a `'use server'` file is a callable endpoint. Sharing the helper from the actions file would have published it |
 | The seed walks past sessions in a total order, `(startAt, client code)` | Standing sessions share start times across clinicians, and the PRNG's rolls are dealt in query order. Ties broken however Postgres chose made a different history on each run; once, two later sections both asked about one session, and the seed crashed on a duplicate reminder row. Client code is deterministic, and a client never holds two sessions at one instant |
 | Vercel Cron calls the runners through `/api/cron/*`, and the scripts and routes share `src/jobs.ts` | Two doors that each list their sweeps drift apart, and the door that drifts is the one nobody watches. The route refuses without `CRON_SECRET` rather than trusting a header a platform might not send |
+| A supervisor's cover gains co-signing and the three reads a co-signature needs, and nothing else | A countersignature given without the note, the record and the screener is signed blind, which `treatingOrSupervising` exists to prevent; fee, attendance and portal links run a caseload |
+| Supervision coverage is two target facts, not one | A note's author and a client's clinician can answer to different supervisors, and each cell's grant has to follow the relationship that cell decides on |
+| `supervisorOfAuthor` became `supervisorOfAuthorOrCovering` rather than widening in place | The rule name lands in the audit row, and a name that no longer says who is a name nobody reviewed |
 
 ## What this project deliberately is not
 

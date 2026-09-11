@@ -175,6 +175,17 @@ export interface Target {
     toDate: LocalDate;
     cancelledAt?: Date | null;
   };
+  /**
+   * The leave of the note author's supervisor, and who covers their
+   * supervision under it (leave P1-3). Resolved beside `authorSupervisorId`,
+   * and decided the way `coverage` is: the dates travel, and
+   * `coversAuthorSupervisor` decides. A separate fact from the treating clinician's supervisor below,
+   * because an older note's author and a client's clinician can answer to
+   * different people.
+   */
+  authorSupervisorCoverage?: Target['coverage'];
+  /** The treating clinician's supervisor's leave, resolved beside `treatingSupervisorId`. */
+  treatingSupervisorCoverage?: Target['coverage'];
   /** Today in the practice's zone, from the injected clock. Coverage decides nothing without it. */
   today?: LocalDate;
 }
@@ -206,11 +217,26 @@ const supervisesTreating = (a: Actor, t: Target): boolean =>
  * the write having run.
  */
 const covers = (a: Actor, t: Target): boolean =>
-  t.coverage !== undefined &&
-  t.today !== undefined &&
-  a.id === t.coverage.coveringClinicianId &&
-  !requiresCoSignature(a.role) &&
-  leavePhase(t.coverage, t.today) === 'active';
+  !requiresCoSignature(a.role) && onCover(a, t.coverage, t.today);
+
+/** Named on this coverage, on a day its leave is on. Every missing fact decides `false`. */
+function onCover(a: Actor, c: Target['coverage'], today: LocalDate | undefined): boolean {
+  return c !== undefined && today !== undefined && a.id === c.coveringClinicianId &&
+    leavePhase(c, today) === 'active';
+}
+
+/**
+ * The named cover for a supervisor who is away, on a day the leave is on
+ * (leave P1-3, D-21). Only from the supervisor role, as `supervises` is: a
+ * countersignature is supervision, and a row naming anybody else grants
+ * nothing. Two facts, as supervision is two: the author's supervisor for the
+ * note, the treating clinician's for the record around it.
+ */
+const coversAuthorSupervisor = (a: Actor, t: Target): boolean =>
+  a.role === 'supervisor' && onCover(a, t.authorSupervisorCoverage, t.today);
+
+const coversTreatingSupervisor = (a: Actor, t: Target): boolean =>
+  a.role === 'supervisor' && onCover(a, t.treatingSupervisorCoverage, t.today);
 
 const RULES = {
   never: () => false,
@@ -226,8 +252,14 @@ const RULES = {
   unconditional: () => true,
   author: isAuthor,
   authorOrSupervisor: (a: Actor, t: Target) => isAuthor(a, t) || supervises(a, t),
-  // You do not co-sign your own note.
-  supervisorOfAuthor: (a: Actor, t: Target) => supervises(a, t) && !isAuthor(a, t),
+  /**
+   * You do not co-sign your own note. The author's supervisor, or whoever
+   * covers their supervision for the window — the one cell a supervisor's leave
+   * exists to keep moving, because an associate's unsigned notes run against a
+   * compliance clock (leave D-21).
+   */
+  supervisorOfAuthorOrCovering: (a: Actor, t: Target) =>
+    (supervises(a, t) || coversAuthorSupervisor(a, t)) && !isAuthor(a, t),
   treating: treats,
   /** Writing into the record for the dated window, never after it. */
   treatingOrCovering: (a: Actor, t: Target) => treats(a, t) || covers(a, t),
@@ -258,10 +290,12 @@ const RULES = {
   /**
    * `authorSupervisorOrTreating` and a fourth claimant, named — which is what
    * that rule's comment said a fourth would take (leave D-04). The coverer
-   * reads the record they are acting on, for the window only.
+   * reads the record they are acting on, for the window only. "Covering" is
+   * both covers the name's first three can have: the treating clinician's, and
+   * the author's supervisor's, who reads what they countersign (D-21, D-23).
    */
   authorSupervisorTreatingOrCovering: (a: Actor, t: Target) =>
-    isAuthor(a, t) || supervises(a, t) || treats(a, t) || covers(a, t),
+    isAuthor(a, t) || supervises(a, t) || treats(a, t) || covers(a, t) || coversAuthorSupervisor(a, t),
   /**
    * The treating clinician, or the supervisor responsible for their practice.
    *
@@ -276,10 +310,12 @@ const RULES = {
   /**
    * `treatingOrSupervising` and the coverer. Only the coverer: their own
    * supervisor gains nothing, because `treatingSupervisorId` is the treating
-   * clinician's supervisor and the coverer's is nowhere on the target.
+   * clinician's supervisor and the coverer's is nowhere on the target. And the
+   * cover for that supervisor, who opens the record behind what they
+   * countersign (D-21, D-23).
    */
   treatingCoveringOrSupervising: (a: Actor, t: Target) =>
-    treats(a, t) || supervisesTreating(a, t) || covers(a, t),
+    treats(a, t) || supervisesTreating(a, t) || covers(a, t) || coversTreatingSupervisor(a, t),
   /**
    * The actor is the person this row is about.
    *
@@ -400,7 +436,7 @@ const MATRIX: Record<Role, RoleMatrix> = {
 
   supervisor: {
     ...CLINICIAN,
-    progress_note: { ...CLINICIAN.progress_note, cosign: 'supervisorOfAuthor' },
+    progress_note: { ...CLINICIAN.progress_note, cosign: 'supervisorOfAuthorOrCovering' },
     // Proposing who takes which client is exactly the judgement supervision
     // exists for, so `update` on any departure, not just their own. Never
     // `depart`: executing one deactivates an account, and that is the practice
@@ -582,12 +618,16 @@ export function can(
 ): Decision {
   const rule = MATRIX[actor.role]?.[resource]?.[action] ?? 'never';
   const allowed = RULES[rule](actor, target);
-  const coveredOnly = allowed && target.coverage !== undefined &&
-    !RULES[rule](actor, { ...target, coverage: undefined });
+  const covers = [target.coverage, target.authorSupervisorCoverage, target.treatingSupervisorCoverage];
+  const bare = { ...target, coverage: undefined, authorSupervisorCoverage: undefined, treatingSupervisorCoverage: undefined };
+  // Only a cover naming this actor on an active day can have made the difference.
+  const leave = allowed && covers.some(Boolean) && !RULES[rule](actor, bare)
+    ? covers.find((c) => onCover(actor, c, target.today))
+    : undefined;
   return {
     allowed,
     rule,
     breakGlass: !!actor.breakGlass,
-    ...(coveredOnly && { coveringLeaveId: target.coverage!.leaveId }),
+    ...(leave && { coveringLeaveId: leave.leaveId }),
   };
 }

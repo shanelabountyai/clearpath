@@ -67,11 +67,12 @@ model User {
   caseloadReceived    DepartureAssignment[] @relation("departureReceiver")
   dispositionsDecided DepartureAssignment[] @relation("departureDecider")
 
-  leaves           Leave[]         @relation("leaveUser")
-  leavesPlanned    Leave[]         @relation("leavePlanner")
-  leavesCovering   Leave[]         @relation("leaveCoverer")
-  coverageCovering LeaveCoverage[] @relation("leaveCoverageCoverer")
-  coverageDecided  LeaveCoverage[] @relation("leaveCoverageDecider")
+  leaves              Leave[]         @relation("leaveUser")
+  leavesPlanned       Leave[]         @relation("leavePlanner")
+  leavesCovering      Leave[]         @relation("leaveCoverer")
+  supervisionCovering Leave[]         @relation("leaveSupervisionCoverer")
+  coverageCovering    LeaveCoverage[] @relation("leaveCoverageCoverer")
+  coverageDecided     LeaveCoverage[] @relation("leaveCoverageDecider")
 
   /// P2: whether this clinician is taking somebody new right now — the
   /// declared half of the capacity signal, and theirs alone to set. It is a
@@ -1308,6 +1309,12 @@ model Leave {
   coveringClinicianId String
   coveringClinician   User   @relation("leaveCoverer", fields: [coveringClinicianId], references: [id], onDelete: Restrict)
 
+  /// P1-3: who covers this person's supervision while they are away. Optional,
+  /// because most people away supervise nobody; the door requires it when they
+  /// do (D-22). `leave_supervision_cover_is_not_away` refuses the person away.
+  coveringSupervisorId String?
+  coveringSupervisor   User?   @relation("leaveSupervisionCoverer", fields: [coveringSupervisorId], references: [id], onDelete: Restrict)
+
   /// Admin, the only role holding `leave.create`.
   plannedById String
   plannedBy   User   @relation("leavePlanner", fields: [plannedById], references: [id], onDelete: Restrict)
@@ -1327,6 +1334,7 @@ model Leave {
 
   @@index([userId])
   @@index([coveringClinicianId])
+  @@index([coveringSupervisorId])
 }
 
 /// One client covered by somebody other than the leave's coverer (P0-1).

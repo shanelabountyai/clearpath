@@ -1,6 +1,5 @@
 import Link from 'next/link';
-import { getProgressNote } from '../../../../src/notes/service';
-import { may } from '../../../../src/auth/guard';
+import { getProgressNote, mayCoSign } from '../../../../src/notes/service';
 import { Forbidden } from '../../../../src/errors';
 import { requireSession } from '../../../../src/session';
 import { localDateOf } from '../../../../src/time';
@@ -24,10 +23,8 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
 
   const author = { supervisorId: note.author.supervisorId };
   const isAuthor = note.authorId === actor.id;
-  const canCoSign = may({
-    actor, action: 'cosign', resource: 'progress_note',
-    target: { authorId: note.authorId, authorSupervisorId: author.supervisorId ?? undefined },
-  });
+  // The co-signature's own target, so the cover for an away supervisor sees the button (leave D-21).
+  const canCoSign = await mayCoSign(actor, id);
 
   return (
     <>

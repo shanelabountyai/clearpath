@@ -4,7 +4,7 @@ import { getLeavePlan } from '@/src/staff/leave-plan';
 import { localDateOf } from '@/src/time';
 import { Badge, Button, Card, EmptyState, Field, PageHeader, TierBanner } from '@/src/ui/primitives';
 import { withDenial } from '@/src/ui/denied';
-import { backToday, cancel, chooseCoverer, decideClient, moveDates } from '../actions';
+import { backToday, cancel, chooseCoverer, chooseSupervisionCover, decideClient, moveDates } from '../actions';
 import { DateInput, LEAVE_REFUSAL, PHASE_TONE, Pick, Refusal, dayLabel, plural } from '../../departures/ui';
 
 export const dynamic = 'force-dynamic';
@@ -29,6 +29,13 @@ async function LeavePlanPage({ params, searchParams }: {
   const choices = (current: { id: string; name: string }) => [
     ...(plan.coverers.some((c) => c.id === current.id) ? [] : [{ value: current.id, label: `${current.name} — cannot cover` }]),
     ...plan.coverers.map((c) => ({ value: c.id, label: c.name })),
+  ];
+  const supervisionCover = plan.coveringSupervisor;
+  const supervisionChoices = [
+    { value: '', label: 'Nobody' },
+    ...(supervisionCover && !plan.supervisors.some((u) => u.id === supervisionCover.id)
+      ? [{ value: supervisionCover.id, label: `${supervisionCover.name} — cannot cover` }] : []),
+    ...plan.supervisors.map((u) => ({ value: u.id, label: u.name })),
   ];
 
   return (
@@ -138,6 +145,31 @@ async function LeavePlanPage({ params, searchParams }: {
               <dl className="mt-3"><Field label="Covering the leave">{leaveCoverer.name}</Field></dl>
             )}
           </Card>
+
+          {(plan.supervisees > 0 || supervisionCover) && (
+            <Card>
+              <h2 className="mb-1 font-semibold">Supervision</h2>
+              <p className="mb-3 text-caption text-subtle">
+                {plan.user.name} has {plural(plan.supervisees, 'supervisee')}. Whoever covers
+                countersigns their notes for these days and opens the records behind them, and
+                nothing else. Private notes stay with whoever wrote them.
+              </p>
+              {plan.supervisionBlocked && (
+                <Badge tone="danger" glyph="!">
+                  {supervisionCover ? `${supervisionCover.name} cannot cover the rest of it` : 'Nobody countersigns while they are away'}
+                </Badge>
+              )}
+              {canUpdate ? (
+                <form action={chooseSupervisionCover} className="mt-3 space-y-2">
+                  <input type="hidden" name="id" value={plan.id} />
+                  <Pick name="coveringSupervisorId" label="Covering supervision" defaultValue={supervisionCover?.id ?? ''} options={supervisionChoices} />
+                  <Button variant="quiet">Name supervision cover</Button>
+                </form>
+              ) : (
+                <dl className="mt-3"><Field label="Covering supervision">{supervisionCover?.name ?? 'Nobody'}</Field></dl>
+              )}
+            </Card>
+          )}
 
           {canUpdate && (
             <Card>

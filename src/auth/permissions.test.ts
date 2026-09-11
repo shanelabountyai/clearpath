@@ -189,10 +189,10 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
 const ME = 'u-me';
 const OTHER = 'u-other';
 const TODAY = '2026-10-14';
-const coveredBy = (id: string): Pick<Target, 'coverage' | 'today'> => ({
-  coverage: { leaveId: 'lv-probe', coveringClinicianId: id, fromDate: '2026-10-05', toDate: '2026-11-27' },
-  today: TODAY,
-});
+const coveredBy = (id: string): Pick<Target, 'coverage' | 'authorSupervisorCoverage' | 'treatingSupervisorCoverage' | 'today'> => {
+  const window = { leaveId: 'lv-probe', coveringClinicianId: id, fromDate: '2026-10-05', toDate: '2026-11-27' };
+  return { coverage: window, authorSupervisorCoverage: window, treatingSupervisorCoverage: window, today: TODAY };
+};
 
 /** Actor holds every relationship to the target it possibly could. */
 const insider = (role: Role): [Actor, Target] => [
@@ -644,6 +644,124 @@ describe('coverage is a second reader for a dated window (leave D-02, D-04, D-14
     const samCovers = onDay('2026-10-14', { ...LEAVE, coveringClinicianId: SAM });
     expect(can(as(SAM, 'supervisor'), 'read', 'client', samCovers)).toMatchObject({ allowed: true });
     expect(can(as(SAM, 'supervisor'), 'read', 'client', samCovers).coveringLeaveId).toBeUndefined();
+  });
+});
+
+describe('supervision coverage is a second supervisor for a dated window (leave P1-3, D-21)', () => {
+  const ROSA = 'u-rosa'; // supervisor, away
+  const DEV = 'u-dev'; // supervisor, covering Rosa's supervision
+  const PRIYA = 'u-priya'; // associate, Rosa's supervisee
+  const LEAVE: NonNullable<Target['coverage']> = {
+    leaveId: 'lv-rosa', coveringClinicianId: DEV, fromDate: '2026-10-05', toDate: '2026-11-27',
+  };
+  /** A client Priya treats, a note Priya wrote about them, both supervised by Rosa — on `today`. */
+  const onDay = (today: string, cover: Target['coverage'] = LEAVE): Target => ({
+    authorId: PRIYA, authorSupervisorId: ROSA, clinicianId: PRIYA, treatingSupervisorId: ROSA,
+    recipientId: PRIYA, authorSupervisorCoverage: cover, treatingSupervisorCoverage: cover, today,
+  });
+  const as = (id: string, role: Role = 'supervisor'): Actor => ({ id, role });
+
+  // D-21: co-signing, and the three reads a co-signature must not be given without.
+  const GAINED: [Resource, Action][] = [
+    ['client', 'read'], ['form_submission', 'read'], ['progress_note', 'read'], ['progress_note', 'cosign'],
+  ];
+  const UNMOVED: [Resource, Action][] = [
+    ['client', 'update'], ['fee', 'read'], ['attendance_history', 'read'],
+    ['portal_link', 'read'], ['portal_link', 'create'], ['alert', 'read'], ['alert', 'update'],
+    ['progress_note', 'create'], ['progress_note', 'update'], ['progress_note', 'sign'],
+    ['process_note', 'read'], ['process_note', 'create'], ['process_note', 'update'],
+  ];
+
+  it.each(GAINED)('the covering supervisor gains %s / %s on the first day and on the last', (resource, action) => {
+    expect(can(as(DEV), action, resource, onDay('2026-10-05')).allowed).toBe(true);
+    expect(can(as(DEV), action, resource, onDay('2026-11-27')).allowed).toBe(true);
+  });
+
+  it.each(GAINED)('and holds no %s / %s the day before, the day after, once cancelled, or after an early return', (resource, action) => {
+    const dev = as(DEV);
+    expect(can(dev, action, resource, onDay('2026-10-04')).allowed, 'day before').toBe(false);
+    expect(can(dev, action, resource, onDay('2026-11-28')).allowed, 'day after').toBe(false);
+    const cancelled = { ...LEAVE, cancelledAt: new Date('2026-09-20T15:00:00Z') };
+    expect(can(dev, action, resource, onDay('2026-10-14', cancelled)).allowed, 'cancelled').toBe(false);
+    const cameBack = { ...LEAVE, toDate: '2026-10-20' };
+    expect(can(dev, action, resource, onDay('2026-10-20', cameBack)).allowed, 'return day').toBe(true);
+    expect(can(dev, action, resource, onDay('2026-10-21', cameBack)).allowed, 'after return').toBe(false);
+  });
+
+  it.each(UNMOVED)('never gains %s / %s, on any day of the leave', (resource, action) => {
+    for (const day of ['2026-10-05', '2026-10-14', '2026-11-27']) {
+      expect(can(as(DEV), action, resource, onDay(day)).allowed, day).toBe(false);
+    }
+  });
+
+  it('covers supervision only from the supervisor role, even with the row in hand', () => {
+    for (const role of ['therapist', 'associate'] as Role[]) {
+      for (const [resource, action] of GAINED) {
+        expect(can(as(DEV, role), action, resource, onDay('2026-10-14')).allowed, `${role} ${resource}:${action}`).toBe(false);
+      }
+    }
+  });
+
+  it('reads notes through the author\'s supervisor and the record through the treating clinician\'s', () => {
+    const noteOnly: Target = { ...onDay('2026-10-14'), treatingSupervisorCoverage: undefined };
+    expect(can(as(DEV), 'read', 'progress_note', noteOnly).allowed).toBe(true);
+    expect(can(as(DEV), 'cosign', 'progress_note', noteOnly).allowed).toBe(true);
+    expect(can(as(DEV), 'read', 'client', noteOnly).allowed).toBe(false);
+    const recordOnly: Target = { ...onDay('2026-10-14'), authorSupervisorCoverage: undefined };
+    expect(can(as(DEV), 'read', 'client', recordOnly).allowed).toBe(true);
+    expect(can(as(DEV), 'read', 'form_submission', recordOnly).allowed).toBe(true);
+    expect(can(as(DEV), 'read', 'progress_note', recordOnly).allowed).toBe(false);
+    expect(can(as(DEV), 'cosign', 'progress_note', recordOnly).allowed).toBe(false);
+  });
+
+  it('does not co-sign a note the covering supervisor wrote', () => {
+    expect(can(as(DEV), 'cosign', 'progress_note', { ...onDay('2026-10-14'), authorId: DEV }).allowed).toBe(false);
+  });
+
+  it('fails closed: a target built without supervision coverage, or without today, denies the covering supervisor', () => {
+    const { authorSupervisorCoverage: _a, treatingSupervisorCoverage: _t, ...noCoverage } = onDay('2026-10-14');
+    const { today: _d, ...noToday } = onDay('2026-10-14');
+    for (const [resource, action] of GAINED) {
+      expect(can(as(DEV), action, resource, noCoverage).allowed, `${resource}:${action}`).toBe(false);
+      expect(can(as(DEV), action, resource, noToday).allowed, `${resource}:${action}`).toBe(false);
+    }
+  });
+
+  it('leaves the supervisor away with every cell they had', () => {
+    for (const [resource, action] of GAINED) {
+      expect(can(as(ROSA), action, resource, onDay('2026-10-14')).allowed, `${resource}:${action}`).toBe(true);
+    }
+  });
+
+  it('changes nothing for a role outside the clinical row, break-glass included', () => {
+    const bare: Target = { ...onDay('2026-10-14'), authorSupervisorCoverage: undefined, treatingSupervisorCoverage: undefined };
+    for (const role of ['front_desk', 'admin', 'auditor', 'client', 'public'] as Role[]) {
+      for (const breakGlass of [undefined, { reason: 'client in crisis' }]) {
+        const named: Actor = { id: DEV, role, breakGlass };
+        for (const resource of RESOURCES) {
+          for (const action of ACTIONS) {
+            expect(can(named, action, resource, onDay('2026-10-14')).allowed, `${role}:${resource}:${action}`)
+              .toBe(can(named, action, resource, bare).allowed);
+          }
+        }
+      }
+    }
+  });
+
+  it('never reaches a process note, the supervisee\'s or anybody\'s', () => {
+    for (const day of ['2026-10-05', '2026-10-14', '2026-11-27']) {
+      expect(can(as(DEV), 'read', 'process_note', onDay(day)).allowed, day).toBe(false);
+      expect(can({ id: DEV, role: 'admin', breakGlass: { reason: 'probe' } }, 'read', 'process_note', onDay(day)).allowed).toBe(false);
+    }
+  });
+
+  it('names the leave in the decision only when supervision coverage made the difference', () => {
+    const during = onDay('2026-10-14');
+    expect(can(as(DEV), 'cosign', 'progress_note', during)).toMatchObject({ allowed: true, rule: 'supervisorOfAuthorOrCovering', coveringLeaveId: 'lv-rosa' });
+    expect(can(as(DEV), 'read', 'client', during).coveringLeaveId).toBe('lv-rosa');
+    expect(can(as(ROSA), 'cosign', 'progress_note', during).coveringLeaveId).toBeUndefined();
+    expect(can(as(ROSA), 'read', 'client', during).coveringLeaveId).toBeUndefined();
+    expect(can(as(DEV), 'read', 'client', onDay('2026-11-28')).coveringLeaveId).toBeUndefined();
   });
 });
 
