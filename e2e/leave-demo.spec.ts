@@ -120,6 +120,15 @@ test.describe('a seeded leave, from the first alert to the day after return', ()
     await actAs(page, COVERER);
     await page.goto(`/clients/${clientId('TC-086')}`);
     await expect(page.getByText('This is not one of your clients')).toBeVisible();
+
+    // P1-4: Hana's first screen back is what happened while she was away.
+    await actAs(page, AWAY);
+    await page.goto('/');
+    await expect(page).toHaveURL(/\/worklists$/);
+    const back = page.locator('section', { has: page.getByRole('heading', { name: 'While you were away' }) });
+    await expect(back.locator('li', { hasText: 'flagged for review' })).toContainText('TC-086');
+    await expect(back.locator('li', { hasText: `Session with ${COVERER}` })).toContainText('TC-086');
+    await expect(back.locator('li', { hasText: `Progress note by ${COVERER}` })).toContainText('TC-086');
   });
 
   test('the auditor lists the reads the leave made possible: the coverer\'s, none after return, and no private note', async ({ page }) => {

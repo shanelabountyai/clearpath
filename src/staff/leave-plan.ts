@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { auditEvent, guarded } from '../auth/guard';
+import { auditEvent, guarded, guardedAll, may } from '../auth/guard';
 import { requiresCoSignature, type Actor } from '../auth/permissions';
 import { systemClock, type Clock } from '../clock';
 import { prisma, type Tx } from '../db';
 import { Conflict, NotFound } from '../errors';
 import { SYSTEM_ACTOR } from '../scheduling/reminders';
-import { addDays, localDateOf, type LocalDate } from '../time';
+import { addDays, localDateOf, zonedToUtc, type LocalDate } from '../time';
 import { coverageOf, routeOf } from './coverage';
 import { maySupervise, mayTreat } from './departure';
 import { canTransition, leavePhase } from './leave';
@@ -548,6 +548,73 @@ export async function uncoveredAbsenceAlerts(actor: Actor, clock: Clock = system
         },
       },
     }));
+}
+
+/** How long "while you were away" stays on the first screen back (D-25). */
+const BACK_FOR_DAYS = 14;
+
+/**
+ * The actor's own leave that ended in the last `BACK_FOR_DAYS`, when they hold
+ * the treating reads its summary rests on (P1-4). A leave does not ask the role
+ * of the person away, so somebody with no caseload gets nothing, rather than a
+ * denial on the record per page load. Scoped to self by the query and holding
+ * nothing clinical, it is not itself a read on the record.
+ */
+export async function recentlyBack(actor: Actor, clock: Clock = systemClock) {
+  if (!may({ actor, action: 'read', resource: 'form_submission', target: { clinicianId: actor.id } })) return null;
+  const today = localDateOf(clock.now());
+  return prisma.leave.findFirst({
+    where: { userId: actor.id, cancelledAt: null, toDate: { lt: dbDate(today), gte: dbDate(addDays(today, -BACK_FOR_DAYS)) } },
+    select: { id: true, fromDate: true, toDate: true, coveringClinician: { select: { name: true } } },
+    orderBy: { toDate: 'desc' },
+  });
+}
+
+/**
+ * P1-4: what happened on the caseload while its clinician was away. Screeners
+ * flagged for review, sessions somebody else held, and the progress notes
+ * written about them, each through a cell the clinician holds as treating (no
+ * new cell): three reads on the record, audited in one transaction. Never a
+ * process note, because what the coverer wrote privately is theirs (D-05).
+ *
+ * Nothing is written on return, so there is nothing to dismiss; it goes after
+ * `BACK_FOR_DAYS`. Sessions and notes are anybody's but the clinician's own,
+ * not only the named coverers', because a split undone mid-leave still held
+ * its sessions.
+ */
+export async function whileYouWereAway(actor: Actor, clock: Clock = systemClock) {
+  const leave = await recentlyBack(actor, clock);
+  if (!leave) return null;
+  const fromDate = localDate(leave.fromDate);
+  const toDate = localDate(leave.toDate);
+  const during = { gte: zonedToUtc(fromDate, 0), lt: zonedToUtc(addDays(toDate, 1), 0) };
+  const onCaseload = { client: { treatingClinicianId: actor.id } };
+  const client = { select: { code: true } };
+  return guardedAll(
+    (['form_submission', 'appointment', 'progress_note'] as const)
+      .map((resource) => ({ actor, action: 'read' as const, resource, target: { clinicianId: actor.id } })),
+    async (tx) => {
+      const [flagged, sessions, notes] = await Promise.all([
+        // `submittedAt`, not `createdAt`: the request's is the injected clock's (hard rule 7).
+        tx.formSubmission.findMany({
+          where: { ...onCaseload, needsReview: true, request: { submittedAt: during } },
+          select: { id: true, client, template: { select: { name: true } }, request: { select: { submittedAt: true } } },
+          orderBy: { request: { submittedAt: 'asc' } },
+        }),
+        tx.appointment.findMany({
+          where: { ...onCaseload, clinicianId: { not: actor.id }, startAt: during, status: { notIn: ['cancelled', 'late_cancelled'] } },
+          select: { id: true, status: true, startAt: true, client, clinician: { select: { name: true } } },
+          orderBy: { startAt: 'asc' },
+        }),
+        tx.progressNote.findMany({
+          where: { ...onCaseload, authorId: { not: actor.id }, appointment: { startAt: during } },
+          select: { id: true, status: true, client, author: { select: { name: true } }, appointment: { select: { startAt: true } } },
+          orderBy: { appointment: { startAt: 'asc' } },
+        }),
+      ]);
+      return { id: leave.id, fromDate, toDate, coverer: leave.coveringClinician.name, flagged, sessions, notes };
+    },
+  );
 }
 
 /**

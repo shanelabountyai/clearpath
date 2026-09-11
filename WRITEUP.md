@@ -3372,6 +3372,52 @@ unset secret.
 - **No `maxDuration`.** Both runners are idempotent, so a run cut off by the
   platform limit is finished by the next one.
 
+### P1-4: while you were away
+
+**The problem.** Nour comes back after eight weeks. Dev opened screeners, held
+sessions and wrote them up, and all of it sits on Nour's record. Nothing told
+Nour which parts. The boundary sweep returns only the alerts Dev left unread,
+and an acknowledged critical screener records only that Dev read it.
+
+**The design.** `whileYouWereAway` finds the person's own leave that ended in
+the last 14 days and lists three things from its window: submissions on their
+caseload flagged for review, sessions somebody else held, and progress notes
+somebody else wrote about sessions in the window. There is no new cell. Each
+list is one request in a `guardedAll` over `form_submission`, `appointment` and
+`progress_note`, with the target `{ clinicianId: actor.id }`, and each query
+filters on `treatingClinicianId` in SQL, so the target and the rows cannot
+disagree. The result is three audit rows in one transaction, none naming a
+leave, because none rests on one. `recentlyBack` is the cheap half. Home asks
+it and sends a returning clinician to `/worklists` instead of `/calendar`. It
+asks the matrix first, because a leave can be recorded for somebody with no
+caseload, and that person should get nothing rather than a denial on every
+page load.
+
+Two details decide whether the lists are right. Submissions filter on the
+request's `submittedAt`, because a submission's `createdAt` comes from the
+database's `now()`, not the injected clock. And "somebody else" means anybody
+but the clinician, not the named coverers, because a split undone mid-leave
+still held its sessions.
+
+Six mutations, each red: removing the review flag, the window's end, either
+"somebody else" filter or the matrix gate, and lengthening the fortnight by a
+day. The two "somebody else" mutations were green at first. Nour's own fixture
+session sat before the window, where the date filter already excluded it. It
+now sits inside the window, as a session taken from home.
+
+**What it deliberately does not do.**
+
+- **No process notes, and no count of them.** What Dev wrote privately is
+  Dev's (D-05), and a count would say that it exists.
+- **No dismissal.** Nothing is written on return, and the section goes after
+  a fortnight (D-25).
+- **No alerts.** Nour's unread ones are already on `/alerts`. Who acknowledged
+  the rest is the recipient's record, and Nour holds no cell on it.
+- **Nothing for a returning supervisor.** Co-signatures a supervision cover
+  gave are not listed. P1-4 is the treating case the PRD names.
+- **No client names.** Codes, the form's name and dates only. The links open
+  each record through its own guard.
+
 ## Decisions log
 
 | Decision | Why |
@@ -3596,6 +3642,8 @@ unset secret.
 | A supervisor's cover gains co-signing and the three reads a co-signature needs, and nothing else | A countersignature given without the note, the record and the screener is signed blind, which `treatingOrSupervising` exists to prevent; fee, attendance and portal links run a caseload |
 | Supervision coverage is two target facts, not one | A note's author and a client's clinician can answer to different supervisors, and each cell's grant has to follow the relationship that cell decides on |
 | `supervisorOfAuthor` became `supervisorOfAuthorOrCovering` rather than widening in place | The rule name lands in the audit row, and a name that no longer says who is a name nobody reviewed |
+| "While you were away" is on `/worklists` for 14 days after the last day, and Home lands there (leave D-25) | A dismissal is a write and a stored state for a list that goes stale by itself. Home is the first screen a clinician reaches, so its redirect makes this the first screen back without a second list on `/calendar` |
+| The away summary filters submissions on `FormRequest.submittedAt`, not `FormSubmission.createdAt` | `createdAt` is the database's clock, so on a fixed test clock every submission lands on the day the suite ran (hard rule 7) |
 
 ## What this project deliberately is not
 

@@ -1083,7 +1083,19 @@ async function main() {
   const screener = await issueForm(desk, { clientId: away[0]!.id, templateKey: 'wellbeing-check-in', clock: dayTwo });
   await submitForm(screener.token, { ...zeros(), item_9: 2, difficulty: 'very' }, { clock: dayTwo });
   await receiveInbound({ from: `555-01${87}`, body: 'can we talk before next week' });
-  log(`${hana.name} away ${leave.fromDate.toISOString().slice(0, 10)} to ${leave.toDate.toISOString().slice(0, 10)}, ${dev.name} covering, 1 of 3 clients split to ${kai.name}; a flagged screener on day two, a text on day three`);
+  // P1-4: Dev holds a session for the flagged client that evening and writes it
+  // up, so Hana's first screen back has a screener, a session and a note on it.
+  const held = await prisma.appointment.create({
+    data: {
+      clientId: away[0]!.id, clinicianId: dev.id, modality: 'telehealth', status: 'completed',
+      startAt: zonedToUtc(addDays(realToday, -1), 18 * 60), endAt: zonedToUtc(addDays(realToday, -1), 18 * 60 + 50),
+    },
+  });
+  await createProgressNote(actor(dev), {
+    appointmentId: held.id,
+    content: 'Covering session after the day\'s screener. Safety plan reviewed and agreed; next contact with Hana on return.',
+  });
+  log(`${hana.name} away ${leave.fromDate.toISOString().slice(0, 10)} to ${leave.toDate.toISOString().slice(0, 10)}, ${dev.name} covering, 1 of 3 clients split to ${kai.name}; a flagged screener and a session ${dev.name} held and wrote up on day two, a text on day three`);
 
   // The carrier, over the whole quarter. Everything already due goes out and
   // comes back `delivered`; the three failures seeded above are terminal, so

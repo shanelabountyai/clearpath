@@ -11,7 +11,7 @@ import { systemClock } from '@/src/clock';
 import { withDenial } from '@/src/ui/denied';
 import { may } from '@/src/auth/guard';
 import { departureWorklist } from '@/src/staff/departure';
-import { leaveWorklist, uncoveredAbsenceAlerts } from '@/src/staff/leave-plan';
+import { leaveWorklist, uncoveredAbsenceAlerts, whileYouWereAway } from '@/src/staff/leave-plan';
 import { dayLabel, plural } from '../departures/ui';
 
 export const dynamic = 'force-dynamic';
@@ -49,6 +49,7 @@ async function WorkListsPage() {
   const away = may({ actor, action: 'read', resource: 'leave' }) ? await leaveWorklist(actor) : [];
   // P1-1 is for whoever can fix it, and the fix is recording a leave.
   const uncovered = may({ actor, action: 'create', resource: 'leave' }) ? await uncoveredAbsenceAlerts(actor) : 0;
+  const back = await whileYouWereAway(actor);
 
   return (
     <>
@@ -56,6 +57,50 @@ async function WorkListsPage() {
       <div className="mb-4"><TierBanner tier="operational" /></div>
 
       <div className="space-y-6">
+        {back && (
+          <section>
+            <h2 className="mb-2 text-subhead font-semibold">While you were away</h2>
+            <p className="mb-3 max-w-prose text-body text-muted">
+              {dayLabel(back.fromDate)} to {dayLabel(back.toDate)}, {back.coverer} covering. What happened on your
+              caseload in those days, shown for two weeks after you are back. A colleague&apos;s private notes
+              from covering are theirs, and are not here.
+            </p>
+            <Card className="p-0">
+              <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+                {back.flagged.map((s) => (
+                  <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body">
+                    <span>
+                      <Link href={`/submissions/${s.id}`} className="font-medium text-accent hover:underline">{s.template.name}</Link>
+                      <span className="ml-2 text-muted">{s.client.code} · {dayLabel(localDateOf(s.request.submittedAt!))}</span>
+                    </span>
+                    <Badge tone="danger" glyph="!">flagged for review</Badge>
+                  </li>
+                ))}
+                {back.sessions.map((a) => (
+                  <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body">
+                    <span>
+                      Session with {a.clinician.name}
+                      <span className="ml-2 text-muted">{a.client.code} · {dayLabel(localDateOf(a.startAt))}</span>
+                    </span>
+                    <Badge tone="neutral">{a.status.replace('_', ' ')}</Badge>
+                  </li>
+                ))}
+                {back.notes.map((n) => (
+                  <li key={n.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body">
+                    <span>
+                      <Link href={`/notes/${n.id}`} className="font-medium text-accent hover:underline">Progress note by {n.author.name}</Link>
+                      <span className="ml-2 text-muted">{n.client.code} · {dayLabel(localDateOf(n.appointment.startAt))}</span>
+                    </span>
+                    <Badge tone={n.status === 'draft' ? 'warning' : 'neutral'}>{n.status}</Badge>
+                  </li>
+                ))}
+                {back.flagged.length + back.sessions.length + back.notes.length === 0 && (
+                  <li className="px-4 py-3 text-body text-muted">Nothing on your caseload needed anybody while you were away.</li>
+                )}
+              </ul>
+            </Card>
+          </section>
+        )}
         <section>
           <h2 className="mb-2 text-subhead font-semibold">Nobody has said they are coming</h2>
           <p className="mb-3 max-w-prose text-body text-muted">

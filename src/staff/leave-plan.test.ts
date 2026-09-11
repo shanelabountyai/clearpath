@@ -2,11 +2,13 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { fixedClock } from '../clock';
 import { prisma } from '../db';
 import { Forbidden } from '../errors';
+import { wellbeingCheckIn } from '../forms/fixtures';
+import { issueForm, publishTemplate, submitForm } from '../forms/service';
 import { actor, makeClient, makeUser, resetDb, settings } from '../test/harness';
-import { zonedToUtc, type LocalDate } from '../time';
+import { localDateOf, zonedToUtc, type LocalDate } from '../time';
 import {
   cancelLeave, createLeave, decideCoverage, editLeaveDates, getLeavePlan, leaveWorklist, listLeaves, nameCoverer, nameSupervisionCover,
-  runLeaveAlertSweep, uncoveredAbsenceAlerts,
+  runLeaveAlertSweep, uncoveredAbsenceAlerts, whileYouWereAway,
 } from './leave-plan';
 
 /** Midday in the practice's zone, so no test sits on a midnight it did not mean to. */
@@ -517,5 +519,70 @@ describe('the work-list counts (P1-5, P1-1)', () => {
     expect(await uncoveredAbsenceAlerts(actor(ray), on('2026-09-14'))).toBe(1);
     // Nour's leave has a calendar row too, and an unswept alert behind it: covered, not a gap.
     expect(await uncoveredAbsenceAlerts(actor(ray), on('2026-10-05'))).toBe(0);
+  });
+});
+
+// ─────────────────── P1-4: while you were away ───────────────────
+
+describe('while you were away (P1-4, D-25)', () => {
+  const quiet = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`item_${i + 1}`, 0]));
+  const critical = { ...quiet, item_9: 2 };
+
+  /** A session on a client, and optionally a progress note by its clinician, all synthetic. */
+  async function session(clientId: string, clinicianId: string, day: LocalDate, opts: { status?: 'completed' | 'cancelled'; note?: boolean } = {}) {
+    const appt = await prisma.appointment.create({
+      data: { clientId, clinicianId, modality: 'telehealth', status: opts.status ?? 'completed', startAt: zonedToUtc(day, 600), endAt: zonedToUtc(day, 650) },
+    });
+    const note = opts.note ? await prisma.progressNote.create({ data: { appointmentId: appt.id, clientId, authorId: clinicianId, content: 'synthetic' } }) : null;
+    return { appt, note };
+  }
+
+  it('lists the window\'s flagged screeners, the sessions others held and their notes, on reads Nour holds as treating', async () => {
+    const p = await onLeave();
+    const desk = await makeUser('front_desk');
+    await publishTemplate(actor(p.ray), { key: 'wellbeing-check-in', name: 'Wellbeing Check-In', kind: 'screener', ...wellbeingCheckIn });
+    const submit = async (d: LocalDate, answers: Record<string, number>) => {
+      const req = await issueForm(actor(desk), { clientId: p.client.id, templateKey: 'wellbeing-check-in', clock: on(d) });
+      await submitForm(req.token, answers, { clock: on(d) });
+    };
+    await submit('2026-10-02', critical); // before Nour left
+    await submit('2026-10-06', critical);
+    await submit('2026-10-07', quiet); // in the window, nothing flagged
+    await submit('2026-11-28', critical); // Nour is back
+    const flagged = (await prisma.formSubmission.findMany({ select: { id: true, request: { select: { submittedAt: true } } } }))
+      .filter((s) => localDateOf(s.request.submittedAt!) === '2026-10-06');
+
+    const held = await session(p.client.id, p.dev.id, '2026-10-06', { note: true });
+    await session(p.client.id, p.dev.id, '2026-10-13', { status: 'cancelled' });
+    await session(p.client.id, p.nour.id, '2026-10-09', { note: true }); // Nour's own, from home, inside the window
+    await session(p.client.id, p.dev.id, '2026-11-28', { note: true }); // after the window
+    await session((await makeClient(p.dev.id)).id, p.dev.id, '2026-10-08', { note: true }); // Dev's own client
+    const covering = await prisma.processNote.create({ data: { clientId: p.client.id, authorId: p.dev.id, content: 'synthetic' } });
+
+    const back = await whileYouWereAway(actor(p.nour), on('2026-11-30'));
+    expect(back).toMatchObject({ id: p.leave.id, ...NOUR_AWAY, coverer: p.dev.name });
+    expect(back!.flagged.map((s) => s.id)).toEqual(flagged.map((s) => s.id));
+    expect(back!.sessions.map((a) => a.id)).toEqual([held.appt.id]);
+    expect(back!.notes.map((n) => n.id)).toEqual([held.note!.id]);
+    expect(JSON.stringify(back)).not.toContain(covering.id);
+
+    const reads = await prisma.auditEvent.findMany({ where: { actorId: p.nour.id } });
+    expect(reads.map((r) => r.resource).sort()).toEqual(['appointment', 'form_submission', 'progress_note']);
+    expect(reads.every((r) => r.allowed && !r.reason?.startsWith('leave:'))).toBe(true);
+  });
+
+  it('is there for two weeks after the last day, only for the person who was away, and reads nothing otherwise', async () => {
+    const p = await onLeave();
+    const desk = await makeUser('front_desk');
+    await createLeave(actor(p.ray), { userId: desk.id, fromDate: '2026-09-14', toDate: '2026-09-18', coveringClinicianId: p.dev.id }, RECORDED);
+
+    expect(await whileYouWereAway(actor(p.nour), on(NOUR_AWAY.toDate))).toBeNull();
+    expect(await whileYouWereAway(actor(p.nour), on('2026-12-11'))).not.toBeNull();
+    expect(await whileYouWereAway(actor(p.nour), on('2026-12-12'))).toBeNull();
+    expect(await whileYouWereAway(actor(p.dev), on('2026-11-30'))).toBeNull();
+    // Front desk away has no caseload to be told about, and no denial per page load.
+    expect(await whileYouWereAway(actor(desk), on('2026-09-21'))).toBeNull();
+
+    expect(await prisma.auditEvent.count({ where: { actorId: { in: [p.nour.id, p.dev.id, desk.id] } } })).toBe(3);
   });
 });
