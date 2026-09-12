@@ -9,38 +9,37 @@
 
    Then redeploy, and check `/api/cron/reminders` returned 200 after the hour.
 
-**Item: a supervisor who departs after a supervisee did.** Alex departed and
-Alex's discharged client's alert went to Sam (departure P0-7). When Sam departs,
-`executeDeparture` repoints Alex's `supervisorId` to Sam's receiver. But it moves
-only alerts about Sam's own caseload, so that alert stays with Sam's closed
-account. `ownerOf`/`routesOf` in `src/staff/coverage.ts` already say where it
-belongs. The likely fix is a reroute of the leaver's remaining unread alerts
-after supervisees repoint, plus a blocker when there is nobody to take them.
-This is alert routing (hard rule 9), so it is **Opus** work. It is recommended
-over the supervision-cover follow-ups (loose thread 1) and a production reseed
-(0); pick one of those instead if you prefer.
+**Item: the supervision-cover follow-ups** (loose thread 1). `/worklists` does
+not count blocked supervision covers, and the seed has no supervision-cover
+demo, so the D-26/D-31 routing has no seeded picture. Screen-and-seed work, not
+safety-critical: **Sonnet** is enough, on `opusplan` if you want the plan read
+first. A production reseed (0) or P1-4's returning supervisor (2) are the
+alternatives; pick one of those instead if you prefer.
 
-## What just landed (leave D-26, a departure while the supervisor is away)
+## What just landed (departure D-31, the alert a second departure could not see)
 
-- `coverage.ts`: `ownerOf` gives an alert's owner: the treating clinician, or a
-  departed clinician's supervisor. `routesOf` covers the owner, by client
-  (`coverageOf`) or by supervision (`supervisionCoverageOf`). `alertRecipient`,
-  `executeDeparture`, the sweep and every `settleAlerts` write route through it.
-  `nameSupervisionCover` now settles alerts too.
-- Both orders are handled. A departure during the leave sends the alert to the
-  cover, stamped, and the leave's end returns it to the supervisor. A leave that
-  starts after the departure takes the alert on its first day. New alerts about
-  a departed clinician's client no longer go to the closed account.
-- A transferred client's alert reaches an away receiver's coverer inside the
-  departure's transaction.
-- The PRD has D-26 and a new risk line. WRITEUP §36 has the entry "A departure
-  while the supervisor is away", and the decisions log has two rows.
+- The per-assignment alert move is gone from `executeDeparture`'s loop. Every
+  unread alert still addressed to the leaver is rerouted in one pass after the
+  caseload has moved, the supervisees have repointed and the account has closed,
+  so `routesOf` reads the practice as it stands instead of a projection of it.
+- `blockersOf` asks the same question thirty days early, where a projection is
+  unavoidable: `afterDeparture` applies the three moves to one client's routing
+  facts, and `strands` blocks when the route names nobody — the leaver, or a
+  treating clinician who has departed with no supervisor above them. That
+  replaces the old "leaver has no supervisor" test, and naming a receiving
+  supervisor now clears an inherited alert the old scan could not.
+- The PRD has D-31 and a risk line (a departing *coverer* still blocks rather
+  than moving; the fix is on that leave). WRITEUP §37 is the entry, §36's "what
+  it does not do" bullet that named this bug is struck through, and the
+  decisions log has two rows.
 
 ## Gate
 
-The typecheck is clean. The unit tests passed: 3199 across 32 files. Five
-mutations were each caught by one red test. The e2e specs `departure-demo` and
-`leave-demo` passed, 9 of 9, against a fresh production build.
+Typecheck clean. Unit: 3201 passed across 32 files (3199 + 2 new). Three
+mutations each red — `strands` forgetting the departed clinician,
+`afterDeparture` not repointing a supervisee, and the reroute running before the
+supervision repoint. e2e `departure-demo` and `leave-demo`: 9 of 9 on a fresh
+production build.
 
 ## Loose threads
 
@@ -50,8 +49,7 @@ mutations were each caught by one red test. The e2e specs `departure-demo` and
    any migration.
 1. `listProgressNotes`' audit row names the first leave a cover holds
    (`ponytail:`). `/worklists` does not count blocked supervision covers, and
-   the seed has no supervision-cover demo. A supervisor away with no supervision
-   cover still holds a departed supervisee's alerts (D-26 leaves it to D-22).
+   the seed has no supervision-cover demo.
 2. P1-4 lists nothing for a returning supervisor (co-signatures a cover gave),
    and has no dismissal; it drops off after 14 days.
 3. `delivery:run` and `nonresponse:run` have no scheduler, on purpose.
@@ -63,3 +61,6 @@ mutations were each caught by one red test. The e2e specs `departure-demo` and
 7. Queued links use the stub's `http://localhost:3700`, now on the hourly cron too.
 8. `CLEARPATH_THROTTLE_SECRET` must be set on any multi-instance deployment.
 9. The capstone leave is dated from the real clock.
+10. An alert the leaver holds only as a *coverer* on somebody else's leave still
+    blocks their departure rather than moving (D-31 risk line). The fix is on
+    that leave — name another cover, or end it.
