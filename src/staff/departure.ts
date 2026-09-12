@@ -10,7 +10,7 @@ import { conflictKind } from '../scheduling/booking';
 import { TRANSITIONS as SESSION_TRANSITIONS, type Status as SessionStatus } from '../scheduling/lifecycle';
 import { SYSTEM_ACTOR } from '../scheduling/reminders';
 import { daysBetween, localDateOf, zonedToUtc, type LocalDate } from '../time';
-import { routesOf } from './coverage';
+import { ROUTED_CLIENT, routesOf, type RoutedClient } from './coverage';
 
 /**
  * A departure is a plan before it is an event.
@@ -331,6 +331,39 @@ type DepartureRow = {
   id: string; userId: string; lastDayOn: Date; receivingSupervisorId: string | null;
 };
 
+/**
+ * A client's routing facts as they will stand once this departure commits: a
+ * transfer's receiver treats them, the leaver is closed with their own
+ * supervisor above them, and anyone the leaver supervised answers to the
+ * receiving supervisor. What the blocker scan routes against, thirty days
+ * before any of it is written.
+ */
+function afterDeparture(
+  d: DepartureRow,
+  leaverSupervisorId: string | null,
+  c: RoutedClient,
+  receiverId: string | null | undefined,
+): RoutedClient {
+  if (receiverId) {
+    return { ...c, treatingClinicianId: receiverId, treatingClinician: { active: true, supervisorId: null } };
+  }
+  if (c.treatingClinicianId === d.userId) {
+    return { ...c, treatingClinician: { active: false, supervisorId: leaverSupervisorId } };
+  }
+  if (c.treatingClinician.supervisorId === d.userId) {
+    return { ...c, treatingClinician: { ...c.treatingClinician, supervisorId: d.receivingSupervisorId } };
+  }
+  return c;
+}
+
+/**
+ * A route that names nobody: the leaver, who is closing, or the client's own
+ * treating clinician once they have departed — `ownerOf`'s last resort when
+ * there is no supervisor above them.
+ */
+const strands = (leaverId: string, c: RoutedClient, recipientId: string) =>
+  recipientId === leaverId || (recipientId === c.treatingClinicianId && !c.treatingClinician.active);
+
 async function blockersOf(db: Tx | typeof prisma, d: DepartureRow, today: LocalDate): Promise<DepartureBlocker[]> {
   const from = lastDayStart(d.lastDayOn);
   const [leaver, caseload, assignments, alerts, supervisees, receivingSupervisor, leaves] = await Promise.all([
@@ -345,7 +378,7 @@ async function blockersOf(db: Tx | typeof prisma, d: DepartureRow, today: LocalD
     }),
     db.alert.findMany({
       where: { recipientId: d.userId, acknowledgedAt: null },
-      select: { id: true, clientId: true },
+      select: { id: true, clientId: true, client: { select: ROUTED_CLIENT } },
     }),
     db.user.findMany({ where: { supervisorId: d.userId }, select: { id: true } }),
     d.receivingSupervisorId
@@ -373,9 +406,16 @@ async function blockersOf(db: Tx | typeof prisma, d: DepartureRow, today: LocalD
     }
   }
   // P0-7: an unread risk alert is not something a departure gets to close over.
-  if (!leaver.supervisorId) {
+  // Ask routing where each would go once this commits — a transfer's receiver,
+  // the leaver's supervisor, a departed supervisee's new supervisor, or a cover
+  // (D-31). A route that names nobody is the blocker — `strands` says which.
+  if (alerts.length) {
+    const after = new Map(alerts.map((a) =>
+      [a.clientId, afterDeparture(d, leaver.supervisorId, a.client, decided.get(a.clientId)?.receivingClinicianId)]));
+    const routes = await routesOf(db, [...after.values()], today);
     for (const alert of alerts) {
-      if (decided.get(alert.clientId)?.disposition !== 'transfer') {
+      const c = after.get(alert.clientId)!;
+      if (strands(d.userId, c, routes.get(alert.clientId)!.recipientId)) {
         blockers.push({ kind: 'unread_alert', clientId: alert.clientId, alertId: alert.id });
       }
     }
@@ -758,7 +798,6 @@ export async function executeDeparture(actor: Actor, departureId: string, clock:
           throw new Conflict(`This departure has ${blockers.length} unresolved item(s)`, 'departure_not_ready');
         }
 
-        const leaver = await tx.user.findUniqueOrThrow({ where: { id: d.userId }, select: { supervisorId: true } });
         // A decision about a client front desk has since given to somebody
         // else is a decision about nobody on this caseload. Repointing it would
         // take the client from their new clinician; skipping it takes nothing.
@@ -812,26 +851,6 @@ export async function executeDeparture(actor: Actor, departureId: string, clock:
             });
           }
 
-          // P0-7. Acknowledged alerts stay where they are: "Alex saw this on
-          // the 12th" is a fact about the 12th. Unread ones follow the client
-          // to its new clinician, or to the leaver's supervisor when the client
-          // has none — which the blocker scan has already guaranteed exists —
-          // and to that person's cover while they are away (leave D-26).
-          // Routed as the client stands once this commits: the leaver closed.
-          const unread = await tx.alert.findMany({
-            where: { recipientId: d.userId, clientId: a.clientId, acknowledgedAt: null },
-            select: { id: true },
-          });
-          const after = {
-            id: a.clientId, treatingClinicianId: receiver ?? d.userId,
-            treatingClinician: { active: !!receiver, supervisorId: receiver ? null : leaver.supervisorId },
-          };
-          const to = unread.length ? (await routesOf(tx, [after], localDateOf(now))).get(a.clientId)! : null;
-          if (to && to.recipientId !== d.userId) {
-            await tx.alert.updateMany({ where: { id: { in: unread.map((x) => x.id) } }, data: to });
-            for (const _ of unread) await note(tx, 'departure:alert_repointed', a.clientId);
-          }
-
           await note(tx, `departure:${a.disposition}`, a.clientId);
         }
 
@@ -868,6 +887,34 @@ export async function executeDeparture(actor: Actor, departureId: string, clock:
 
         await tx.user.update({ where: { id: d.userId }, data: { active: false } });
         await note(tx, 'departure:deactivated');
+
+        // P0-7. Acknowledged alerts stay where they are: "Alex saw this on the
+        // 12th" is a fact about the 12th. Every unread one the leaver still
+        // holds moves, in one pass after the writes above rather than per
+        // client, because the ones this missed are the ones about somebody
+        // else's client: a departed supervisee's, handed here by P0-7 (D-31).
+        // Routing reads the practice as it now stands — the caseload moved, the
+        // supervisees repointed, the account closed — so it needs no projection
+        // of it: a transferred client's alert reaches the receiver, a
+        // discharged one's the leaver's supervisor, a departed supervisee's
+        // client's their new supervisor, and each of those a cover while that
+        // person is away (leave D-26).
+        const unread = await tx.alert.findMany({
+          where: { recipientId: d.userId, acknowledgedAt: null },
+          select: { id: true, clientId: true, client: { select: ROUTED_CLIENT } },
+        });
+        if (unread.length) {
+          const routes = await routesOf(tx, unread.map((a) => a.client), localDateOf(now));
+          for (const a of unread) {
+            const to = routes.get(a.clientId)!;
+            // The blocker scan refuses a departure that would strand one, so
+            // this is the belt: leave it unread where it is rather than write
+            // it to a closed account.
+            if (strands(d.userId, a.client, to.recipientId)) continue;
+            await tx.alert.update({ where: { id: a.id }, data: to });
+            await note(tx, 'departure:alert_repointed', a.clientId);
+          }
+        }
 
         return tx.departure.update({ where: { id: d.id }, data: { status: 'executed', executedAt: now } });
       },

@@ -658,6 +658,48 @@ describe('the alert with no reader (P0-7)', () => {
     expect((await prisma.alert.findUniqueOrThrow({ where: { id: unread.id } })).recipientId).toBe(sup.id);
   });
 
+  /**
+   * D-31. Alex departs and the discharged client's alert goes to Alex's
+   * supervisor. When that supervisor departs in turn, the alert is about a
+   * client who was never on their caseload, so the disposition loop never sees
+   * it — and the supervision repoint that moves Alex has already said where it
+   * belongs.
+   */
+  it('hands a departed supervisee\'s alert on to the supervisor who takes the supervisee', async () => {
+    const { manager, sup, alex, beth, kept, ended, departure, decide } = await practice();
+    const unread = await alert(alex.id, ended.id);
+    await decide(kept.id, 'transfer', beth.id);
+    await decide(ended.id, 'discharge');
+    await executeDeparture(actor(manager), departure.id, EXECUTION);
+    expect((await prisma.alert.findUniqueOrThrow({ where: { id: unread.id } })).recipientId).toBe(sup.id);
+
+    const dana = await makeUser('supervisor', { name: 'Dana' });
+    const second = await planDeparture(
+      actor(manager), { userId: sup.id, lastDayOn: LAST_DAY, receivingSupervisorId: dana.id }, NOTICE,
+    );
+    expect(await departureBlockers(actor(manager), second.id)).toEqual([]);
+
+    await executeDeparture(actor(manager), second.id, EXECUTION);
+    expect((await prisma.alert.findUniqueOrThrow({ where: { id: unread.id } })).recipientId).toBe(dana.id);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: alex.id } })).supervisorId).toBe(dana.id);
+  });
+
+  it('will not let the second departure close over it when nobody takes the supervisee', async () => {
+    const { manager, sup, alex, beth, kept, ended, departure, decide } = await practice();
+    const unread = await alert(alex.id, ended.id);
+    await decide(kept.id, 'transfer', beth.id);
+    await decide(ended.id, 'discharge');
+    await executeDeparture(actor(manager), departure.id, EXECUTION);
+
+    const second = await planDeparture(actor(manager), { userId: sup.id, lastDayOn: LAST_DAY }, NOTICE);
+    expect(await departureBlockers(actor(manager), second.id)).toEqual(
+      expect.arrayContaining([{ kind: 'unread_alert', clientId: ended.id, alertId: unread.id }]),
+    );
+    await expect(executeDeparture(actor(manager), second.id, EXECUTION))
+      .rejects.toMatchObject({ code: 'departure_not_ready' });
+    expect((await prisma.alert.findUniqueOrThrow({ where: { id: unread.id } })).recipientId).toBe(sup.id);
+  });
+
   it('will not close over an unread alert that has nobody to go to', async () => {
     const { manager, alex, beth, kept, ended, departure, decide } = await practice({ supervised: false });
     const unread = await alert(alex.id, ended.id);

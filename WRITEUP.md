@@ -3452,12 +3452,60 @@ with the treating clinician.
 - **Nothing for a supervisor away with no cover.** The alert stays with them.
   The door requires a cover for anybody who supervises (D-22), and the plan
   screen flags a missing one.
-- **Nothing for a supervisor who departs later.** Alex's `supervisorId`
-  repoints to the receiving supervisor, but alerts already with the departing
-  supervisor about Alex's clients stay with them. Their departure moves only
-  their own caseload's alerts.
+- ~~**Nothing for a supervisor who departs later.**~~ Closed by §37. Alex's
+  `supervisorId` repointed to the receiving supervisor, and the alert about
+  Alex's client stayed with the supervisor's closed account, because their
+  departure moved only their own caseload's alerts.
 - **No new cell.** Routing asks no matrix question; the read the cover needs
   is P1-3's (D-21).
+
+## 37. The alert the second departure could not see
+
+**The problem.** §36's last bullet, found by reading it. Alex departs, a
+discharged client's unread alert goes to Alex's supervisor Sam, and the client
+row still names Alex. When Sam departs in turn, `executeDeparture` walks Sam's
+*assignments* — the clients Sam treats — and moves each one's alerts beside the
+disposition that moved the client. That client is not on Sam's caseload and
+never was, so the loop never saw the alert. Sam's account closed with an unread
+risk alert addressed to it, three lines after the supervision repoint had
+already said, in the data, who now answers for Alex.
+
+**The design.** The move comes out of the loop. Alerts are rerouted once, after
+the caseload has moved, the supervisees have repointed and the account has
+closed — every unread alert still addressed to the leaver, routed by
+`routesOf`. The gain is that there is nothing left to project: the previous
+version built a synthetic "the client as it will stand" for each assignment,
+and the synthetic client was the bug, because it could only be built for a
+client the loop knew about. Reading the practice after the writes gives a
+transferred client's alert to the receiver, a discharged one's to the leaver's
+supervisor, a departed supervisee's client's to whoever now supervises them,
+and each of those to a cover while that person is away — the same four answers,
+from one query instead of a projection per client.
+
+The blocker scan is the same question thirty days early, where a projection is
+unavoidable because nothing has been written. `afterDeparture` applies the
+three moves the departure will make to one client's routing facts, `routesOf`
+says where the alert would land, and `strands` asks whether that is nobody: the
+leaver, or the client's own treating clinician once they have departed with
+no supervisor above them. That is wider than the test it replaces — "the leaver
+has no supervisor" — and, more usefully, *resolvable* where the old one was
+not. An inherited alert used to block a departure with nothing on the screen
+that could clear it. Naming a receiving supervisor now clears it, because that
+is genuinely who takes it.
+
+Two tests, one per outcome, and the P0-7 trio still green through the rewrite.
+
+**What it deliberately does not do.**
+
+- **Move a coverer's stamped alerts.** If the leaver holds an alert only
+  because they cover somebody else's leave, routing still names them and the
+  scan blocks. The fix is on that leave — name another cover, or end it —
+  which is `leave_open`'s reasoning applied to a leave that is not the
+  leaver's. Choosing who covers is a decision, not a route.
+- **Acknowledge anything.** A read alert stays with the person who read it,
+  as in §31. Only unread ones move.
+- **Add a blocker kind.** `unread_alert` already said "this alert has nobody";
+  what changed is the question that decides it.
 
 ## Decisions log
 
@@ -3687,6 +3735,8 @@ with the treating clinician.
 | The away summary filters submissions on `FormRequest.submittedAt`, not `FormSubmission.createdAt` | `createdAt` is the database's clock, so on a fixed test clock every submission lands on the day the suite ran (hard rule 7) |
 | An alert belongs to its treating clinician, or to a departed clinician's supervisor, and a leave covers whoever it belongs to (leave D-26) | The sweep routed by treating clinician, so ending a supervisor's leave would have returned a departed clinician's alert to a closed account; one owner function makes creation, departure and the sweep agree in either order |
 | Routing to a supervision cover reads `supervisionCoverageOf`, the fact the cover's client read rests on | An alert is only useful on the days its reader can open the record behind it, so routing and reads share one fact |
+| A departure reroutes every unread alert the leaver still holds in one pass after its writes, not per client inside the disposition loop (departure D-31) | The loop only knew the leaver's own caseload, so an alert inherited from a departed supervisee stayed with the closed account; after the writes there is nothing left to project |
+| The unread-alert blocker asks routing where each alert would land after the departure, and blocks when that is nobody | "The leaver has no supervisor" missed an inherited alert whose owner is somebody else's supervisor, and blocked ones the plan screen had no way to clear |
 
 ## What this project deliberately is not
 
