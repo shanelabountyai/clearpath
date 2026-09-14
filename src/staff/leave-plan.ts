@@ -579,14 +579,34 @@ const BACK_FOR_DAYS = 14;
  * of the person away, so somebody with no caseload gets nothing, rather than a
  * denial on the record per page load. Scoped to self by the query and holding
  * nothing clinical, it is not itself a read on the record.
+ *
+ * Dismissed is gone: `backDismissedAt` is the person saying they have read it,
+ * and `BACK_FOR_DAYS` is only the backstop for the one who never says so.
  */
 export async function recentlyBack(actor: Actor, clock: Clock = systemClock) {
   if (!may({ actor, action: 'read', resource: 'form_submission', target: { clinicianId: actor.id } })) return null;
   const today = localDateOf(clock.now());
   return prisma.leave.findFirst({
-    where: { userId: actor.id, cancelledAt: null, toDate: { lt: dbDate(today), gte: dbDate(addDays(today, -BACK_FOR_DAYS)) } },
+    where: {
+      userId: actor.id, cancelledAt: null, backDismissedAt: null,
+      toDate: { lt: dbDate(today), gte: dbDate(addDays(today, -BACK_FOR_DAYS)) },
+    },
     select: { id: true, fromDate: true, toDate: true, coveringClinician: { select: { name: true } } },
     orderBy: { toDate: 'desc' },
+  });
+}
+
+/**
+ * "I have read it." Self-scoped by the query, exactly as `recentlyBack` reads
+ * it: a clinician holds no `leave.update` cell, and widening one so they can
+ * clear a banner would hand them the cell that decides who covers their
+ * clients. Writes no clinical fact and reveals none, so it is not on the
+ * record — the summary it clears is, three audited reads per visit.
+ */
+export async function dismissWhileYouWereAway(actor: Actor, leaveId: string, clock: Clock = systemClock) {
+  await prisma.leave.updateMany({
+    where: { id: leaveId, userId: actor.id, backDismissedAt: null },
+    data: { backDismissedAt: clock.now() },
   });
 }
 
@@ -594,11 +614,16 @@ export async function recentlyBack(actor: Actor, clock: Clock = systemClock) {
  * P1-4: what happened on the caseload while its clinician was away. Screeners
  * flagged for review, sessions somebody else held, and the progress notes
  * written about them, each through a cell the clinician holds as treating (no
- * new cell): three reads on the record, audited in one transaction. Never a
+ * new cell): reads on the record, audited in one transaction. Never a
  * process note, because what the coverer wrote privately is theirs (D-05).
  *
- * Nothing is written on return, so there is nothing to dismiss; it goes after
- * `BACK_FOR_DAYS`. Sessions and notes are anybody's but the clinician's own,
+ * A supervisor comes back to a fourth list: the countersignatures somebody else
+ * gave their supervisees in the window (P1-4, D-21). It is the one part of the
+ * summary that is not about the caseload, so it rides its own door —
+ * `authorSupervisorId`, the cell supervision already reads notes through — and
+ * is asked for at all only when the person has supervisees.
+ *
+ * Sessions, notes and countersignatures are anybody's but the clinician's own,
  * not only the named coverers', because a split undone mid-leave still held
  * its sessions.
  */
@@ -610,11 +635,18 @@ export async function whileYouWereAway(actor: Actor, clock: Clock = systemClock)
   const during = { gte: zonedToUtc(fromDate, 0), lt: zonedToUtc(addDays(toDate, 1), 0) };
   const onCaseload = { client: { treatingClinicianId: actor.id } };
   const client = { select: { code: true } };
+  const supervisees = await prisma.user.findMany({ where: { supervisorId: actor.id }, select: { id: true } });
+  const superviseeIds = supervisees.map((s) => s.id);
   return guardedAll(
-    (['form_submission', 'appointment', 'progress_note'] as const)
-      .map((resource) => ({ actor, action: 'read' as const, resource, target: { clinicianId: actor.id } })),
+    [
+      ...(['form_submission', 'appointment', 'progress_note'] as const)
+        .map((resource) => ({ actor, action: 'read' as const, resource, target: { clinicianId: actor.id } })),
+      ...(superviseeIds.length
+        ? [{ actor, action: 'read' as const, resource: 'progress_note' as const, target: { authorSupervisorId: actor.id } }]
+        : []),
+    ],
     async (tx) => {
-      const [flagged, sessions, notes] = await Promise.all([
+      const [flagged, sessions, notes, coSigned] = await Promise.all([
         // `submittedAt`, not `createdAt`: the request's is the injected clock's (hard rule 7).
         tx.formSubmission.findMany({
           where: { ...onCaseload, needsReview: true, request: { submittedAt: during } },
@@ -631,8 +663,15 @@ export async function whileYouWereAway(actor: Actor, clock: Clock = systemClock)
           select: { id: true, status: true, client, author: { select: { name: true } }, appointment: { select: { startAt: true } } },
           orderBy: { appointment: { startAt: 'asc' } },
         }),
+        superviseeIds.length
+          ? tx.progressNote.findMany({
+            where: { authorId: { in: superviseeIds }, coSignedAt: during, coSignedById: { not: actor.id } },
+            select: { id: true, client, coSignedAt: true, author: { select: { name: true } }, coSignedBy: { select: { name: true } } },
+            orderBy: { coSignedAt: 'asc' },
+          })
+          : [],
       ]);
-      return { id: leave.id, fromDate, toDate, coverer: leave.coveringClinician.name, flagged, sessions, notes };
+      return { id: leave.id, fromDate, toDate, coverer: leave.coveringClinician.name, flagged, sessions, notes, coSigned };
     },
   );
 }

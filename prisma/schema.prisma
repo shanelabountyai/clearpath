@@ -1321,6 +1321,11 @@ model Leave {
 
   cancelledAt DateTime?
 
+  /// P1-4: when the person back dismissed their return summary. Until they do,
+  /// `BACK_FOR_DAYS` is the only thing that takes it off the screen, which
+  /// reads as an app that cannot be told something has been dealt with.
+  backDismissedAt DateTime?
+
   /// The calendar row this leave owns (P0-7). Present exactly while the leave
   /// is not cancelled — `leave_calendar_row_while_live` — and `Restrict`, so
   /// the row cannot be deleted out from under a leave that still claims it.

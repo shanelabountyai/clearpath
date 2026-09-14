@@ -3405,16 +3405,47 @@ day. The two "somebody else" mutations were green at first. Nour's own fixture
 session sat before the window, where the date filter already excluded it. It
 now sits inside the window, as a session taken from home.
 
+**The supervisor's fourth list, and a dismissal (D-27).** Sam supervises Nour.
+While Sam is away, Rosa covers the supervision and countersigns what Nour
+signed. Sam comes back to nothing about it: the first three lists all hang off
+`{ clinicianId: actor.id }`, and a countersignature is not about Sam's
+caseload. It gets its own request in the same `guardedAll`, on
+`{ authorSupervisorId: actor.id }` — the cell the co-sign queue already reads
+supervisee notes through — and is asked for at all only when the person has
+supervisees. So a therapist back still makes exactly three audit rows and a
+supervisor makes four, and the second `progress_note` row is the supervision
+read said out loud rather than smuggled into the treating one. "Somebody else"
+means the same thing here: `coSignedById` is anybody but the person back, so a
+signature they gave themselves the day they returned is not news.
+
+The dismissal reverses what D-25 settled. D-25's argument was that nothing is
+written on return and the list expires by itself; what that produced is a
+fortnight of a banner nobody can clear, which reads as an app that cannot be
+told something is dealt with. `Leave.backDismissedAt` is the person saying they
+have read it, and the fortnight stays as the backstop for whoever never says
+so. It sits on `recentlyBack`, so it also stops Home from landing them on
+`/worklists` — one row answers both the banner and the redirect, which is what
+it means for the person to have said they are done with it. The interesting
+part is the authorization. A clinician holds no
+`leave.update` cell, and on this PRD that cell *is* the coverage grant —
+widening it so somebody can clear a banner would hand them the power to decide
+who covers their own clients. So the write is self-scoped by the query
+(`userId: actor.id` in the `updateMany`), exactly as `recentlyBack` reads it,
+and it is not on the record: it writes no clinical fact and reveals none. The
+summary it clears is on the record, three or four audited reads per visit.
+
 **What it deliberately does not do.**
 
 - **No process notes, and no count of them.** What Dev wrote privately is
   Dev's (D-05), and a count would say that it exists.
-- **No dismissal.** Nothing is written on return, and the section goes after
-  a fortnight (D-25).
 - **No alerts.** Nour's unread ones are already on `/alerts`. Who acknowledged
   the rest is the recipient's record, and Nour holds no cell on it.
-- **Nothing for a returning supervisor.** Co-signatures a supervision cover
-  gave are not listed. P1-4 is the treating case the PRD names.
+- **No notes still waiting.** The supervision list is what the cover *did*, not
+  what it left. What is still unsigned is the co-sign queue's job, and it is
+  already there and already sorted by age.
+- **No undo on the dismissal.** It is one row per leave and it takes the
+  section away early; restoring it means recording the leave again, which is
+  the wrong shape for a banner.
 - **No client names.** Codes, the form's name and dates only. The links open
   each record through its own guard.
 
@@ -3738,6 +3769,7 @@ Two tests, one per outcome, and the P0-7 trio still green through the rewrite.
 | A departure reroutes every unread alert the leaver still holds in one pass after its writes, not per client inside the disposition loop (departure D-31) | The loop only knew the leaver's own caseload, so an alert inherited from a departed supervisee stayed with the closed account; after the writes there is nothing left to project |
 | The unread-alert blocker asks routing where each alert would land after the departure, and blocks when that is nobody | "The leaver has no supervisor" missed an inherited alert whose owner is somebody else's supervisor, and blocked ones the plan screen had no way to clear |
 | A blocked supervision cover is its own badge on `/worklists`, not a number added to the coverers who cannot cover | They are different sentences with different fixes — name a supervision cover on the plan, versus re-cover a caseload — and a supervision gap is not a count anyway: an associate's note goes uncountersigned for the whole leave or it does not |
+| A returning supervisor's countersignature list rides its own guard request, and the dismissal rides no cell at all | Two halves of one screen, opposite answers. The list is a real clinical read on a door the actor genuinely holds — `authorSupervisorId`, the co-sign queue's — so it earns its own audit row rather than hiding inside the treating one. The dismissal is a banner being cleared: routing it through `leave.update` would have meant giving clinicians the cell that decides who covers their clients, to clear a banner. Self-scoped by the query instead, and off the record, because it writes no clinical fact and reveals none |
 
 ## What this project deliberately is not
 

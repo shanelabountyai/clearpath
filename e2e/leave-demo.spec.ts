@@ -129,6 +129,10 @@ test.describe('a seeded leave, from the first alert to the day after return', ()
     await expect(back.locator('li', { hasText: 'flagged for review' })).toContainText('TC-086');
     await expect(back.locator('li', { hasText: `Session with ${COVERER}` })).toContainText('TC-086');
     await expect(back.locator('li', { hasText: `Progress note by ${COVERER}` })).toContainText('TC-086');
+
+    // And she can say she has read it, rather than waiting a fortnight for it to expire.
+    await back.getByRole('button', { name: 'I have read this' }).click();
+    await expect(page.getByRole('heading', { name: 'While you were away' })).toHaveCount(0);
   });
 
   test('the auditor lists the reads the leave made possible: the coverer\'s, none after return, and no private note', async ({ page }) => {

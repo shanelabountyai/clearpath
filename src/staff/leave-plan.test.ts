@@ -6,9 +6,10 @@ import { wellbeingCheckIn } from '../forms/fixtures';
 import { issueForm, publishTemplate, submitForm } from '../forms/service';
 import { actor, makeClient, makeUser, resetDb, settings } from '../test/harness';
 import { localDateOf, zonedToUtc, type LocalDate } from '../time';
+import { coSignProgressNote } from '../notes/service';
 import {
-  cancelLeave, createLeave, decideCoverage, editLeaveDates, getLeavePlan, leaveWorklist, listLeaves, nameCoverer, nameSupervisionCover,
-  runLeaveAlertSweep, uncoveredAbsenceAlerts, whileYouWereAway,
+  cancelLeave, createLeave, decideCoverage, dismissWhileYouWereAway, editLeaveDates, getLeavePlan, leaveWorklist, listLeaves, nameCoverer,
+  nameSupervisionCover, runLeaveAlertSweep, uncoveredAbsenceAlerts, whileYouWereAway,
 } from './leave-plan';
 
 /** Midday in the practice's zone, so no test sits on a midnight it did not mean to. */
@@ -610,5 +611,65 @@ describe('while you were away (P1-4, D-25)', () => {
     expect(await whileYouWereAway(actor(desk), on('2026-09-21'))).toBeNull();
 
     expect(await prisma.auditEvent.count({ where: { actorId: { in: [p.nour.id, p.dev.id, desk.id] } } })).toBe(3);
+  });
+
+  it('tells a supervisor back what their cover countersigned, and only inside the window', async () => {
+    const p = await onLeave();
+    const rosa = await makeUser('supervisor');
+    const SAM_AWAY = { fromDate: '2026-10-05', toDate: '2026-10-16' } as const;
+    await createLeave(
+      actor(p.ray),
+      { userId: p.sam.id, ...SAM_AWAY, coveringClinicianId: p.kai.id, coveringSupervisorId: rosa.id },
+      RECORDED,
+    );
+
+    /** A note by Nour — Sam's supervisee — signed and waiting for a countersignature. */
+    const waiting = async (day: LocalDate) => {
+      const { note } = await session(p.client.id, p.nour.id, day, { note: true });
+      return prisma.progressNote.update({ where: { id: note!.id }, data: { status: 'signed', signedAt: zonedToUtc(day, 660) } });
+    };
+    const covered = await waiting('2026-10-07');
+    const fromHome = await waiting('2026-10-09');
+    const after = await waiting('2026-10-20');
+    // Kai answers to Rosa, not to Sam. Rosa countersigning Kai inside the window is
+    // Rosa's own supervision, not the cover, and is no business of Sam's.
+    await prisma.user.update({ where: { id: p.kai.id }, data: { supervisorId: rosa.id } });
+    const kaisClient = await makeClient(p.kai.id);
+    const other = await (async () => {
+      const { note } = await session(kaisClient.id, p.kai.id, '2026-10-08', { note: true });
+      return prisma.progressNote.update({ where: { id: note!.id }, data: { status: 'signed', signedAt: zonedToUtc('2026-10-08', 660) } });
+    })();
+
+    await coSignProgressNote(actor(rosa), covered.id, { clock: on('2026-10-08') });
+    await coSignProgressNote(actor(p.sam), fromHome.id, { clock: on('2026-10-10') }); // Sam's own, from home, inside the window
+    await coSignProgressNote(actor(rosa), other.id, { clock: on('2026-10-08') });
+    // Somebody else's, after the window closed. Written raw: the service would refuse
+    // Rosa the day her cover ends, and what is under test is the filter, not the door.
+    await prisma.progressNote.update({
+      where: { id: after.id },
+      data: { status: 'cosigned', coSignedById: rosa.id, coSignedAt: zonedToUtc('2026-10-20', 660) },
+    });
+
+    const back = await whileYouWereAway(actor(p.sam), on('2026-10-19'));
+    expect(back!.coSigned.map((n) => n.id)).toEqual([covered.id]);
+    expect(back!.coSigned[0]).toMatchObject({ author: { name: p.nour.name }, coSignedBy: { name: rosa.name } });
+    expect(JSON.stringify(back)).not.toContain(other.id);
+
+    // The supervision list rides its own door, so a supervisor back reads `progress_note` twice.
+    const reads = await prisma.auditEvent.findMany({ where: { actorId: p.sam.id, action: 'read' } });
+    expect(reads.map((r) => r.resource).sort()).toEqual(['appointment', 'form_submission', 'progress_note', 'progress_note']);
+  });
+
+  it('goes when the person back says they have read it, and nobody else can say it for them', async () => {
+    const p = await onLeave();
+    const seen = on('2026-11-30');
+
+    await dismissWhileYouWereAway(actor(p.dev), p.leave.id, seen);
+    expect(await whileYouWereAway(actor(p.nour), seen)).not.toBeNull();
+
+    await dismissWhileYouWereAway(actor(p.nour), p.leave.id, seen);
+    expect(await whileYouWereAway(actor(p.nour), seen)).toBeNull();
+    expect(await prisma.leave.findUniqueOrThrow({ where: { id: p.leave.id } }))
+      .toMatchObject({ backDismissedAt: zonedToUtc('2026-11-30', 12 * 60) });
   });
 });

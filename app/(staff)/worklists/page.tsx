@@ -4,7 +4,7 @@ import { requireSession } from '../../../src/session';
 import { continuityQueue, staleInquiries, unconfirmedSoon, vacationImpact, waitlistOpenings } from '../../../src/scheduling/worklists';
 import { openRescheduleRequests } from '../../../src/portal/service';
 import { openInboundReplies } from '../../../src/messaging/inbound';
-import { handleRescheduleRequest, markInboundHandled } from './actions';
+import { dismissReturnSummary, handleRescheduleRequest, markInboundHandled } from './actions';
 import { localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
 import { Badge, Card, CONFIRMATION_META, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
@@ -59,10 +59,22 @@ async function WorkListsPage() {
       <div className="space-y-6">
         {back && (
           <section>
-            <h2 className="mb-2 text-subhead font-semibold">While you were away</h2>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-subhead font-semibold">While you were away</h2>
+              <form action={dismissReturnSummary}>
+                <input type="hidden" name="leaveId" value={back.id} />
+                <button
+                  className="rounded-[var(--radius)] border px-2 py-1 text-caption font-medium"
+                  style={{ borderColor: 'var(--border-strong)' }}
+                >
+                  I have read this
+                </button>
+              </form>
+            </div>
             <p className="mb-3 max-w-prose text-body text-muted">
               {dayLabel(back.fromDate)} to {dayLabel(back.toDate)}, {back.coverer} covering. What happened on your
-              caseload in those days, shown for two weeks after you are back. A colleague&apos;s private notes
+              caseload in those days{back.coSigned.length > 0 ? ', and what was countersigned for you' : ''}. It
+              stays until you have read it, and goes on its own after two weeks. A colleague&apos;s private notes
               from covering are theirs, and are not here.
             </p>
             <Card className="p-0">
@@ -94,7 +106,16 @@ async function WorkListsPage() {
                     <Badge tone={n.status === 'draft' ? 'warning' : 'neutral'}>{n.status}</Badge>
                   </li>
                 ))}
-                {back.flagged.length + back.sessions.length + back.notes.length === 0 && (
+                {back.coSigned.map((n) => (
+                  <li key={n.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body">
+                    <span>
+                      <Link href={`/notes/${n.id}`} className="font-medium text-accent hover:underline">{n.author.name}&apos;s note</Link>
+                      <span className="ml-2 text-muted">{n.client.code} · countersigned by {n.coSignedBy!.name} · {dayLabel(localDateOf(n.coSignedAt!))}</span>
+                    </span>
+                    <Badge tone="neutral">countersigned</Badge>
+                  </li>
+                ))}
+                {back.flagged.length + back.sessions.length + back.notes.length + back.coSigned.length === 0 && (
                   <li className="px-4 py-3 text-body text-muted">Nothing on your caseload needed anybody while you were away.</li>
                 )}
               </ul>

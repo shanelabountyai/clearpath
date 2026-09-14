@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { requireSession } from '../../../src/session';
 import { resolveRescheduleRequest } from '../../../src/portal/service';
 import { resolveInboundReply } from '../../../src/messaging/inbound';
+import { dismissWhileYouWereAway } from '../../../src/staff/leave-plan';
 
 export async function handleRescheduleRequest(formData: FormData) {
   const { actor } = await requireSession();
@@ -16,5 +17,11 @@ export async function handleRescheduleRequest(formData: FormData) {
 export async function markInboundHandled(formData: FormData) {
   const { actor } = await requireSession();
   await resolveInboundReply(actor, String(formData.get('replyId')));
+  revalidatePath('/worklists');
+}
+
+export async function dismissReturnSummary(formData: FormData) {
+  const { actor } = await requireSession();
+  await dismissWhileYouWereAway(actor, String(formData.get('leaveId')));
   revalidatePath('/worklists');
 }
