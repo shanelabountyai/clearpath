@@ -1097,6 +1097,31 @@ async function main() {
   });
   log(`${hana.name} away ${leave.fromDate.toISOString().slice(0, 10)} to ${leave.toDate.toISOString().slice(0, 10)}, ${dev.name} covering, 1 of 3 clients split to ${kai.name}; a flagged screener and a session ${dev.name} held and wrote up on day two, a text on day three`);
 
+  // ── a supervisor away, and who countersigns (leave P1-3) ──────────────
+  //
+  // Hana's leave covers a caseload. Rosa's covers a supervision: she is the
+  // only person who countersigns Priya's notes, and an associate's note that
+  // waits out a fortnight for a signature is what this half of the feature
+  // exists to stop. Two different people on purpose — Tom takes the clients,
+  // Dev the countersigning — because the two covers answer different
+  // questions, and one name in both boxes hides that they are different
+  // questions.
+  //
+  // Dated from the real clock like Hana's, so it is on while the specs run.
+  // Dev countersigns exactly one of the notes still waiting and leaves the
+  // rest: the picture is a cover doing the job, not a queue quietly emptied.
+  const rosaRecorded = fixedClock(zonedToUtc(addDays(realToday, -3), 9 * 60));
+  const rosaLeave = await createLeave(admin, {
+    userId: rosa.id, fromDate: realToday, toDate: addDays(realToday, 6),
+    coveringClinicianId: tom.id, coveringSupervisorId: dev.id,
+  }, rosaRecorded);
+  const waiting = await prisma.progressNote.findFirst({
+    where: { status: 'signed', author: { supervisorId: rosa.id } },
+    orderBy: { signedAt: 'asc' },
+  });
+  if (waiting) await coSignProgressNote(actor(dev), waiting.id);
+  log(`${rosa.name} away ${rosaLeave.fromDate.toISOString().slice(0, 10)} to ${rosaLeave.toDate.toISOString().slice(0, 10)}, ${tom.name} covering her clients and ${dev.name} her supervision${waiting ? `; ${dev.name} countersigned the oldest of ${priya.name}'s waiting notes` : ''}`);
+
   // The carrier, over the whole quarter. Everything already due goes out and
   // comes back `delivered`; the three failures seeded above are terminal, so
   // this cannot undo them, and messages scheduled into the future stay
@@ -1125,6 +1150,7 @@ Sign in as any of these (there is no password — the switcher is a dev tool):
 
 ${manager.name} has ${maren.name}'s departure planned, with one hour clash still in it.
 ${hana.name} is away, with ${dev.name} covering and one client split to ${kai.name}.
+${rosa.name} is away too: ${tom.name} has her clients, ${dev.name} her supervision.
 
 The demo: sign in as ${rosa.name}, co-sign one of ${priya.name}'s progress notes,
 then open the same client's process notes. Then sign in as ${auditorUser.name}

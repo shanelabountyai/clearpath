@@ -488,7 +488,7 @@ describe('the work-list counts (P1-5, P1-1)', () => {
     };
     expect(await nours()).toEqual({
       id: leave.id, name: nour.name, coverer: dev.name, ...NOUR_AWAY, phase: 'upcoming',
-      clients: 2, unavailableCoverers: 1, unreadAlerts: 2,
+      clients: 2, unavailableCoverers: 1, unreadAlerts: 2, supervisionBlocked: false,
     });
 
     // Day one before the sweep: the number is the lateness. After it: nothing waits.
@@ -498,6 +498,32 @@ describe('the work-list counts (P1-5, P1-1)', () => {
     expect(await nours(dayOne)).toMatchObject({ phase: 'active', unreadAlerts: 0 });
 
     await expect(leaveWorklist(actor(dev), RECORDED)).rejects.toThrow(Forbidden);
+  });
+
+  it('flags a supervision cover who could not cover, and supervisees who arrived after the plan, without counting either as a coverer', async () => {
+    const { ray, sam, nour, dev, kai, leave } = await onLeave();
+    const desk = await makeUser('front_desk');
+    const rosa = await makeUser('supervisor');
+    const sams = await createLeave(
+      actor(ray),
+      { userId: sam.id, fromDate: '2026-10-05', toDate: '2026-11-27', coveringClinicianId: dev.id, coveringSupervisorId: rosa.id },
+      RECORDED,
+    );
+    const row = async (id: string) => (await leaveWorklist(actor(desk), RECORDED)).find((r) => r.id === id);
+
+    expect(await row(sams.id)).toMatchObject({ supervisionBlocked: false, unavailableCoverers: 0 });
+
+    // Rosa's own week off, inside Sam's: nobody countersigns Nour's notes for
+    // those days. She is not a coverer this leave named, so the coverer count
+    // must stay where it was.
+    await createLeave(actor(ray), { userId: rosa.id, fromDate: '2026-10-19', toDate: '2026-10-23', coveringClinicianId: kai.id }, RECORDED);
+    expect(await row(sams.id)).toMatchObject({ supervisionBlocked: true, unavailableCoverers: 0 });
+
+    // Nour's leave named no supervision cover because she supervised nobody
+    // when it was planned. Kai reporting to her afterwards is the same gap.
+    expect(await row(leave.id)).toMatchObject({ supervisionBlocked: false });
+    await prisma.user.update({ where: { id: kai.id }, data: { supervisorId: nour.id } });
+    expect(await row(leave.id)).toMatchObject({ supervisionBlocked: true });
   });
 
   it('counts unread alerts to somebody away today with no leave behind it, and never a leave\'s own days', async () => {

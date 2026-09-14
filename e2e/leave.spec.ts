@@ -57,7 +57,9 @@ test.describe('a clinician away, and who covers', () => {
   test('front desk reads who is away and who covers, and is shown nothing to change', async ({ page }) => {
     await actAs(page, USERS.frontDesk);
     await page.goto('/leave');
-    const row = page.locator('li', { hasText: AWAY });
+    // By the row's own link, not by the name appearing in it: the seed has
+    // somebody else away with Tom covering, and that row says his name too.
+    const row = page.locator('li').filter({ has: page.getByRole('link', { name: AWAY }) });
     await expect(row).toContainText(`covering: ${COVERER}`);
     await expect(row).toContainText('1 client with somebody else');
 

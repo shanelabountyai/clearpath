@@ -223,7 +223,9 @@ async function WorkListsPage() {
                       {l.unreadAlerts > 0 && (l.phase === 'active'
                         ? <Badge tone="danger" glyph="!">{plural(l.unreadAlerts, 'unread alert')} not yet moved</Badge>
                         : <Badge tone="warning">{plural(l.unreadAlerts, 'unread alert')} move on day one</Badge>)}
-                      {l.unavailableCoverers === 0 && l.unreadAlerts === 0 && <Badge tone="success" glyph="✓">covered</Badge>}
+                      {l.supervisionBlocked && <Badge tone="danger" glyph="!">supervision uncovered</Badge>}
+                      {l.unavailableCoverers === 0 && l.unreadAlerts === 0 && !l.supervisionBlocked
+                        && <Badge tone="success" glyph="✓">covered</Badge>}
                     </span>
                   </li>
                 ))}

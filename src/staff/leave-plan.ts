@@ -506,6 +506,12 @@ export async function listLeaves(actor: Actor, clock: Clock = systemClock) {
  * alerts still with the person away. On an upcoming leave those move on its
  * first day. On an active one they should already have, and a number there is
  * a sweep that has not run.
+ *
+ * `supervisionBlocked` asks `getLeavePlan`'s question (P1-3) on the same
+ * facts: a supervision cover who could not cover, or nobody named for somebody
+ * who supervises anyone. It is the one gap on this screen that is not a count,
+ * because it is not a number — an associate's note goes uncountersigned for
+ * the whole leave or it does not.
  */
 export async function leaveWorklist(actor: Actor, clock: Clock = systemClock) {
   const today = localDateOf(clock.now());
@@ -515,6 +521,7 @@ export async function leaveWorklist(actor: Actor, clock: Clock = systemClock) {
       select: {
         id: true, userId: true, fromDate: true, toDate: true, coveringClinicianId: true,
         user: { select: { name: true } }, coveringClinician: { select: { name: true } },
+        coveringSupervisor: { select: { id: true, role: true } },
         coverage: { select: { coveringClinicianId: true } },
       },
       orderBy: { fromDate: 'asc' },
@@ -522,15 +529,22 @@ export async function leaveWorklist(actor: Actor, clock: Clock = systemClock) {
     return Promise.all(open.map(async (l) => {
       const dates = { fromDate: localDate(l.fromDate), toDate: localDate(l.toDate) };
       const named = [l.coveringClinicianId, ...l.coverage.map((c) => c.coveringClinicianId)];
-      const [unavailable, clients, unreadAlerts] = await Promise.all([
-        unavailableCoverers(tx, { userId: l.userId, ...dates }, named, today),
+      const cover = l.coveringSupervisor;
+      const [unavailable, clients, unreadAlerts, supervisees] = await Promise.all([
+        // The supervision cover rides along in the one scan rather than
+        // earning a second round trip; the badge below still counts only the
+        // coverers this leave named, because the two are separate sentences.
+        unavailableCoverers(tx, { userId: l.userId, ...dates }, cover ? [...named, cover.id] : named, today),
         tx.client.count({ where: { treatingClinicianId: l.userId, status: 'active' } }),
         tx.alert.count({ where: { acknowledgedAt: null, ...waitingWith(l.userId) } }),
+        tx.user.count({ where: { supervisorId: l.userId } }),
       ]);
       return {
         id: l.id, name: l.user.name, coverer: l.coveringClinician.name, ...dates,
         phase: leavePhase({ ...dates, cancelledAt: null }, today),
-        clients, unavailableCoverers: unavailable.length, unreadAlerts,
+        clients, unreadAlerts,
+        unavailableCoverers: unavailable.filter((id) => named.includes(id)).length,
+        supervisionBlocked: cover ? unavailable.includes(cover.id) || !maySupervise(cover) : supervisees > 0,
       };
     }));
   });

@@ -3737,6 +3737,7 @@ Two tests, one per outcome, and the P0-7 trio still green through the rewrite.
 | Routing to a supervision cover reads `supervisionCoverageOf`, the fact the cover's client read rests on | An alert is only useful on the days its reader can open the record behind it, so routing and reads share one fact |
 | A departure reroutes every unread alert the leaver still holds in one pass after its writes, not per client inside the disposition loop (departure D-31) | The loop only knew the leaver's own caseload, so an alert inherited from a departed supervisee stayed with the closed account; after the writes there is nothing left to project |
 | The unread-alert blocker asks routing where each alert would land after the departure, and blocks when that is nobody | "The leaver has no supervisor" missed an inherited alert whose owner is somebody else's supervisor, and blocked ones the plan screen had no way to clear |
+| A blocked supervision cover is its own badge on `/worklists`, not a number added to the coverers who cannot cover | They are different sentences with different fixes — name a supervision cover on the plan, versus re-cover a caseload — and a supervision gap is not a count anyway: an associate's note goes uncountersigned for the whole leave or it does not |
 
 ## What this project deliberately is not
 
