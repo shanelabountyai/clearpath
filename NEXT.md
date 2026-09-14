@@ -9,56 +9,62 @@
 
    Then redeploy, and check `/api/cron/reminders` returned 200 after the hour.
 
-**Item: P1-4's returning supervisor** (loose thread 2). "While you were away"
-lists nothing for a supervisor coming back — the co-signatures their cover gave
-in the window — and it has no dismissal; it drops off after 14 days. The seed
-now has exactly that picture (Rosa away, Dev countersigning), so the screen has
-something to show the moment it is written. Screen work over an existing query:
-**Sonnet**. A production reseed (loose thread 0) is the alternative; it is
-overdue by two features and is a 25-minute silent run.
+**Item: a production reseed** (loose thread 0). Production data now predates
+confirmations, departures, leave, the covered session, the supervision cover
+and P1-4's supervision list — six features with no picture on the deployed
+site. `npm run db:seed:prod`, about **25 silent minutes**, and it needs
+`db:migrate:prod` first because this session added a migration
+(`20260914144828_leave_back_dismissed`). No model question; it is a run, not a
+build. The alternative is loose thread 5 (design brief §5b/§5c components with
+no picture) — screen work, **Sonnet**.
 
-## What just landed (the supervision-cover follow-ups)
+## What just landed (P1-4's returning supervisor, and a dismissal)
 
-- `leaveWorklist` returns `supervisionBlocked`, the same question
-  `getLeavePlan` asks (P1-3): a supervision cover who could not cover, or
-  nobody named for somebody who supervises anyone. `/worklists` shows it as its
-  own "supervision uncovered" badge and withholds the "covered" tick, because
-  it is a different sentence with a different fix than a coverer who cannot
-  cover. The cover rides along in the one `unavailableCoverers` scan rather
-  than earning a second round trip, and the coverer count filters back down to
-  the coverers the leave actually named.
-- The seed has a supervision cover: Rosa away from the real today for a week,
-  **Tom** on her clients and **Dev** on her supervision — two different people
-  on purpose — and Dev countersigns the oldest of Priya's waiting notes. Dated
-  from the real clock like Hana's, so it is on while the specs run.
-- `leave.spec.ts` found its own leave row with a bare `hasText: 'Tom
-  Bergqvist'`, which now matches Rosa's row too. It filters by the row's own
-  link instead. Same defect the decisions log already records for the co-sign
-  queue: a row located by a name it merely mentions.
-- PRD: the P1-5 bullet, and a risk line saying the seeded cover is a leave and
-  not a departure. WRITEUP decisions log has one row.
+- `whileYouWereAway` gives a supervisor a fourth list: the countersignatures
+  their supervision cover gave in the window. Its own request in the same
+  `guardedAll`, on `{ authorSupervisorId: actor.id }` — the co-sign queue's
+  cell — and asked for only when the person has supervisees, so a therapist
+  back still makes exactly three audit rows and a supervisor makes four.
+- `Leave.backDismissedAt` reverses D-25's "nothing is written on return". The
+  fortnight stays as the backstop. It sits on `recentlyBack`, so it also stops
+  Home landing the person on `/worklists`. Self-scoped by the query, not by a
+  new cell: a clinician holds no `leave.update`, and on this feature that cell
+  IS the coverage grant.
+- `/worklists` gets the fourth list and an "I have read this" button; the
+  existing leave-demo spec clicks it after bringing Hana back.
+- PRD D-27 and the P1-4 bullet; WRITEUP §P1-4 has the new design section and
+  one decisions-log row.
 
 ## Gate
 
-Typecheck clean. Unit: 3202 passed across 32 files (3201 + 1 new). Two
-mutations red — `supervisionBlocked` hardcoded false, and the coverer count
-absorbing the supervision cover. Full e2e sweep on a fresh production build:
-62 passed, 1 skipped (the README capture, which wants `SHOTS=1`), 63 of 63.
+Typecheck clean. Unit: 3204 passed across 32 files (3202 + 2 new). Six
+mutations red — the window, "anybody but me", the supervisee filter, the
+supervision audit door, the dismissal on read, and the dismissal's self-scope.
+Full e2e on a fresh production build: 62 passed, 1 skipped, 63 of 63.
+
+**Two mutations were green first**, and both for the same reason: a fixture the
+neighbouring filter already excluded. The out-of-window countersignature was
+given by the person coming back, so `not: actor.id` hid it and the window was
+never tested; the in-window one on a non-supervisee was never countersigned at
+all, so `coSignedAt` hid it and the supervisee filter was never tested. A
+negative fixture has to fail exactly one filter.
 
 ## Loose threads
 
-0. Production data predates confirmations, departures, leave, the covered
-   session and now the supervision cover. A reseed is `npm run db:seed:prod`,
-   about 25 silent minutes, and it is your call. Run `db:migrate:prod` before
-   pushing any migration.
+0. Production data predates six features now. A reseed is `npm run db:seed:prod`
+   after `db:migrate:prod`, about 25 silent minutes, and it is your call.
+   **This is the next item.**
 1. `listProgressNotes`' audit row names the first leave a cover holds
    (`ponytail:`).
-2. P1-4 lists nothing for a returning supervisor (co-signatures a cover gave),
-   and has no dismissal; it drops off after 14 days. **This is the next item.**
+2. ~~P1-4 lists nothing for a returning supervisor, and has no dismissal.~~
+   Landed 2026-09-14.
 3. `delivery:run` and `nonresponse:run` have no scheduler, on purpose.
 4. Kill-on-alarm: `pkill -f "$PWD.*playwright test "` matches nothing. An e2e
    alarm must also match `Error:`, and a totals grep must anchor on
-   `^ *N passed` because the seed's summary contains "failed".
+   `^ *N passed` because the seed's summary contains "failed". **New this
+   session:** arm the monitor *after* the redirect has created the log file —
+   `tail -f` on a path that does not exist yet dies instantly and the sweep
+   then runs unwatched.
 5. Design brief §5b/§5c components with no picture.
 6. `executeDeparture`'s `ponytail:` 30s transaction budget.
 7. Queued links use the stub's `http://localhost:3700`, now on the hourly cron too.
@@ -73,3 +79,10 @@ absorbing the supervision cover. Full e2e sweep on a fresh production build:
 12. Only five clinicians in the seed, so every new leave collides with a spec
     that names one of them. The fix each time is a locator that finds the row
     by its link, not by a name it mentions.
+13. **No seeded picture of a returning supervisor.** Rosa's supervision cover
+    runs from the real today forward, so she is away, not back — the new list
+    is unit-tested but has nothing on the deployed site until her leave ends.
+    Ending it in a spec would spend the supervision-cover badge demo, the same
+    trade as 11.
+14. The dismissal has no undo. One row per leave, and restoring the section
+    means recording the leave again.
