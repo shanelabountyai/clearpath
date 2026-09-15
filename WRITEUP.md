@@ -3713,6 +3713,80 @@ three.
   is that it is now a number with a measurement behind it rather than a guess
   with a `ponytail:` comment on top.
 
+## 40. The two commands nobody scheduled
+
+**The problem.** Four runner scripts, two cron entries. `reminders:run` and
+`purge:run` had a schedule; `delivery:run` and `nonresponse:run` did not, and
+nothing in the repository said whether that was a decision or an omission. A
+runner with no scheduler is indistinguishable from a runner somebody forgot,
+and the difference matters most for the one that charges money.
+
+It was not one question. Read side by side the two commands answer opposite
+ways, and the reason is what the sweep at the end of the chain rests on.
+
+`nonresponse:run` was an omission. Its own header already described a schedule
+it did not have — *run on a different schedule*, written as if one existed —
+and the sweep has exactly the property that earns one. `pending` is the only
+state it acts on and it leaves `no_response`, so a second run inside the hour
+finds nothing, and a missed hour costs lateness rather than correctness. What
+lateness buys is a front-desk work list that does not yet show who went quiet,
+which is the whole point of the feature. So: `nonResponseRun` in `jobs.ts`, a
+route beside the other two, `30 * * * *`.
+
+Its own runner, not a third sweep on `remindersRun`. That runner touches no
+money and this is the only automatic path to a charge in the application, so
+sharing one would mean the only way to stop the practice billing for silence is
+to stop reminding anybody — the change somebody makes at 2am during an
+incident, and the one they would get wrong. The half-hour offset is smaller: two
+sweeps with no ordering between them and no reason to contend at :00.
+
+`delivery:run` was a decision, and scheduling it would have been a defect.
+Half of it is schedulable — `dispatchOutbox` is idempotent, guarded on `queued`
+a second time in SQL, the same shape as the horizon. The other half is a stub
+that marks every message `delivered` with no carrier having said so, and
+`nonresponse.ts` rests a no-show fee on exactly that state. A cron entry here is
+therefore a job that fabricates the evidence for a charge, unattended, every
+hour — which is precisely the failure `delivery.ts` was written to prevent,
+rebuilt as infrastructure. One command reads evidence and the other invents it,
+and only the first can be left running.
+
+The consequence, stated rather than hidden: on a deployment with no carrier
+nothing ever reaches `delivered`, so the scheduled sweep records silence with
+reason `no_response_undelivered` and charges nobody. That is the correct answer
+and not a gap. The audit trail already distinguishes the two silences for this
+reason — the row an auditor looks for when the charge everybody expected is
+missing.
+
+**The design.** Two files of substance. `nonResponseRun` joins the other
+runners in `src/jobs.ts`, which exists so the script door and the cron door
+cannot list different sweeps, and `scripts/nonresponse-run.ts` was rewritten to
+call it rather than `runNonResponseSweep` directly — it had been the one script
+bypassing the shared runner, which is how a door drifts. The delivery argument
+is written on `scripts/delivery-run.ts`, where somebody reaching for the cron
+entry is already standing, with a pointer from `jobs.ts` for the reader who
+asks why there are three runners and four commands.
+
+**What it does not do.** No monitoring, no alert when a scheduled run fails,
+and no dead-letter anywhere: a 500 from `/api/cron/nonresponse` is a line in
+Vercel's log and nothing else. Idempotence is what makes that survivable — the
+next half-hour sweeps whatever the failed one did not — and it is survivable
+rather than handled.
+
+It also does not bound the sweep. The candidate query is every `pending`
+appointment past its grace window with no end date on the other side, so the
+first scheduled run on a deployment that has been queuing reminders and never
+sweeping walks the whole backlog, and could exceed a function timeout. The same
+idempotence covers it and by accident rather than design: each appointment
+commits in its own transaction, so a run cut off half way keeps what it did and
+the next one continues. It drains itself over a few half-hours instead of
+needing a page size.
+
+The check left behind is not on either runner. `jobs.test.ts` compares
+`vercel.json`'s cron paths against the directories under `app/api/cron` and
+fails if either side has an entry the other lacks, because the failure this item
+actually found was silent in both directions: a door with no schedule never
+runs, and a schedule with no door is an hourly 404 nobody reads.
+
 ## Decisions log
 
 | Decision | Why |
@@ -3948,6 +4022,8 @@ three.
 | The unread-alert blocker asks routing where each alert would land after the departure, and blocks when that is nobody | "The leaver has no supervisor" missed an inherited alert whose owner is somebody else's supervisor, and blocked ones the plan screen had no way to clear |
 | A blocked supervision cover is its own badge on `/worklists`, not a number added to the coverers who cannot cover | They are different sentences with different fixes — name a supervision cover on the plan, versus re-cover a caseload — and a supervision gap is not a count anyway: an associate's note goes uncountersigned for the whole leave or it does not |
 | A returning supervisor's countersignature list rides its own guard request, and the dismissal rides no cell at all | Two halves of one screen, opposite answers. The list is a real clinical read on a door the actor genuinely holds — `authorSupervisorId`, the co-sign queue's — so it earns its own audit row rather than hiding inside the treating one. The dismissal is a banner being cleared: routing it through `leave.update` would have meant giving clinicians the cell that decides who covers their clients, to clear a banner. Self-scoped by the query instead, and off the record, because it writes no clinical fact and reveals none |
+| `nonresponse:run` gets an hourly cron and `delivery:run` deliberately gets none | Both are runner scripts, and only one reads evidence. The delivery stub marks messages `delivered` with no carrier having said so, and the no-show fee rests on that state — scheduling it is a job that fabricates the evidence for a charge. The sweep that reads it is idempotent and costs only lateness when missed |
+| The non-response sweep is its own runner rather than a second sweep on `remindersRun` | The reminder runner touches no money and this is the only automatic path to a charge, so they need separate stop switches: sharing one means the way to stop billing for silence is to stop reminding anybody |
 
 ## What this project deliberately is not
 

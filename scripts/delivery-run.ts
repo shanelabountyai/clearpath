@@ -19,6 +19,23 @@ import { dispatchOutbox, recordDeliveryReceipt } from '../src/messaging/delivery
  * at random would make the seeded fee totals unreproducible, and a fixture that
  * only probably exists is a spec that only probably means anything.
  *
+ * No cron entry, and not because nobody got round to it. `dispatchOutbox` is
+ * schedulable on its own — idempotent, guarded on `queued` a second time in
+ * SQL, the same shape as the reminder horizon. The receipt half is not: it
+ * marks every message `delivered` with no carrier having said so, and
+ * `nonresponse.ts` rests a no-show fee on exactly that state. A cron entry
+ * here would therefore be a job that fabricates the evidence for a charge,
+ * unattended, every hour — the failure `delivery.ts` was written to prevent,
+ * rebuilt as infrastructure. `nonresponse:run` is scheduled and this is not,
+ * which is the whole distinction: one reads evidence, this one invents it.
+ *
+ * So it stays a command somebody runs, on a demo whose messages nobody is
+ * really sending — and a deployment where nothing reaches `delivered` records
+ * silence with reason `no_response_undelivered` and charges nobody, which is
+ * the correct answer rather than a gap. When a carrier exists the two halves
+ * separate: `dispatchOutbox` takes the cron entry, and the receipt becomes the
+ * webhook `recordDeliveryReceipt` is already shaped for.
+ *
  * Counts only, like the other two. An id in a log line is a client's message.
  */
 const sent = await dispatchOutbox(systemClock);

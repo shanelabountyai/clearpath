@@ -4,12 +4,18 @@ import { runInquiryPurge } from './clients/inquiry';
 import { runReminderHorizon } from './scheduling/reminders';
 import { runLeaveAlertSweep } from './staff/leave-plan';
 import { runProcessNotePurge } from './staff/departure';
+import { runNonResponseSweep } from './scheduling/nonresponse';
 
 /**
- * The two scheduled runners, stated once. `npm run reminders:run` and
- * `purge:run` call these, and so do the Vercel Cron routes under
- * `app/api/cron`, so a sweep added to a runner cannot reach one door and not
- * the other.
+ * The three scheduled runners, stated once. `npm run reminders:run`,
+ * `purge:run` and `nonresponse:run` call these, and so do the Vercel Cron
+ * routes under `app/api/cron`, so a sweep added to a runner cannot reach one
+ * door and not the other.
+ *
+ * `delivery:run` is the fourth command and deliberately has no runner here.
+ * Half of it is schedulable and half of it invents the evidence a fee rests
+ * on; the argument is written on `scripts/delivery-run.ts`, where somebody
+ * reaching for the cron entry will already be standing.
  *
  * Counts only. An id in a cron response or a log line is a caller, or a note.
  */
@@ -40,6 +46,30 @@ export async function purgeRun(clock: Clock) {
   const inquiries = await runInquiryPurge(clock);
   const processNotes = await runProcessNotePurge(clock);
   return { inquiries: inquiries.length, processNotes: processNotes.length };
+}
+
+/**
+ * Silence, swept on its own schedule.
+ *
+ * It does not ride the reminder runner, and the reason is the one written on
+ * `runNonResponseSweep`: that runner touches no money, and this is the only
+ * automatic path to a charge in the application. Sharing one would mean the
+ * only way to stop the practice billing for silence is to stop reminding
+ * anybody — a change somebody makes at 2am during an incident, and the one
+ * they would get wrong.
+ *
+ * It has the property that earns a schedule, though, and it is the reminder
+ * runner's: `pending` is the only state it acts on and it leaves
+ * `no_response`, so a second run inside the hour finds nothing, and a missed
+ * hour costs only lateness. Lateness here is a front-desk work list that does
+ * not yet show who went quiet.
+ *
+ * Runs at :30, half an hour off the horizon at :00. Nothing depends on the
+ * order — they are two sweeps with no reason to contend.
+ */
+export async function nonResponseRun(clock: Clock) {
+  const { recorded, noShowed } = await runNonResponseSweep(clock);
+  return { recorded: recorded.length, noShowed: noShowed.length };
 }
 
 const digest = (s: string) => createHash('sha256').update(s).digest();

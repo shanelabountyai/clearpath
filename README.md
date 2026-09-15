@@ -134,15 +134,22 @@ npm run test:e2e     # 24 Playwright tests against a production build
 
 The confirmation loop runs as commands, because the due times derive from
 `startAt` and an injected clock — so the schedule is an implementation detail of
-whatever calls them. On the deployment, Vercel Cron calls `reminders:run` hourly
-and `purge:run` daily through `/api/cron/*`, behind `CRON_SECRET`. The rest are
-invoked by hand:
+whatever calls them. On the deployment, Vercel Cron calls three of them through
+`/api/cron/*`, behind `CRON_SECRET`: `reminders:run` hourly, `nonresponse:run`
+at half past, `purge:run` daily.
+
+`delivery:run` has no schedule and is the one command that must not get one.
+Half of it is a real send; the other half marks every message `delivered` with
+no carrier having said so, and the no-show fee rests on that state — so a cron
+entry here would be a job that fabricates the evidence for a charge. A
+deployment with no carrier therefore records silence and bills nobody, which is
+the right answer rather than a gap.
 
 ```bash
 npm run reminders:run      # queue every reminder stage that has come due, then move leave alerts
-npm run purge:run          # every retention window: enquiries, departed process notes
-npm run delivery:run       # the carrier stub: hand over, then hear back
 npm run nonresponse:run    # the half with money attached, stoppable on its own
+npm run purge:run          # every retention window: enquiries, departed process notes
+npm run delivery:run       # the carrier stub: hand over, then hear back — by hand, on purpose
 npm run inbound:simulate -- 555-0101 "can we talk first"   # a client writes back
 ```
 
