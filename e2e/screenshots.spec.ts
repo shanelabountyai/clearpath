@@ -135,6 +135,18 @@ test.describe('README screenshots', () => {
       maskColor: '#a8a29a',
     });
 
+    // Coverage, from the other end: the supervisor whose leave ended yesterday,
+    // and the four things he is owed — a screener that crossed while he was
+    // gone, the session and note his coverer made of it, and the
+    // countersignature somebody else gave his supervisee. The coverer's own
+    // process notes are the thing that is not here.
+    await actAs(page, 'Anders Fiske');
+    await page.goto('/worklists');
+    const away = page.locator('section', { has: page.getByRole('heading', { name: 'While you were away' }) });
+    await expect(away.locator('li', { hasText: 'flagged for review' })).toContainText('TC-089');
+    await expect(away.locator('li', { hasText: 'countersigned' })).toContainText('TC-090');
+    await away.screenshot({ path: `${shot}/while-you-were-away.png` });
+
     // The vocabulary itself. Not a screen and not seeded — /design renders the
     // same components the pages above render, reading the same tokens, which is
     // what stops the style guide from drifting into fiction. Captured last

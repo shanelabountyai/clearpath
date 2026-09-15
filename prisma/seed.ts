@@ -1122,6 +1122,86 @@ async function main() {
   if (waiting) await coSignProgressNote(actor(dev), waiting.id);
   log(`${rosa.name} away ${rosaLeave.fromDate.toISOString().slice(0, 10)} to ${rosaLeave.toDate.toISOString().slice(0, 10)}, ${tom.name} covering her clients and ${dev.name} her supervision${waiting ? `; ${dev.name} countersigned the oldest of ${priya.name}'s waiting notes` : ''}`);
 
+  // ── a supervisor back from leave (P1-4) ───────────────────────────────
+  //
+  // The third scenario clinician, for the reason Maren and Hana have one, plus
+  // one of its own: every leave above is *on* while the specs run, and "while
+  // you were away" exists only for somebody whose leave has ended. Rosa cannot
+  // be that person — hers is the supervision-cover badge, which needs a leave
+  // in progress — so a second supervisor carries the other state. Dating hers
+  // backwards instead would have bought this picture with that one.
+  //
+  // His own associate too: the fourth list is the countersignatures somebody
+  // else gave his supervisees, and repointing Priya would take the co-signature
+  // demo with it.
+  //
+  // Nine days away, back yesterday, which is inside the fortnight the summary
+  // lives for. Kai took the caseload and Rosa the supervision — two people, as
+  // Rosa's own leave splits them, and Rosa because she was here for all nine of
+  // those days and goes away herself only today.
+  const anders = await mk('Anders Fiske', 'supervisor');
+  const thea = await mk('Thea Ozolins', 'associate', anders.id);
+  const backFrom = addDays(realToday, -9);
+  const backTo = addDays(realToday, -1);
+  const returning: { id: string; code: string }[] = [];
+  for (const [i, n] of [89, 90].entries()) {
+    const client = await prisma.client.create({
+      data: {
+        code: `TC-0${n}`, firstName: 'Test', lastName: `Client 0${n} ${SURNAMES[i + 3]}`,
+        dateOfBirth: new Date(Date.UTC(1976 + i, 4 + i, 9 + i)),
+        email: `client${n}@example.test`, phone: `555-01${n}`,
+        emergencyContactName: `Emergency Contact ${n}`, emergencyContactPhone: `555-02${n}`,
+        emergencyContactRelation: 'Parent', treatingClinicianId: i === 0 ? anders.id : thea.id,
+        language: 'en', referralSource: REFERRAL_MIX[n % REFERRAL_MIX.length]!,
+      },
+    });
+    returning.push({ id: client.id, code: client.code });
+  }
+
+  const backRecorded = fixedClock(zonedToUtc(addDays(realToday, -10), 9 * 60));
+  const backLeave = await createLeave(admin, {
+    userId: anders.id, fromDate: backFrom, toDate: backTo,
+    coveringClinicianId: kai.id, coveringSupervisorId: rosa.id,
+  }, backRecorded);
+
+  // Day three: the associate writes a session up and signs it, and the
+  // supervision cover countersigns it the next morning — on that day's clock,
+  // because a cover countersigns only inside the window (D-21), and a seed that
+  // used the system clock would be asking Rosa to do it from her own leave.
+  const theaSession = await prisma.appointment.create({
+    data: {
+      clientId: returning[1]!.id, clinicianId: thea.id, modality: 'telehealth', status: 'completed',
+      startAt: zonedToUtc(addDays(realToday, -7), 11 * 60), endAt: zonedToUtc(addDays(realToday, -7), 11 * 60 + 50),
+    },
+  });
+  const theaNote = await createProgressNote(actor(thea), {
+    appointmentId: theaSession.id,
+    content: 'Third session of the block. Sleep is better; we agreed to keep the same between-session practice.',
+  });
+  await signProgressNote(actor(thea), theaNote.id, { clock: fixedClock(zonedToUtc(addDays(realToday, -7), 12 * 60)) });
+  await coSignProgressNote(actor(rosa), theaNote.id, { clock: fixedClock(zonedToUtc(addDays(realToday, -6), 9 * 60)) });
+
+  // Day five and day six, on his own caseload: a screener that crosses the
+  // moderate threshold — Hana's is flagged by the critical item, so between them
+  // the seed has both reasons — and the session Kai held because of it.
+  const backDayFive = fixedClock(zonedToUtc(addDays(realToday, -5), 10 * 60));
+  const backScreener = await issueForm(desk, { clientId: returning[0]!.id, templateKey: 'wellbeing-check-in', clock: backDayFive });
+  await submitForm(backScreener.token, { ...zeros(), item_1: 3, item_2: 3, item_4: 2, item_6: 2, difficulty: 'very' }, { clock: backDayFive });
+  const coveredSession = await prisma.appointment.create({
+    data: {
+      clientId: returning[0]!.id, clinicianId: kai.id, modality: 'telehealth', status: 'completed',
+      startAt: zonedToUtc(addDays(realToday, -4), 18 * 60), endAt: zonedToUtc(addDays(realToday, -4), 18 * 60 + 50),
+    },
+  });
+  const coveredNote = await createProgressNote(actor(kai), {
+    appointmentId: coveredSession.id,
+    content: 'Covering session brought forward after the screener. No immediate risk; handing back to Anders on his return.',
+  });
+  // Signed before the leave ended: a coverer's note left in draft is a second
+  // story, and Hana's leave already tells it.
+  await signProgressNote(actor(kai), coveredNote.id, { clock: fixedClock(zonedToUtc(addDays(realToday, -4), 19 * 60)) });
+  log(`${anders.name} back yesterday from ${backLeave.fromDate.toISOString().slice(0, 10)}: a flagged screener, a session ${kai.name} held and wrote up, and one of ${thea.name}'s notes ${rosa.name} countersigned`);
+
   // The carrier, over the whole quarter. Everything already due goes out and
   // comes back `delivered`; the three failures seeded above are terminal, so
   // this cannot undo them, and messages scheduled into the future stay
@@ -1151,6 +1231,7 @@ Sign in as any of these (there is no password — the switcher is a dev tool):
 ${manager.name} has ${maren.name}'s departure planned, with one hour clash still in it.
 ${hana.name} is away, with ${dev.name} covering and one client split to ${kai.name}.
 ${rosa.name} is away too: ${tom.name} has her clients, ${dev.name} her supervision.
+${anders.name} came back yesterday: sign in as him for what happened while he was away.
 
 The demo: sign in as ${rosa.name}, co-sign one of ${priya.name}'s progress notes,
 then open the same client's process notes. Then sign in as ${auditorUser.name}

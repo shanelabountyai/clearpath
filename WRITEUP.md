@@ -3449,6 +3449,21 @@ summary it clears is on the record, three or four audited reads per visit.
 - **No client names.** Codes, the form's name and dates only. The links open
   each record through its own guard.
 
+**The picture cost a third scenario clinician.** The feature only exists for
+somebody whose leave has *ended*, and every leave in the seed is deliberately on
+while the specs run — Hana's is the active coverage, Rosa's is the supervision
+cover that puts a badge on `/worklists`. Dating Rosa's leave backwards would
+have bought this picture with that one. So `Anders Fiske` and his associate
+`Thea Ozolins` join `Maren Solberg` and `Hana Lindqvist` as people who exist to
+carry one state: back yesterday from nine days, with a screener that crossed the
+moderate threshold (Hana's is flagged by the critical item, so between them the
+seed has both reasons), the session Kai held because of it, and one of Thea's
+notes that Rosa countersigned as the supervision cover — on that day's clock,
+because a cover countersigns only inside the window (D-21), and a seed reaching
+for the system clock would be asking Rosa to do it from her own leave. His own
+associate, too, because the fourth list is about supervisees and repointing
+Priya would have taken the co-signature demo with it.
+
 ### A departure while the supervisor is away
 
 **The problem.** Departure P0-7 hands a leaving clinician's unread alerts to

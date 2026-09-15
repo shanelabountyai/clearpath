@@ -34,7 +34,7 @@ switch is.
 
 ---
 
-![The calendar as the front desk sees it: five columns of named sessions with times, rooms and clinicians, and a banner reading "Operational — names, times and rooms. Why anyone is here does not appear on this screen at any level of detail."](docs/screenshots/calendar-front-desk.png)
+![The calendar as the front desk sees it: five columns of named sessions with times, rooms and clinicians, a banner reading "Operational — names, times and rooms. Why anyone is here does not appear on this screen at any level of detail.", and below it an amber row naming the one clinician away that day and the single word "Leave".](docs/screenshots/calendar-front-desk.png)
 
 ---
 
@@ -67,6 +67,20 @@ notes, screener results, attendance — plus their own process notes, which the
 picture above has no version of at any permission level:
 
 ![The same client record as the treating clinician sees it: the operational content plus progress notes, screeners, attendance and their own process notes, under a Clinical tier banner.](docs/screenshots/client-record-clinician.png)
+
+Cover is the same rule with an end date. While a clinician is away, somebody
+else can open their clients' records and is sent their alerts; the day after,
+they cannot. What the returning clinician gets is a summary of those days —
+built out of the cells they already hold as the treating clinician, plus one
+more for a supervisor, because the countersignatures given to their supervisees
+are not about their caseload and ride the door supervision already reads notes
+through:
+
+![The "While you were away" section of a returning supervisor's work lists: a flagged screener, the session the coverer held, the progress note they wrote, and a supervisee's note somebody else countersigned — each with a client code and a date, and an "I have read this" button. The text says a colleague's private notes from covering are theirs, and are not here.](docs/screenshots/while-you-were-away.png)
+
+The coverer's own process notes are not in it, and there is no version of this
+screen in which they would be — the same rule as the table above, applied to a
+permission that was temporary.
 
 Every one of those cells is asserted in [`src/auth/permissions.test.ts`](src/auth/permissions.test.ts).
 Authorization happens in exactly one place — [`src/auth/permissions.ts`](src/auth/permissions.ts) —
@@ -213,7 +227,10 @@ The seed creates obviously-fake clients (`Test Client 001` …) across a scripte
 practice quarter: 70 clients on standing weekly or biweekly slots, a clinician's
 week of annual leave with the standing sessions it displaces, ~86 form
 submissions including flagged screeners, three break-glass events and a logged
-process-note refusal.
+process-note refusal. Three of its people exist to carry one state each: a
+planned departure, a leave that is on while the suite runs, and a leave that
+ended yesterday — dated from the real clock rather than the seed's, because
+those three are only themselves relative to the day you look.
 
 ## Design
 

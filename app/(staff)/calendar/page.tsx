@@ -59,7 +59,9 @@ async function CalendarPage({
           style={{ borderColor: 'var(--warning)', background: 'var(--warning-soft)' }}
         >
           <span aria-hidden>⚠ </span>
-          Away today:{' '}
+          {/* Not "away today": this banner is scoped to the day being viewed, and the
+              heading above already names it. On any date but today the word was a lie. */}
+          Away:{' '}
           {day.away
             .map((id) => `${day.clinicians.find((c) => c.id === id)?.name ?? 'A clinician'} (${day.awayReasons[id]})`)
             .join(', ')}
