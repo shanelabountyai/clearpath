@@ -1,7 +1,8 @@
 import { Logo, Wordmark } from '@/src/ui/logo';
 import {
-  AppointmentChip, Badge, Button, Card, EmptyState, Field,
-  LockedPanel, PageHeader, STATUS_META, StatusChip, TierBanner, money,
+  AppointmentChip, Badge, BreakGlassBar, BreakGlassDialog, CONFIRMATION_META,
+  Button, Card, EmptyState, Field, LockedPanel, PageHeader, STATUS_META,
+  StatusChip, TierBanner, money,
   type Tier, type Tone,
 } from '@/src/ui/primitives';
 
@@ -55,6 +56,12 @@ function Section({ title, note, children }: { title: string; note?: string; chil
       <div className="mt-3">{children}</div>
     </section>
   );
+}
+
+/** The specimens are live components, so their forms need a real action to
+ *  point at. This one does nothing: the gallery demonstrates, it does not act. */
+async function specimen() {
+  'use server';
 }
 
 export default function DesignSystemPage() {
@@ -135,6 +142,17 @@ export default function DesignSystemPage() {
         </div>
       </Section>
 
+      <Section
+        title="Confirmation"
+        note="Whether the client replied to the reminder is a separate fact from what happened in the room, so it renders as a plain badge beside the status chip rather than as a second chip competing with it. “No reply” is a warning, not a danger: it is the fact the late-cancel fee rests on, and the fee is the status chip’s business."
+      >
+        <div className="flex flex-wrap gap-2">
+          {Object.values(CONFIRMATION_META).map((m) => (
+            <Badge key={m.label} tone={m.tone} glyph={m.glyph}>{m.label}</Badge>
+          ))}
+        </div>
+      </Section>
+
       <Section title="Buttons" note="Solid foregrounds come from --on-solid, which is white in light mode and near-black in dark, where the fills are light.">
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="solid">Book session</Button>
@@ -157,8 +175,29 @@ export default function DesignSystemPage() {
             An empty work-list is a finished work-list, and should look like one rather than like a failure.
           </EmptyState>
         </div>
-        <div className="mt-4">
+      </Section>
+
+      <Section
+        title="Denial"
+        note="A refusal is a designed state, not an error state: dashed rather than red, no “request access”, no disabled button implying a door. Same component either way — the record-level denial names the section that exists but is not yours, the list-level one names the whole page."
+      >
+        <div className="grid gap-4 lg:grid-cols-2">
           <LockedPanel />
+          <LockedPanel title="Audit log">
+            The audit log is the auditor&rsquo;s instrument. Your role reaches the clinical
+            records it describes, which is why it does not also get to read who looked at
+            them. This is a rule of the practice, not a permission you are missing.
+          </LockedPanel>
+        </div>
+      </Section>
+
+      <Section
+        title="Break-glass"
+        note="Administration reaches a clinical record only through a logged door. The friction is deliberate and proportionate — a reason is required and the consequence is stated — but it is not an accusation: somebody reaches for this when a client is in crisis and their clinician is unreachable. The bar then renders from the staff layout, above every page, for the whole duration of the access."
+      >
+        <BreakGlassBar reason="client called the practice in distress and their clinician is on leave" endAction={specimen} />
+        <div className="-my-5">
+          <BreakGlassDialog resource="this client record" action={specimen} />
         </div>
       </Section>
 

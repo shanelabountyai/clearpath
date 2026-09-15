@@ -66,22 +66,35 @@ export function TierBanner({ tier, children }: { tier: Tier; children?: ReactNod
  * offers no override affordance of any kind — no "request access", no
  * "justify", no disabled button implying a door. There is no door.
  */
+/** The one redirection that is always true of a refused process note: the
+ *  progress note exists, is the official record, and is not private. */
+const PROCESS_NOTE_FOOTNOTE = 'The official record for these sessions is under Progress notes.';
+
 export function LockedPanel({
   title = 'Process notes',
   children,
+  footnote,
 }: {
   title?: string;
   children?: ReactNode;
+  /** Where the reader should go instead, when there is somewhere. Opt-in: this
+   *  used to be a hardcoded line pointing at progress notes, which four
+   *  callers that are not about notes at all inherited and contradicted. */
+  footnote?: ReactNode;
 }) {
   return (
+    // Named by `aria-label`, not by `aria-labelledby` to a fixed id: the design
+    // gallery shows two of these at once, and one title carries a clinician's
+    // name, so any id here is either duplicated or unpredictable. Both callers
+    // want this found as a region by its name anyway.
     <section
-      aria-labelledby="locked-title"
+      aria-label={title}
       className="rounded-[var(--radius-lg)] border border-dashed p-5"
       style={{ borderColor: 'var(--border-strong)', background: 'var(--surface-sunken)' }}
     >
       <div className="flex items-center gap-2">
         <span aria-hidden style={{ color: 'var(--tier-private)' }}>⬤</span>
-        <h2 id="locked-title" className="font-semibold">{title}</h2>
+        <h2 className="font-semibold">{title}</h2>
       </div>
       <p className="mt-2 max-w-prose text-body text-muted">
         {children ?? (
@@ -93,9 +106,9 @@ export function LockedPanel({
           </>
         )}
       </p>
-      <p className="mt-2 text-caption text-subtle">
-        The official record for these sessions is under Progress notes.
-      </p>
+      {(footnote ?? (children ? null : PROCESS_NOTE_FOOTNOTE)) && (
+        <p className="mt-2 text-caption text-subtle">{footnote ?? PROCESS_NOTE_FOOTNOTE}</p>
+      )}
     </section>
   );
 }

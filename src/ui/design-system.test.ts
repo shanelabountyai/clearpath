@@ -60,3 +60,18 @@ it('every token the light theme defines, the dark theme answers for', () => {
   const inDark = names(dark);
   expect(colourish.filter((n) => !inDark.has(n))).toEqual([]);
 });
+
+/**
+ * The gallery is the design brief's §5b answer, so a component that exists in
+ * the vocabulary but has no specimen has no picture — which is exactly how
+ * break-glass, the confirmation badges and the list-level denial went
+ * unillustrated while being shipped in the product.
+ */
+it('every component in the vocabulary has a specimen in the gallery', () => {
+  const primitives = readFileSync('src/ui/primitives.tsx', 'utf8');
+  const gallery = readFileSync('app/design/page.tsx', 'utf8');
+  const exported = [...primitives.matchAll(/^export (?:function|const) ([A-Za-z_]+)/gm)]
+    .flatMap((m) => (m[1] ? [m[1]] : []));
+  expect(exported.length).toBeGreaterThan(10);
+  expect(exported.filter((name) => !new RegExp(`\\b${name}\\b`).test(gallery))).toEqual([]);
+});

@@ -334,7 +334,10 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
             notes -- and who countersigns those notes -- gets this here.
           */}
           {can.authorsProcessNotes && !can.isTreatingClinician && (
-            <LockedPanel title={`Process notes by ${client.treatingClinician.name}`}>
+            <LockedPanel
+              title={`Process notes by ${client.treatingClinician.name}`}
+              footnote="The official record for these sessions is under Progress notes."
+            >
               Process notes are the clinician&rsquo;s own working record and are visible only to
               the person who wrote them. That includes you as their supervisor, the practice
               manager, and break-glass access. This is a rule of the practice, not a

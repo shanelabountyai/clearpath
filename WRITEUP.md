@@ -3538,6 +3538,79 @@ Two tests, one per outcome, and the P0-7 trio still green through the rewrite.
 - **Add a blocker kind.** `unread_alert` already said "this alert has nobody";
   what changed is the question that decides it.
 
+## 38. The components nobody had to look at
+
+**The problem.** `/design` renders the design brief's §5b vocabulary from the
+components the app imports, reading the tokens the app reads, so a specimen
+cannot drift from the product. Three components were not on it: the break-glass
+dialog, the break-glass session bar, and the confirmation badges. Nothing was
+broken — all three shipped and all three are tested — but the style guide that
+exists so the vocabulary can be *seen* was missing the parts of the vocabulary a
+reader is least likely to meet by accident. Break-glass is by construction the
+screen almost nobody reaches: the gallery's job is to show it without an
+emergency, and it did not.
+
+Stated that way the interesting question is not which three were missing but why
+nobody noticed. They were missing because adding a specimen is a separate,
+optional act of diligence at the end of building a component, and the end of
+building a component is exactly when it is already working.
+
+**The design.** The list is no longer maintained by remembering. A unit test
+reads the exports out of `src/ui/primitives.tsx`, greps `app/design/page.tsx`
+for each name, and fails on any that is absent — the same greps-the-source shape
+`permissions.test.ts` and `notes/service.test.ts` already use to enforce rules
+no type can express. Run against the previous commit it names exactly the three.
+Adding a component to the vocabulary now costs a specimen, and the cost arrives
+at the moment the component is written rather than whenever somebody next reads
+the brief.
+
+The gallery also gained the list-level denial beside the record-level one.
+`withDenial` renders `LockedPanel` with a different title, which is the whole of
+the difference, and putting the two side by side is the clearest available
+argument that a refused page and a refused section are one designed state
+rather than two error pages.
+
+Putting the two side by side is also what found a bug. `LockedPanel` closed
+with a hardcoded line — *the official record for these sessions is under
+Progress notes* — which is true of the panel it was written for and false of the
+four callers that are not about notes: not one of your clients, screener
+responses are clinical, this process note is not yours, and now a denied audit
+log. Four screens had been telling a refused reader to go and read progress
+notes they had not asked for, and the defect survived because a denial panel is
+a screen almost nobody sees twice. It took being photographed next to its own
+sibling. The line is now an opt-in `footnote`, defaulting on only for the
+default body, and the one caller that overrides the body and still wants the
+redirection passes it.
+
+Two of these at once broke something small and real: `LockedPanel` named its
+`<section>` with `aria-labelledby` pointed at a hardcoded `locked-title`, which
+is correct exactly while no page shows two. Deriving the id from the title
+replaced a duplicate id with an unpredictable one — the client record's title is
+`Process notes by ${clinician.name}` — so the id went away entirely in favour of
+`aria-label`, and the capture that used to select on that id now asks for the
+region by name. Fewer lines than before, and the failure mode is gone rather
+than moved.
+
+**What it deliberately does not do.**
+
+- **Cover §5b's loading and error states.** There is no `loading.tsx` or
+  `error.tsx` anywhere in `app/`, so those two have nothing to photograph;
+  giving them a specimen means designing them first, which is a feature and not
+  a picture.
+- **Cover the §5b items that are page markup rather than components.** The
+  screener result card, the co-sign queue's ageing row, the audit row and the
+  form fields live inline in the pages that own them. Extracting each into a
+  primitive so the gallery could import it would be work done for the style
+  guide's benefit, against the code's. Those have screen-level pictures instead.
+- **Picture the rest of §5c.** Eleven of the sixteen screens still have no
+  capture. The README's pictures argue one thing — the access rule — and the
+  storyboard plus the gallery is that argument; a screen inventory is a
+  different document.
+- **Check that a specimen is any good.** The test knows a name appears in the
+  file. A specimen rendered with props that hide what the component does would
+  pass. That is a code review's job — and the footnote bug above is the
+  argument that looking at the picture is still part of the work.
+
 ## Decisions log
 
 | Decision | Why |

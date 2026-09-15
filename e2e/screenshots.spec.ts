@@ -84,7 +84,9 @@ test.describe('README screenshots', () => {
     // 4. The rule, stated where the notes would be, to the supervisor of the
     //    clinician who wrote them.
     await page.goto(`/clients/${demoClient}`);
-    const locked = page.locator('section[aria-labelledby="locked-title"]');
+    // By role and name — the panel's title names the clinician, so there is no
+    // fixed string to select on.
+    const locked = page.getByRole('region', { name: /^Process notes by / });
     await expect(locked).toBeVisible();
     await locked.screenshot({ path: `${shot}/process-notes-locked.png` });
 
@@ -132,5 +134,16 @@ test.describe('README screenshots', () => {
       mask: [page.locator('tbody td:first-child')],
       maskColor: '#a8a29a',
     });
+
+    // The vocabulary itself. Not a screen and not seeded — /design renders the
+    // same components the pages above render, reading the same tokens, which is
+    // what stops the style guide from drifting into fiction. Captured last
+    // because it is the only picture here that does not care who is signed in.
+    await page.goto('/design');
+    await expect(page.getByRole('heading', { name: 'Design system' })).toBeVisible();
+    // Exact: the dialog specimen's own heading reads "Break-glass access
+    // required", and a substring match takes both.
+    await expect(page.getByRole('heading', { name: 'Break-glass', exact: true })).toBeVisible();
+    await page.screenshot({ path: `${shot}/design-system.png`, fullPage: true });
   });
 });

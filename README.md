@@ -223,6 +223,15 @@ inventory, and the tokens. `app/theme.css` holds every colour, type and spacing
 value in the product under semantic names; swapping in a different design system
 means replacing that file's values and nothing else.
 
+[`/design`](app/design/page.tsx) is the brief's component inventory, rendered
+from the components the app itself imports and the tokens the app itself reads —
+a style guide that redraws its specimens by hand starts lying the first week, so
+this one is wrong only when the product is wrong. A unit test compares the
+components exported from `src/ui/primitives.tsx` against the specimens on the
+page, because break-glass and the list-level denial both shipped without one.
+
+![The design system page: the mark at four sizes, a seven-step type scale, semantic colour swatches, the three sensitivity tier banners, session status and confirmation chips, buttons, the two denial panels side by side, the break-glass bar and dialog, and the calendar appointment chip in five states.](docs/screenshots/design-system.png)
+
 ## Where the interesting parts live
 
 | | |

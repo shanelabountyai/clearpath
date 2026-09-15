@@ -9,38 +9,51 @@
 
    Then redeploy, and check `/api/cron/reminders` returned 200 after the hour.
 
-**Item: design brief §5b/§5c components with no picture** (loose thread 5).
-Screen work, so **Sonnet**:
+**Item: loose thread 13 — no seeded picture of a returning supervisor.** Seed
+and date arithmetic, and it costs the supervision-cover badge demo if done
+carelessly, so **Opus**:
 
-    /model sonnet
+    /model opus
 
-## What just landed (the production reseed)
+## What just landed (§5b's missing specimens)
 
-- `db:migrate:prod` applied `20260914144828_leave_back_dismissed` — prod's
-  schema had been one migration behind since P1-4.
-- `db:seed:prod` ran clean, `EXIT=0`, well under the 25 minutes it used to
-  take. 1828 audit rows, 195 messages delivered / 3 failed, 84 progress notes,
-  31 process notes, 86 form submissions.
-- Verified the deployed site reads it: `clinic.labintelligence.co` returns 200
-  and its home page renders the reseeded clinician names.
-- **Five features, not six.** Confirmations, departures, leave, the covered
-  session and the supervision cover all have a picture now. P1-4's returning
-  supervisor does **not** — see loose thread 13, which the reseed confirmed
-  rather than closed: Rosa is seeded away 2026-09-15 to 2026-09-21.
+- `/design` gained the three components that existed in the vocabulary with no
+  specimen: **BreakGlassDialog**, **BreakGlassBar** and the **confirmation
+  badges**. Plus the **list-level denial** beside the record-level one, so the
+  two read as one designed state.
+- **`design-system.test.ts` now greps `app/design/page.tsx` for every export of
+  `src/ui/primitives.tsx`.** Run against the previous commit it names exactly
+  those three — the guard was verified to fail, not just to pass.
+- `docs/screenshots/design-system.png` is the 11th picture, in the README's
+  Design section. §5b now has a picture.
+- **The picture found a bug.** `LockedPanel` closed with a hardcoded *"the
+  official record for these sessions is under Progress notes"* — right for the
+  panel it was written for, wrong for the four callers that are not about
+  notes. It is now an opt-in `footnote`, defaulting on only for the default
+  body. Four screens stopped telling a refused reader to go read something
+  they never asked for.
+- `LockedPanel` also lost its hardcoded `aria-labelledby="locked-title"` in
+  favour of `aria-label` — two panels on one page was a duplicate id, and
+  deriving the id from the title was worse, because one title carries a
+  clinician's name.
+- `WRITEUP.md` §38.
 
-Two alarm-pattern notes, for the next long run:
+Two capture-spec notes, paid for twice this session:
 
-- **Do not grep the seed's log for `failed`.** Its own summary line prints
-  `195 messages delivered, 3 failed` — the same trap as loose thread 4's
-  `^ *N passed`. Match `Error|Invalid|Killed|EXIT=` instead.
-- `refus` in that alternation false-alarms too: the seed prints `1 logged
-  process-note refusal`. Harmless, but it is a wake-up that says nothing.
+- **Playwright's `getByRole` `name` is a SUBSTRING match.** `{ name:
+  'Break-glass' }` also took the dialog's own "Break-glass access required" and
+  died on strict mode. Pass `exact: true` whenever a specimen's heading is a
+  prefix of another's.
+- **Do not locate a `LockedPanel` by a fixed attribute string.** The client
+  record's title is `Process notes by ${clinician.name}`. Ask for the region by
+  name: `getByRole('region', { name: /^Process notes by / })`.
 
 ## Gate
 
-Not re-run this session — no code changed, only production data. The last
-green gate stands: typecheck clean, 3204 unit passed across 32 files, six
-mutations red, e2e 62 passed / 1 skipped / 63 of 63.
+Green, and it covers every code change here — the sweep ran after the footnote
+fix, not before. Typecheck clean. **3205 unit passed across 32 files** (3204 +
+the new coverage test). **e2e 62 passed / 1 skipped / 63 of 63**, `EXIT=0`.
+`npm run shots` re-run afterwards, `EXIT=0`, all 11 pictures fresh.
 
 ## Loose threads
 
@@ -54,7 +67,10 @@ mutations red, e2e 62 passed / 1 skipped / 63 of 63.
    `^ *N passed` because the seed's summary contains "failed". Arm the monitor
    *after* the redirect has created the log file — `tail -f` on a path that
    does not exist yet dies instantly and the sweep then runs unwatched.
-5. **Design brief §5b/§5c components with no picture. This is the next item.**
+5. ~~Design brief §5b components with no picture.~~ Landed 2026-09-15. **§5c
+   remains: eleven of sixteen screens have no capture** — deliberate for now,
+   the README's pictures argue the access rule and a screen inventory is a
+   different document.
 6. `executeDeparture`'s `ponytail:` 30s transaction budget.
 7. Queued links use the stub's `http://localhost:3700`, now on the hourly cron too.
 8. `CLEARPATH_THROTTLE_SECRET` must be set on any multi-instance deployment.
@@ -69,10 +85,22 @@ mutations red, e2e 62 passed / 1 skipped / 63 of 63.
 12. Only five clinicians in the seed, so every new leave collides with a spec
     that names one of them. The fix each time is a locator that finds the row
     by its link, not by a name it mentions.
-13. **No seeded picture of a returning supervisor** — confirmed by this
-    reseed, not fixed by it. Rosa's cover runs from the real today forward, so
-    every reseed lands her mid-leave. A picture needs the seed to date her
-    leave backwards from today, which would cost the supervision-cover badge
-    demo unless a second supervisor carries one of the two states.
+13. **No seeded picture of a returning supervisor. This is the next item.**
+    Rosa's cover runs from the real today forward, so every reseed lands her
+    mid-leave. A picture needs the seed to date her leave backwards from today,
+    which would cost the supervision-cover badge demo unless a second
+    supervisor carries one of the two states.
 14. The dismissal has no undo. One row per leave, and restoring the section
     means recording the leave again.
+15. The gallery coverage test knows a component's name appears in
+    `app/design/page.tsx`, not that the specimen shows anything useful. A
+    specimen rendered with props that hide what the component does passes.
+    Looking at the picture is still part of the work — that is how the footnote
+    bug was found.
+16. §5b's **loading and error states have nothing to photograph**: there is no
+    `loading.tsx` or `error.tsx` anywhere in `app/`. Giving them a specimen
+    means designing them first, which is a feature, not a picture.
+17. §5b's screener result card, co-sign ageing row, audit row and form fields
+    are inline page markup, not primitives, so the gallery cannot import them.
+    Deliberate — extracting them would be work for the style guide against the
+    code. They have screen-level pictures instead.
