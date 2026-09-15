@@ -3787,6 +3787,65 @@ fails if either side has an entry the other lacks, because the failure this item
 actually found was silent in both directions: a door with no schedule never
 runs, and a schedule with no door is an hourly 404 nobody reads.
 
+## 41. The sixteen screens, and the two that were an argument
+
+The design brief lists sixteen screens under §5c. Ten of them had no picture,
+and that arithmetic had been sitting in `NEXT.md` as a loose thread for weeks,
+phrased as a gap: six of sixteen done.
+
+It was the wrong arithmetic. §5c is a brief *to a designer* — a list of screens
+to wireframe and comp, written to be fed to a design tool. Read as a checklist
+the repository owes, it asks for a gallery of every screen in the product, and
+that document has a known shape: it duplicates the app, it goes stale the first
+week nobody re-runs it, and it argues nothing. The README does not have sixteen
+pictures because it is not an inventory. It has twelve because it is making one
+claim — confidentiality is layered and the interface has to show which layer you
+are on — and every picture in it is a step in that claim.
+
+So the honest question was not "which ten are missing" but "does any of the ten
+carry a claim the README currently only asserts". Two did, and they were the
+same two: the client's own surfaces.
+
+The access-rule table has six roles in it. It has no row for the person the
+record is about, because a client has no session to hold a role — they get a
+token on a phone. That is the only place in the product reached from outside the
+building, and it is the one place where discretion stops being a permission
+check and becomes a layout property: what a shoulder at 390 pixels can read.
+Twelve pictures of the staff app argued the rule everywhere except the one
+screen where a stranger is actually looking at it.
+
+The two captured are the consent form (§5c-14 and §5c-15 in one frame — the
+tokenized landing and the typed-name signature are the same page) and the
+late-cancel fee disclosure in Spanish (§5c-5's "consequence explicit before
+confirming", on the surface where the consequence is money). The consent page
+names the practice and the form and nothing else; the fee page states $90.00 in
+a Spanish sentence before the button that charges it.
+
+The other eight stay unphotographed, and the reasons divide cleanly:
+
+- **Four are features, not rules.** Week calendar, booking flow, continuity
+  queue, session detail. A picture of each shows that the screen exists, which
+  is not in dispute.
+- **Two would need building first.** §5c-16's reminder templates render in no
+  route at all — the templates are code with a deny-list test, and giving them a
+  preview screen is a feature dressed as a screenshot. The same trap as §5b's
+  loading and error states.
+- **Two are deliberately unglamorous.** The form-template builder and the admin
+  supervision map are the screens the brief wants designed *well*; the built
+  versions are functional, and a portfolio picture of them would be a claim the
+  code does not support.
+
+`e2e/screenshots.spec.ts` grew a viewport change and a call to the portal spec's
+own fixture. The fixture exists because the one thing the fee screen turns on —
+whether a decline is inside the 24-hour window — is measured against wall time,
+and the seeded quarter is date-pinned, so no seeded appointment is reliably four
+hours away on the day the camera runs. Reusing it rather than writing a second
+one is the difference between one definition of "inside the window" and two.
+
+What this did not produce is a screen inventory document, and that is the
+outcome, not an omission. The loose thread is closed by deciding it was
+mis-stated.
+
 ## Decisions log
 
 | Decision | Why |

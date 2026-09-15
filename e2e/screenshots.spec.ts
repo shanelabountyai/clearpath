@@ -1,4 +1,6 @@
+import { execFileSync } from 'node:child_process';
 import { actAs, clientId, expect, sql, test, USERS } from './fixtures';
+import { ES_TOKEN } from './portal-fixture';
 
 /**
  * Not an assertion — the README's pictures, captured from the same seeded
@@ -13,7 +15,7 @@ test.describe('README screenshots', () => {
 
   const shot = 'docs/screenshots';
 
-  test('capture', async ({ page }) => {
+  test('capture', async ({ page, baseURL }) => {
     const demoClient = clientId('TC-006');
 
     // The operational tier: front desk runs the whole calendar and learns
@@ -146,6 +148,64 @@ test.describe('README screenshots', () => {
     await expect(away.locator('li', { hasText: 'flagged for review' })).toContainText('TC-089');
     await expect(away.locator('li', { hasText: 'countersigned' })).toContainText('TC-090');
     await away.screenshot({ path: `${shot}/while-you-were-away.png` });
+
+    // ── the client's own tier ─────────────────────────────────────────────
+    //
+    // Every picture above is of a staff screen, and the access table they
+    // argue has no row for the person the record is about. These two are the
+    // only surfaces reached from outside the building: no login, one link, a
+    // phone. Captured at 390 because that is the device they are opened on,
+    // and the discretion rule is a layout property — a shoulder at that width
+    // reads the whole screen.
+    //
+    // Their own context, not this page resized. Two reasons, and the second
+    // one already bit: a fresh context holds no `clearpath_user` cookie, so
+    // the picture is literally what a stranger with the link gets rather than
+    // an argument that the cookie is unread — and resizing `page` changed the
+    // width of the `fullPage` /design capture below, which is taken after
+    // these and at whatever viewport was left behind.
+    // `baseURL` is passed through by hand: a context built here, rather than
+    // by the `page` fixture, inherits nothing from the config's `use`.
+    const phone = await page.context().browser()!.newContext({
+      viewport: { width: 390, height: 844 }, baseURL,
+    });
+    const client = await phone.newPage();
+
+    // Consent, outstanding. The form the seed deliberately leaves unsubmitted
+    // for six clients, so the banner has something to show and this page has
+    // something to render. It names the practice and the form and nobody else:
+    // no client name, no clinician name, and no word for what kind of practice
+    // sent it. The typed-name signature is the last field.
+    const consent = sql(
+      `select r.token from "FormRequest" r
+         join "FormTemplate" t on t.id = r."templateId"
+        where t.key = 'consent-to-treat' and r."submittedAt" is null
+        order by r.token limit 1`,
+    );
+    expect(consent, 'the seed must leave a consent form outstanding').toBeTruthy();
+    await client.goto(`/f/${consent}`);
+    await expect(client.getByRole('heading', { name: 'Consent to Treatment' })).toBeVisible();
+    await expect(client.getByLabel(/Type your full name to sign/)).toBeVisible();
+    await client.screenshot({ path: `${shot}/consent-form-client.png`, fullPage: true });
+
+    // The consequence, before the action, in the language the client is
+    // written in. The only picture here that needs rows the seed cannot hold:
+    // whether a decline is inside the 24-hour window is measured against wall
+    // time, and the seeded quarter is date-pinned, so no seeded appointment is
+    // reliably four hours out on the day the camera runs. The portal spec's
+    // fixture builds one — reused rather than rewritten, so there is one
+    // definition of "inside the window" and not two. `setup` clears its own
+    // rows first and `npm run shots` re-seeds over them, so there is nothing
+    // to tear down; it runs last so no picture above can pick up its clients.
+    execFileSync('npx', ['tsx', 'e2e/portal-fixture.ts', 'setup'], { stdio: 'pipe' });
+    await client.goto(`/p/${ES_TOKEN}`);
+    await client.getByRole('button', { name: 'No puedo asistir' }).click();
+    await expect(client.getByText(/Cancelar dentro de las 24 horas/)).toBeVisible();
+    // es-US, not es-ES. The sentence is Spanish and the amount is dollars,
+    // which is the pairing the picture exists to show.
+    await expect(client.getByText(/\$90\.00/)).toBeVisible();
+    await client.screenshot({ path: `${shot}/fee-disclosure-es.png` });
+    await phone.close();
 
     // The vocabulary itself. Not a screen and not seeded — /design renders the
     // same components the pages above render, reading the same tokens, which is

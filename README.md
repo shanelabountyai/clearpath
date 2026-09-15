@@ -86,6 +86,41 @@ Every one of those cells is asserted in [`src/auth/permissions.test.ts`](src/aut
 Authorization happens in exactly one place — [`src/auth/permissions.ts`](src/auth/permissions.ts) —
 and a test greps the rest of `src/` to prove no endpoint re-implements a role check.
 
+### The tier with no row in that table
+
+Every picture above is a staff screen, and the table above has six roles in it
+and not the person the record is about. Clients never log in. What they get is a
+link, on a phone, opened wherever they happen to be — and that is the only
+surface in the product reached from outside the building, so it is the one where
+discretion is a layout property rather than a permission.
+
+![The consent-to-treatment form as a client opens it on a phone: the practice name in small capitals, the form's title and a sentence about the limits of confidentiality, three numbered Yes/No questions about policies, the limits of confidentiality and the 24-hour cancellation rule, and a fourth field reading "Type your full name to sign". No client name, no clinician name, and no word anywhere for what kind of practice sent it. The footer reads "This link is personal to you. Please do not forward it."](docs/screenshots/consent-form-client.png)
+
+The page names the practice and the form. It does not name the client, the
+clinician, or the kind of practice — the tab title says nothing either, because
+this is opened on a shared phone and a tab is read before a page is. The
+signature is a typed name, which is what the seeded consent rows hold.
+
+The second surface is the one the reminders link to, and it is where the money
+is:
+
+![The appointment door in Spanish at phone width, after the client taps "No puedo asistir": a panel explaining that cancelling within 24 hours of the session carries a $90.00 charge, an optional reason selector, a button reading "Sí, cancelarla", and a link to keep the appointment instead.](docs/screenshots/fee-disclosure-es.png)
+
+The consequence is stated before the action, not after it, and in the language
+the client is written in. The sentence is Spanish and the amount is `$90.00`,
+because a US practice bills a US client in dollars — a charge explained in
+English to a Spanish-reading client is not a partly-translated feature, it is a
+person agreeing to ninety dollars they were never told about. Asserted in
+[`e2e/portal.spec.ts`](e2e/portal.spec.ts), including that the charge that lands
+is exactly the one the sentence named.
+
+The lower third of that frame is empty, and it is uncropped on purpose. There is
+no navigation, no record to open and nothing else on the screen — the whole
+surface is this client's own appointments and two buttons. Both pages are
+captured by [`e2e/screenshots.spec.ts`](e2e/screenshots.spec.ts) in their own
+browser context, holding no staff cookie, so what the camera gets is what
+somebody with the link gets.
+
 ## Known limitations (deliberate)
 
 - **No real auth.** A dev-mode user switcher stands in for login. Two-factor and

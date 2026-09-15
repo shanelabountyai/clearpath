@@ -83,7 +83,11 @@ async function setup() {
 async function setupSpanish() {
   const now = Date.now();
   await prisma.user.create({
-    data: { id: ES_CLINICIAN, name: 'Test Clinician ES', email: 'e2e-portal-es@example.test', role: 'therapist' },
+    // Named like the seeded practice rather than like a fixture: this row is
+    // the only one of these that appears in a README picture, and a clinician
+    // called "Test Clinician ES" in the middle of it reads as a different kind
+    // of claim than the synthetic-data banner is making. Nothing asserts on it.
+    data: { id: ES_CLINICIAN, name: 'Mireia Solans', email: 'e2e-portal-es@example.test', role: 'therapist' },
   });
   await prisma.client.create({
     data: {
