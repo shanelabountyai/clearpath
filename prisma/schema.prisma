@@ -1367,3 +1367,39 @@ model LeaveCoverage {
   @@unique([leaveId, clientId])
   @@index([coveringClinicianId])
 }
+
+// ─────────────────────────── the scheduled runs ───────────────────────────
+
+/// One scheduled run, written by the runner that performed it.
+///
+/// The reason this table exists rather than a dashboard: the failure that
+/// costs the practice money is *silence*, and silence is the one thing no
+/// error reporter can report. A cron that never fires, a route answering 401
+/// because `CRON_SECRET` was never set, a deploy whose ignore step skipped the
+/// commit that added the schedule — all three are a healthy-looking service
+/// that is doing nothing, and a 401 in particular is a *successful* HTTP
+/// response that no uptime check will flag. Only a row that failed to appear
+/// says so.
+///
+/// Counts only, like the runners themselves. `error` holds the error's class
+/// name and nothing else: an exception message can carry the contents of the
+/// row that caused it, and hard rule 3 has no exception for the table that
+/// watches the jobs. The stack is in the platform's log, where a person with a
+/// reason to read it goes looking.
+model JobRun {
+  id  String   @id @default(cuid())
+  job String
+  /// When the run *started*, from the injected clock — never `now()`, which
+  /// would be the database's opinion and untestable besides. Start rather than
+  /// finish so a job that hangs for three hours reads as three hours stale,
+  /// which is what it is.
+  at  DateTime
+
+  ok     Boolean
+  /// The error's class name, on a failed run. Never its message.
+  error  String?
+  /// Whatever the runner returned — counts, never ids. Null on a failure.
+  counts Json?
+
+  @@index([job, at])
+}

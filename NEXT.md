@@ -1,82 +1,72 @@
 # Next
 
-**First, the step that needs a person** (carried).
+**First, the step that needs a person** (carried, and now visible).
 
 1. **`CRON_SECRET` is still unset on Vercel.** All three cron routes answer 401
    until it is set:
 
        openssl rand -hex 32 | tr -d '\n' | vercel env add CRON_SECRET production --sensitive
 
-   Then redeploy, and check `/api/cron/reminders` returned 200 after the hour
-   and `/api/cron/nonresponse` after the half hour.
+   Then redeploy. The check is no longer "read the platform log": open
+   **/practice → Scheduled jobs** and the three badges should go from
+   **Never run** to **Ran**, with counts and a timestamp, within the hour.
 
-**Item: loose thread 19 — no cron run is monitored.** The last picture thread
-closed this session, and what is left at the top of the list is the one that can
-fail silently in production: a 500 from any of the three crons is a line in
-Vercel's log and nothing else, and the non-response sweep's unbounded backlog
-rides on nobody noticing. Correctness-adjacent and it touches the money path, so
-**Opus**:
+**Item: loose thread 7 — every queued link in production says
+`http://localhost:3700`.** Four places build a client-facing URL and three of
+them default to that stub; `src/staff/departure.ts:847` hardcodes it with no
+override to pass. Every portal link, every form link and every reminder the
+practice has queued in production carries a URL that resolves to nothing on the
+client's phone — and two hourly crons now queue them on a schedule. Client-facing
+and on the messaging path, so **Opus**:
 
     /model opus
 
-## What just landed (loose thread 5)
+## What just landed (loose thread 19)
 
-- **The §5c arithmetic was wrong, and that is the answer.** "Ten of sixteen
-  screens have no capture" read the design brief as a checklist the repo owes.
-  §5c is a brief *to a designer* — screens to wireframe and comp. Read as a
-  screenshot list it asks for a gallery of the whole app, which duplicates the
-  product, goes stale, and argues nothing. **No screen inventory document, and
-  that is recorded as a decision rather than a gap.**
-- **Two of the ten did carry a claim the README only asserted**, and they were
-  the same two: the client's own surfaces. The access table has six roles and no
-  row for the person the record is about, because a client has no session — they
-  get a token on a phone, which is the only surface reached from outside the
-  building.
-- **`consent-form-client.png`** — `/f/<token>` at 390, full page. §5c-14 and
-  §5c-15 in one frame: the tokenized landing and the typed-name signature are
-  the same page. Names the practice and the form and nobody else.
-- **`fee-disclosure-es.png`** — `/p/<ES_TOKEN>` at 390, after declining. §5c-5's
-  consequence-before-confirming, on the surface where the consequence is money:
-  a Spanish sentence naming `$90.00`.
-- **Captured in their own browser context**, not by resizing `page`. Two
-  reasons, and the second one bit first: a fresh context holds no
-  `clearpath_user` cookie, so the picture is what a stranger with the link
-  gets — and a stray `setViewportSize` restore silently widened the `fullPage`
-  `/design` capture from 1280 to 1440. A viewport left behind is a
-  cross-picture defect; both pictures below it were byte-identical on the
-  re-run.
-- **Reused `e2e/portal-fixture.ts` rather than writing a second one.** The fee
-  screen turns on whether a decline is inside the 24-hour window, measured
-  against wall time, and the seeded quarter is date-pinned — so no seeded
-  appointment is reliably four hours out on the day the camera runs. One
-  definition of "inside the window", not two.
-- **The ES fixture clinician is now `Mireia Solans`, not `Test Clinician ES`.**
-  It is the only fixture row that appears in a README picture, and nothing
-  asserts on it.
-- **The other eight stay unphotographed, and the reasons divide cleanly** —
-  recorded in `WRITEUP.md` §41: four are features not rules; two (§5c-16's
-  reminder templates, and §5b's loading/error states) would need building
-  first, a feature dressed as a screenshot; two (the form-template builder, the
-  admin supervision map) are functional rather than designed, and a portfolio
-  picture of them would be a claim the code does not support.
-- **Two `ponytail:` remain in `src/`** — `public-inquiry.ts` and `inbound.ts`.
+- **The 500 was the smaller half.** The larger half was in this file the whole
+  time: `CRON_SECRET` is unset, so the routes answer **401 — a *successful*
+  HTTP response**. Three jobs have done nothing, hourly, for two days, and
+  every instrument that exists reports them healthy. `WRITEUP.md` §42.
+- **A monitor inside the thing that can fail is not a monitor.** Every real way
+  these stop — a cron that never fires, a route turned away at the door, a
+  function killed at its timeout — is a path on which no handler code runs. So
+  the new `JobRun` table records **runs**, and the signal is **absence**: the
+  last row per job, and how old it is.
+- **`overdueAfter` is two ticks, not one.** These runners are documented as
+  late-rather-than-wrong when missed, so one skipped hour is not news. Nothing
+  that is running misses two.
+- **The error's class name, never its message.** Hard rule 3 reaches the
+  monitoring table: a Prisma error quotes the row that caused it. `TypeError`
+  plus a timestamp is enough to know which log to open. A test throws an error
+  carrying a client's name and asserts the name is nowhere in the row.
+- **One name in three places.** `SCHEDULED`, `vercel.json` and `app/api/cron`
+  are now held to the same list by the wiring test — a job recorded as `purge`
+  and watched as `purges` is a green badge nothing is looking at.
+- **The surface is a card on /practice**, next to the retention windows. It
+  reads unguarded and writes no audit row, for the reason `may()` gives for
+  staying silent, and is reached only after that page's own guard has run.
+- **Deliberately not an alert**, and the `ponytail:` on `jobHealth` says so: the
+  app has one outbound channel and it goes to clients. The missing piece is an
+  operations channel, not the detection.
+- **Two `ponytail:` remain in `src/`** — `public-inquiry.ts` and `inbound.ts`,
+  plus the new one on `jobHealth`.
 
 ## Gate
 
-Typecheck clean. Unit suite run (see the log in the session scratchpad if this
-handoff was written before it reported). `npm run shots` green twice, exit 0
-both times.
+Typecheck clean. **Unit suite: 32 files, 3214 passed, 0 skipped, exit 0.**
+**e2e `denials`: 7 passed, exit 0** — that spec walks every static staff route
+as every seeded person, so it is the one that proves the new card renders (and
+does not 500) for all six roles.
 
-**No full e2e sweep.** Nothing in `src/` or `app/` changed — the diff is the
-shots spec, the portal fixture's clinician name, two pictures, and two
-documents. `npm run shots` exercises the shots spec end to end, and the portal
-spec is the one whose fixture moved, so **that spec is the outstanding check**
-before the next deploy:
+Migrations applied to dev, test and e2e. `npm run db:migrate:prod` is still
+manual before the next push.
 
-    dotenv -e .env.e2e -- npx playwright test portal
+**No full e2e sweep, and no `npm run shots`.** No screenshotted page changed —
+`/practice` appears in no README picture.
 
-Still true from before: **run long sweeps as tracked background tasks and
-re-run on a 137 before investigating anything.**
+Carried from before: **run long sweeps as tracked background tasks and re-run
+on a 137 before investigating anything**, and `dotenv` bare is Python — use
+`./node_modules/.bin/dotenv`.
 
 ## Loose threads
 
@@ -89,23 +79,19 @@ re-run on a 137 before investigating anything.**
    alarm must also match `Error:`, and a totals grep must anchor on
    `^ *N passed` because the seed's summary contains "failed". Arm the monitor
    *after* the redirect has created the log file.
-5. ~~§5c's ten uncaptured screens.~~ Landed 2026-09-15. Answered by deciding
-   the question was mis-stated: no inventory document, two pictures that argue
-   the client's tier. `WRITEUP.md` §41.
+5. ~~§5c's ten uncaptured screens.~~ Landed 2026-09-15. `WRITEUP.md` §41.
 6. ~~`executeDeparture`'s `ponytail:` 30s transaction budget.~~ Landed
    2026-09-15.
-7. Queued links use the stub's `http://localhost:3700`, now on two hourly crons.
+7. **Queued links use the stub's `http://localhost:3700`**, on two hourly crons.
+   `portal/service.ts:101`, `forms/service.ts:117`, `scheduling/reminders.ts:172`
+   default to it; `staff/departure.ts:847` hardcodes it. **This is the next
+   item.**
 8. `CLEARPATH_THROTTLE_SECRET` must be set on any multi-instance deployment.
 9. **Three of the seed's stories are dated from the real clock** — the capstone
-   leave, Rosa's, and Anders'. New data point, cause **unknown**: the first
-   `shots` run this session produced a `calendar-front-desk.png` differing from
-   `HEAD` in exactly one cell (13:00 telehealth: `Client 005 Fontaine · Kai`,
-   unconfirmed → `Client 081 Kowalczyk · Maren`, confirmed), and the re-run
-   minutes later reproduced `HEAD` byte-for-byte. Not chased — not this item,
-   and asserting a cause on one non-reproducing observation is worse than
-   saying unknown. Worth one look if it recurs: the cell that moved is a
-   *confirmation state*, which is the one thing on that screen the reminder
-   cadence writes against the real clock.
+   leave, Rosa's, and Anders'. Cause **unknown**: one `shots` run produced a
+   `calendar-front-desk.png` differing from `HEAD` in exactly one cell (a
+   *confirmation state*), and the re-run reproduced `HEAD` byte-for-byte. Worth
+   one look if it recurs.
 10. An alert the leaver holds only as a *coverer* on somebody else's leave still
     blocks their departure (D-31 risk line).
 11. D-26's routing (a departed clinician's alert reaching their supervisor's
@@ -116,18 +102,17 @@ re-run on a 137 before investigating anything.**
 14. The dismissal has no undo.
 15. The gallery coverage test knows a component's name appears in
     `app/design/page.tsx`, not that the specimen shows anything useful.
-16. §5b's **loading and error states have nothing to photograph**: no
-    `loading.tsx` or `error.tsx` anywhere in `app/`. Designing them is a
-    feature, not a picture. Same class as §5c-16's reminder templates, which
-    render in no route at all — both now argued in `WRITEUP.md` §41.
+16. §5b's loading and error states have nothing to photograph. Argued in
+    `WRITEUP.md` §41 — a feature, not a picture.
 17. §5b's screener result card, co-sign ageing row, audit row and form fields
     are inline page markup, not primitives, so the gallery cannot import them.
 18. **"While you were away" is four lists rendered as one flat list**, ordered
     by kind rather than by date.
-19. **No cron run is monitored.** A 500 from any of the three is a line in
-    Vercel's log and nothing else. **This is the next item.**
+19. ~~No cron run is monitored.~~ Landed 2026-09-15. `WRITEUP.md` §42.
 20. `fee-disclosure-es.png` is a 390×844 frame whose lower third is empty,
-    because the screen genuinely has nothing else on it. Left uncropped
-    deliberately — the emptiness is part of what the picture claims — but if it
-    ever reads as a mistake, the fix is a `main`-locator capture, not a
-    shorter viewport.
+    deliberately — the emptiness is part of what the picture claims.
+21. **`JobRun` has no retention sweep.** ~17.5k rows a year, so nothing is
+    urgent, and it was left out on purpose: a purge that trims the table
+    watching the purge can destroy the evidence that the purge stopped. If it
+    ever needs one, the safe shape is a floor — keep the last N per job
+    regardless of age — not a window.

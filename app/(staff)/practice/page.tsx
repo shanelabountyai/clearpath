@@ -5,10 +5,16 @@ import { Badge, Card, Field, PageHeader, money } from '../../../src/ui/primitive
 import { ROLE_LABEL } from '../../../src/ui/shell';
 import { withDenial } from '@/src/ui/denied';
 import { previewProcessNotePurge } from '@/src/staff/departure';
+import { jobHealth } from '@/src/jobs';
+import { systemClock } from '@/src/clock';
 import { localDateOf } from '@/src/time';
 import { plural } from '../departures/ui';
 
 export const dynamic = 'force-dynamic';
+
+/** `{ queued: 3, promoted: 0 }` as `queued 3, promoted 0`. Counts only ever. */
+const countsOf = (counts: unknown) =>
+  Object.entries(counts as Record<string, number>).map(([k, v]) => `${k} ${v}`).join(', ');
 
 async function PracticePage() {
   const { actor } = await requireSession();
@@ -32,6 +38,9 @@ async function PracticePage() {
 
   const supervisors = data.users.filter((u) => u.supervisees.length > 0);
   const sweep = await previewProcessNotePurge(actor);
+  // After the guard, never before: a denied actor is refused the page above
+  // this line, so the card cannot render for somebody the matrix turned away.
+  const jobs = await jobHealth(systemClock);
 
   return (
     <>
@@ -101,6 +110,44 @@ async function PracticePage() {
         </div>
 
         <div className="space-y-4">
+          {/* Loose thread 19. What runs on a schedule, and whether it did.
+              The badge people need to see is the one on a job that has said
+              nothing, because every other failure here announces itself and
+              that one does not. */}
+          <Card>
+            <h2 className="mb-2 font-semibold">Scheduled jobs</h2>
+            <ul className="space-y-2.5">
+              {jobs.map((j) => (
+                <li key={j.job}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-body">{j.job}</span>
+                    {j.overdue
+                      ? <Badge tone="danger" glyph="!">{j.lastAt ? 'Overdue' : 'Never run'}</Badge>
+                      : j.ok
+                        ? <Badge tone="success">Ran</Badge>
+                        : <Badge tone="warning" glyph="!">Failed</Badge>}
+                  </div>
+                  <p className="text-caption text-subtle">
+                    {j.when}
+                    {j.lastAt && <> &mdash; last at {j.lastAt.toISOString().replace('T', ' ').slice(0, 19)} UTC</>}
+                    {j.error && <> &mdash; <span style={{ color: 'var(--warning)' }}>{j.error}</span></>}
+                    {j.ok && j.counts != null && <> &mdash; {countsOf(j.counts)}</>}
+                  </p>
+                </li>
+              ))}
+            </ul>
+            {/* The sentence that makes the card worth reading. Without it an
+                "Overdue" badge looks like a slow job rather than a stopped one. */}
+            <p className="mt-3 text-caption text-subtle">
+              A job that has gone quiet is the failure worth catching: a cron that stopped
+              firing, or a route answering 401 because its secret was never set, is a
+              <strong> successful HTTP response</strong> that no uptime check will flag.
+              Silence here is the only thing that says so. The stack for a failed run is in
+              the platform log &mdash; this table keeps the error&rsquo;s class name and
+              nothing else, because an exception message can carry the row that caused it.
+            </p>
+          </Card>
+
           <Card>
             <h2 className="mb-2 font-semibold">Rooms</h2>
             <ul className="space-y-1.5 text-body">

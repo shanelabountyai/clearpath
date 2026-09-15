@@ -3846,6 +3846,78 @@ What this did not produce is a screen inventory document, and that is the
 outcome, not an omission. The loose thread is closed by deciding it was
 mis-stated.
 
+## 42. A 401 is a successful response
+
+The three schedules landed two sessions ago and nothing has watched them since.
+The thread said the risk was a 500 going unread in a platform log, which is
+true and is the smaller half. The larger half was visible the whole time, in
+`NEXT.md`, as the carried step that needs a person: **`CRON_SECRET` is still
+unset in production.** Vercel Cron calls `/api/cron/reminders` on the hour, the
+route reads a secret that does not exist, `cronAuthorized` fails closed as it is
+supposed to, and the route answers 401.
+
+Nothing anywhere reports that. A 401 is a successful HTTP response. The request
+completed, the function did not error, the platform log has a green line, and an
+uptime check pointed at the route would see a service answering promptly and
+correctly. Three scheduled jobs have been doing nothing, hourly, for two days,
+and every instrument that exists says they are fine.
+
+That is what decided the shape. **A monitor that lives inside the thing that can
+fail is not a monitor.** Every way these jobs actually stop — a cron that never
+fires because the ignore step skipped the commit carrying `vercel.json`, a route
+turned away at the door, a function killed at its timeout — is a path on which
+no code inside the handler runs. Error reporting cannot report them, because
+there is no error and nothing to report it from.
+
+So the table records *runs*, not failures, and the signal is **absence**.
+`JobRun` gets a row when a runner finishes, with the counts it returned. What is
+read back is the last row per job and how old it is, and a job with no recent
+row is the alarm, whatever the reason there is no row. A failed run is the easy
+case and is recorded too; it is the only case that would have announced itself
+anyway.
+
+Three things fall out of that shape, and each is a decision:
+
+**Two ticks of silence, not one.** Every one of these runners is documented as
+late-rather-than-wrong when missed — idempotent, acting on one state, leaving
+another. A single skipped hour costs lateness and is not news. Two in a row is,
+because nothing that is running misses two. `overdueAfter` is stated per job
+next to the schedule in words, so the number a person sees on the page and the
+number the check uses are the same number.
+
+**The error's class name, and not its message.** Hard rule 3 says no PHI outside
+the record itself, and a monitoring table is exactly where that rule gets
+quietly excepted, because the message is the useful part. A Prisma error quotes
+the row that caused it. `TypeError` and a timestamp is enough to know which
+platform log to open, and the platform log is where a person with a reason to
+read a stack goes. The test asserts on the absence: a thrown error carrying a
+client's name leaves no trace of the name in the row.
+
+**One name, held in three places.** `SCHEDULED` names the job, `vercel.json`
+schedules the path and `app/api/cron` answers it, and the wiring test now holds
+all three to the same list. A job recorded as `purge` and watched as `purges`
+is a green badge that is green because nothing is looking at it — the failure
+the table was built to make impossible, reintroduced by a typo.
+
+The surface is a card on the Practice page, next to the retention windows and
+the auto-charge switch: the page the person who can do something about a stopped
+job already opens. It reads unguarded and writes no audit row, for the reason
+`may()` gives for staying silent — a row per page render buries the accesses the
+log exists for — and it is reached only after that page's own guard has run.
+
+**What it deliberately is not is an alert.** Nobody is paged. The application
+has one outbound channel and it goes to clients, and hard rule 9 exists to stop
+clinical alerts reaching a shared inbox; a job failure has no treating clinician
+to route to, and giving the practice an operations inbox is a feature, not a
+monitor. The ceiling is stated rather than hidden: this catches a stopped job
+the next time somebody opens the settings page, which is better than never and
+worse than a page. The upgrade path is a channel, and it is the channel that is
+missing, not the detection.
+
+On the deployed demo the card currently shows three jobs that have never run.
+That is not a seeding gap. It is the true state of the deployment, and it is the
+first time anything has said so.
+
 ## Decisions log
 
 | Decision | Why |
