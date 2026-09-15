@@ -202,6 +202,21 @@ describe('a supervisor away, and who countersigns in their place (P1-3, D-21)', 
     expect(opened?.reason).toBe(`leave:${p.leave.id}`);
   });
 
+  it('names each leave it stands in on, not the first one twice', async () => {
+    const p = await rosaAway();
+    const mara = await makeUser('supervisor');
+    const second = await createLeave(
+      actor(p.ray), { userId: mara.id, ...NOUR_AWAY, coveringClinicianId: p.kai.id, coveringSupervisorId: p.dev.id }, RECORDED,
+    );
+
+    expect(await listProgressNotes(actor(p.dev), p.client.id, DAY_TWO)).toHaveLength(1);
+
+    const reasons = (await prisma.auditEvent.findMany({
+      where: { actorId: p.dev.id, resource: 'progress_note', action: 'read' },
+    })).map((r) => r.reason).sort();
+    expect(reasons).toEqual([null, `leave:${p.leave.id}`, `leave:${second.id}`].sort());
+  });
+
   it('gives the clinician covering Rosa\'s own clients nothing of her supervision', async () => {
     const p = await rosaAway();
     expect(await coSignQueue(actor(p.kai), { clock: DAY_TWO })).toEqual([]);

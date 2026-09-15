@@ -9,45 +9,42 @@
 
    Then redeploy, and check `/api/cron/reminders` returned 200 after the hour.
 
-**Item: loose thread 1 — `listProgressNotes`' audit row names only the first
-leave a cover holds.** A `ponytail:` in `src/notes/service.ts`, small and
-correctness-shaped, so **Opus**:
+**Item: loose thread 6 — `executeDeparture`'s `ponytail:` 30s transaction
+budget.** A whole caseload reassigned in one transaction, in
+`src/staff/departure.ts`. Correctness- and durability-shaped, so **Opus**:
 
     /model opus
 
-## What just landed (thread 13)
+## What just landed (thread 1)
 
-- **`Anders Fiske` and `Thea Ozolins`**, the third and fourth scenario people,
-  after Maren and Hana. Back yesterday from nine days, with all four of P1-4's
-  lists populated: a flagged screener, the session Kai held, the note Kai wrote
-  and signed, and one of Thea's notes Rosa countersigned as the supervision
-  cover.
-- **Rosa countersigns on that day's clock, not the system one.** A cover
-  countersigns only inside the window (D-21), and her own leave starts today —
-  the system clock would have been asking her to do it from it.
-- `docs/screenshots/while-you-were-away.png` is the 12th picture, in the
-  README's access-rule section rather than the demo storyboard: cover is that
-  rule with an end date, and the coverer's process notes are the thing not in
-  the list.
-- **The picture found a bug, again.** Anders' leave covers the seed's busiest
-  weekday, so the calendar's away banner walked into the README's first picture
-  reading *"Away today: Anders Fiske"* on a date that is not today. It is
-  scoped to the day being viewed and the heading above already names that day;
-  it now reads **"Away:"**. `calendar-front-desk.png` is recaptured.
-- `WRITEUP.md` §P1-4 gained the paragraph on why the picture cost two people.
+- **`listProgressNotes` now takes one guarded door per authority it spends**,
+  the way `coSignQueue` already did. A cover standing in on two leaves used to
+  get one audit row naming `standingIn[0]` — whichever leave sorted first —
+  for a read that spanned both. `guardedAll` nests the doors, so it is N audit
+  rows each carrying its own `leave:<id>`, on one query in one transaction.
+- The `ponytail:` in `src/notes/service.ts` is gone; three remain in `src/`.
+- **One new unit test**, `coverage.test.ts` → "names each leave it stands in
+  on, not the first one twice". Verified red against the old code before
+  keeping it: it asserted `[leave:A, leave:A]` where the fix gives
+  `[null, leave:A, leave:B]`.
+- **What it still does not do:** a leave whose supervisees wrote nothing on
+  this client still gets a row, because the guard authorizes before it acts.
+  Same over-report `coSignQueue` makes on an empty queue; narrowing it costs a
+  second query to learn who wrote here before logging who could. Recorded in
+  `WRITEUP.md` §P1-3's "deliberately does not do", replacing the old bullet.
 
 ## Gate
 
-Green, and it covers every change here — the sweep and the shots both ran after
-the banner fix. Typecheck clean. **3205 unit passed across 32 files**,
-unchanged: the seed has no unit coverage and the calendar edit is a string.
-**e2e 62 passed / 1 skipped / 63 of 63**, `EXIT=0`. `npm run shots` `EXIT=0`,
-all 12 pictures fresh. Committed and pushed (`5e1cf28`).
+Green. Typecheck clean. **3206 unit passed across 32 files** (+1: the new
+test). **e2e 62 passed / 1 skipped / 63 of 63**, `EXIT=0`. No `npm run shots`
+— the change is an audit row, nothing renders differently. Committed and
+pushed.
 
 ## Loose threads
 
-1. **`listProgressNotes`' audit row names the first leave a cover holds
-   (`ponytail:`). This is the next item.**
+1. ~~`listProgressNotes`' audit row names the first leave a cover holds.~~
+   Landed 2026-09-15. What remains is narrower and deliberate: a leave that
+   contributed no notes still gets its row.
 2. ~~P1-4 lists nothing for a returning supervisor, and has no dismissal.~~
    Landed 2026-09-14.
 3. `delivery:run` and `nonresponse:run` have no scheduler, on purpose.
@@ -60,7 +57,7 @@ all 12 pictures fresh. Committed and pushed (`5e1cf28`).
    remains: ten of sixteen screens have no capture** — `/worklists` now has one
    section of one. Deliberate for now; the README's pictures argue the access
    rule and a screen inventory is a different document.
-6. `executeDeparture`'s `ponytail:` 30s transaction budget.
+6. **`executeDeparture`'s `ponytail:` 30s transaction budget. This is the next item.**
 7. Queued links use the stub's `http://localhost:3700`, now on the hourly cron too.
 8. `CLEARPATH_THROTTLE_SECRET` must be set on any multi-instance deployment.
 9. **Three of the seed's stories are dated from the real clock** — the capstone

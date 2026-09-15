@@ -1,4 +1,4 @@
-import { guarded, may } from '../auth/guard';
+import { guarded, guardedAll, may } from '../auth/guard';
 import { can, requiresCoSignature, type Actor, type Target } from '../auth/permissions';
 import { systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
@@ -270,16 +270,26 @@ export async function listProgressNotes(actor: Actor, clientId: string, clock: C
   // counts: break-glass passes the same cell and must not widen the list.
   const covering = !treating && !!can(actor, 'read', 'progress_note', target).coveringLeaveId;
 
-  return guarded(
-    {
-      actor, action: 'read', resource: 'progress_note', clientId,
-      // Without `authorId` for the coverer, so the audit row names the leave.
-      // ponytail: a supervision cover's row names the first leave they cover,
-      // whether or not its supervisees wrote on this client; count per leave if an auditor needs it exact.
-      target: covering ? target
-        : standingIn[0] ? { authorSupervisorId: standingIn[0].supervisorId, authorSupervisorCoverage: standingIn[0].coverage, today }
-        : { authorId: actor.id, clinicianId },
-    },
+  // One door per authority the list actually spends, the way `coSignQueue`
+  // does it, so a cover standing in on two leaves cannot have both reads
+  // attributed to whichever leave sorted first. `guardedAll` nests them: N
+  // audit rows, each carrying its own `leave:<id>`, one query, one transaction.
+  // Without `authorId` for the coverer, so that row names the leave.
+  //
+  // A leave whose supervisees wrote nothing here still gets a row, because the
+  // query spanned them either way — the same over-report `coSignQueue` makes on
+  // an empty queue, and the direction to be wrong in.
+  const doors: Target[] = covering
+    ? [target]
+    : [
+        { authorId: actor.id, clinicianId },
+        ...standingIn.map((r) => ({
+          authorSupervisorId: r.supervisorId, authorSupervisorCoverage: r.coverage, today,
+        })),
+      ];
+
+  return guardedAll(
+    doors.map((t) => ({ actor, action: 'read' as const, resource: 'progress_note' as const, clientId, target: t })),
     (tx) =>
       tx.progressNote.findMany({
         where: { clientId, ...(treating || covering ? {} : { authorId: { in: readable } }) },

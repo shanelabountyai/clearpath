@@ -3318,7 +3318,10 @@ all three coverages to decide whether a leave made the difference.
 Resolution follows the clinician case. `supervisionCoverageOf` sits beside
 `clientTarget` and `progressContext`. `supervisionCoveredBy` feeds the lists:
 the co-sign queue, which takes one guarded read per leave so each audit row
-names its own; the caseload; and the note list. Each list filters through
+names its own; the caseload; and the note list, which does the same through
+`guardedAll` — one door per authority it spends, N rows on one query and one
+transaction, so a cover standing in on two leaves is never recorded twice
+under whichever leave sorted first. Each list filters through
 `can` on the cell it serves. The note page asks `mayCoSign`, which uses the
 co-signature's own target. The door refuses a leave for anybody who supervises
 without a cover (`supervision_uncovered`), and anybody `maySupervise` refuses
@@ -3339,9 +3342,11 @@ notes read through the treating supervisor's cover instead of the author's.
   supervisor who is not there. Rare, and listed under the PRD's risks.
 - **No claim about licensure.** Whether a cover may countersign for somebody
   else's associate is a board's question.
-- **The note list's audit row names the first leave a cover holds**, whether or
-  not that leave's supervisees wrote on the client (`ponytail:` in
-  `listProgressNotes`). Exact attribution is a count per leave.
+- **A leave whose supervisees wrote nothing on this client still gets a row.**
+  The note list's doors come from the leaves the cover holds, not from the
+  authors the query found, because the guard authorizes before it acts — the
+  same over-report the co-sign queue makes on an empty queue. Narrowing it
+  means a second query to learn who wrote here before logging who could.
 - **No work-list count** of blocked supervision covers. The plan screen shows it.
 
 ### The scheduler: Vercel Cron for `reminders:run` and `purge:run`
