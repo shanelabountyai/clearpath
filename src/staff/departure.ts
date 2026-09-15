@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { auditEvent, guarded, guardedAll, may } from '../auth/guard';
+import { auditEvent, auditEvents, guarded, guardedAll, may } from '../auth/guard';
 import type { Actor, Role } from '../auth/permissions';
 import { DAY, systemClock, type Clock } from '../clock';
 import { prisma, type Tx } from '../db';
@@ -773,10 +773,18 @@ export async function executeDeparture(actor: Actor, departureId: string, clock:
   const from = lastDayStart(d.lastDayOn);
   const note = (tx: Tx, reason: string, clientId?: string) =>
     auditEvent(actor, 'depart', 'departure', { resourceId: d.id, clientId, reason, rule: 'departure' }, tx);
+  // The same row, one per member of a list whose length this feature does not
+  // bound. See `auditEvents` for why that distinction is worth two helpers.
+  const notes = (tx: Tx, reason: string, clientIds: readonly (string | undefined)[]) =>
+    auditEvents(actor, 'depart', 'departure',
+      clientIds.map((clientId) => ({ resourceId: d.id, clientId, reason, rule: 'departure' })), tx);
 
   try {
-    // ponytail: 30s budget for a whole caseload in one transaction; batch the
-    // audit rows with createMany if a real caseload ever measures near it.
+    // 30s. What could spend it is not the caseload — that is bounded by the
+    // active clients, measured at ~1.8ms each — but the two lists that grow
+    // with a career: the abandoned drafts and the unreachable process notes,
+    // one audit row apiece. Those log through `auditEvents`, which is where
+    // the measurement is written down. Everything else here is per-caseload.
     return await prisma.$transaction((tx) => guarded(
       {
         actor, action: 'depart', resource: 'departure', resourceId: d.id,
@@ -871,7 +879,7 @@ export async function executeDeparture(actor: Actor, departureId: string, clock:
           where: { authorId: d.userId, status: 'draft' },
           data: { status: 'abandoned', abandonedByDepartureId: d.id },
         });
-        for (const n of drafts) await note(tx, 'departure:note_abandoned', n.clientId);
+        await notes(tx, 'departure:note_abandoned', drafts.map((n) => n.clientId));
 
         // P0-10. Records *when* the only reader stopped existing, and grants
         // nobody anything. Ids and the client only — never `content`.
@@ -883,7 +891,7 @@ export async function executeDeparture(actor: Actor, departureId: string, clock:
           where: { authorId: d.userId, unreachableSince: null },
           data: { unreachableSince: now },
         });
-        for (const n of unreachable) await note(tx, 'departure:process_note_unreachable', n.clientId);
+        await notes(tx, 'departure:process_note_unreachable', unreachable.map((n) => n.clientId));
 
         await tx.user.update({ where: { id: d.userId }, data: { active: false } });
         await note(tx, 'departure:deactivated');

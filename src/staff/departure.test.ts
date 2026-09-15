@@ -834,6 +834,34 @@ describe('what the transaction closes, and what it writes down (P0-4b, P0-10, P0
     expect(rows.every((r) => r.actorId === manager.id)).toBe(true);
     expect(JSON.stringify(rows)).not.toMatch(/Sensitive|Private working/);
   });
+
+  // The two lists whose length follows a career rather than a caseload log
+  // through one `createMany`, so the thing to hold is that batching did not
+  // quietly become one row for the batch. Both clients, both counts.
+  it('still writes a row per draft and per process note when there are several, each naming its own client', async () => {
+    const { manager, alex, beth, kept, ended, departure, decide } = await practice();
+    const draftOn = async (clientId: string, startIso: string) => prisma.progressNote.create({
+      data: {
+        appointmentId: (await book(clientId, alex.id, startIso, 'completed')).id,
+        clientId, authorId: alex.id, content: 'Sensitive draft.',
+      },
+    });
+    await draftOn(kept.id, '2026-09-21T14:00:00Z');
+    await draftOn(kept.id, '2026-09-28T14:00:00Z');
+    await draftOn(ended.id, '2026-09-22T14:00:00Z');
+    for (const c of [kept, kept, ended]) await processNoteOf(alex.id, c.id);
+    await decide(kept.id, 'transfer', beth.id);
+    await decide(ended.id, 'discharge');
+
+    await executeDeparture(actor(manager), departure.id, EXECUTION);
+
+    const rows = await departureRows(departure.id);
+    const clientsFor = (reason: string) =>
+      rows.filter((r) => r.reason === reason).map((r) => r.clientId).sort();
+    expect(clientsFor('departure:note_abandoned')).toEqual([ended.id, kept.id, kept.id].sort());
+    expect(clientsFor('departure:process_note_unreachable')).toEqual([ended.id, kept.id, kept.id].sort());
+    expect(JSON.stringify(rows)).not.toMatch(/Sensitive|Private working/);
+  });
 });
 
 describe('the decisions, and the screens that read them (Phase 4)', () => {

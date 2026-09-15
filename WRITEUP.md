@@ -3631,6 +3631,88 @@ than moved.
   pass. That is a code review's job — and the footnote bug above is the
   argument that looking at the picture is still part of the work.
 
+## 39. The transaction budget, and where it was actually spent
+
+**The problem.** `executeDeparture` runs everything a departure does in one
+transaction with a 30-second budget, and carried a note admitting the budget was
+a guess: *30s for a whole caseload in one transaction; batch the audit rows with
+createMany if a real caseload ever measures near it*. The condition was never
+checked, which is the ordinary way a deferral rots — the marker names something
+to measure and nobody measures it.
+
+Measured, the guess was wrong about which number mattered. A caseload cannot
+grow without bound: `caseloadOf` is active clients only, so a departure walks
+fifteen to sixty of them, at ~1.8ms each against local Postgres. Forty clients
+with everything they can carry executes in 109ms. The caseload was never the
+risk.
+
+The unbounded term is one line further down. P0-10 marks every process note the
+leaver can no longer reach, and hard rule 4 wants a row per record touched, so
+the loop writes one audit row per process note the clinician *ever wrote* — a
+number shaped by tenure, not by caseload. Four years of weekly practice across a
+full caseload is about 4,000 of them. The abandoned drafts are the same shape.
+
+**The design.** `auditEvents` in `auth/guard.ts`: the rows `auditEvent` already
+writes, N of them, in one `createMany`. It is a sibling rather than a rewrite —
+`record` grew a `row()` builder that both paths share, so there is still exactly
+one place that decides what an audit row contains, which is what keeps hard
+rule 3 checkable. The two career-shaped loops in `executeDeparture` call it; the
+caseload loop, the supervisees and the unread alerts still write a row at a
+time, because a handful is a handful and a loop reads better.
+
+**What the measurement actually says**, because the obvious version of this
+story is wrong. Counting the SQL Prisma sends:
+
+| rows | one `create` each | one `auditEvents` |
+|---|---|---|
+| 50 | 51 statements | 2 |
+| 4,000 | 4,001 statements | 3 |
+| 10,000 | 10,001 statements | 5 |
+
+`createMany` is not always one statement — Prisma chunks it at Postgres's
+65,535-parameter ceiling, which for this row shape lands near 2,000 rows per
+insert. Two statements instead of four thousand is still the whole point.
+
+The wall clock locally is unimpressive: 4,000 rows go from 2.06s to 0.83s, about
+2×. That is the honest number and it is small because a round trip to localhost
+costs ~0.1ms, so most of the remaining time is building rows and maintaining
+four indexes — work both paths do. The saving is latency, and localhost has
+none. Against a hosted Postgres at 5ms a round trip the same 4,000 statements
+are ~20 seconds of pure waiting inside a 30-second budget, and the batch is
+~10ms. The ceiling was never "a departure is slow"; it was "a correct departure
+times out and rolls back", which is the one outcome this transaction exists to
+prevent — and it would have arrived only in the deployed environment, on the
+clinician with the longest service.
+
+Finding that required measuring the deployment rather than the laptop. The
+laptop's own number, read alone, says there is no problem here at all.
+
+**The test.** One, and the useful one is not a timing assertion — a benchmark in
+the suite would be flaky and would fail for reasons that have nothing to do with
+this code. What can break is batching quietly becoming one row for the batch, so
+the test gives the leaver three drafts and three process notes across two
+clients and asserts six rows, each naming its own client. Verified red first: a
+`createMany` degraded to its first row reports one client where the fix reports
+three.
+
+**What it deliberately does not do.**
+
+- **Batch the caseload loop's own audit row.** It sits inside a loop that
+  already makes four to six writes per client, so batching one of them saves a
+  sixth of a bounded number. The loop stays readable instead.
+- **Batch the alert reroute.** Each alert needs its own conditional `update`
+  anyway, so the row beside it is the cheaper half of a pair, and unread alerts
+  are bounded by what one person left unacknowledged. Same reasoning for
+  `leave-plan.ts`'s `rerouteAlerts`, which has the identical shape and the
+  identical bound.
+- **Bound the transaction.** Nothing here caps how much work one departure may
+  do; it makes the unbounded part cost two statements instead of thousands. A
+  clinician with 100,000 process notes would still need a different design, and
+  would have other problems.
+- **Remove the 30-second budget.** It is still the right backstop. What changed
+  is that it is now a number with a measurement behind it rather than a guess
+  with a `ponytail:` comment on top.
+
 ## Decisions log
 
 | Decision | Why |
@@ -3656,6 +3738,9 @@ than moved.
 | The sweep logs with `auditEvent`, never `guarded` | No cell in the matrix lets anybody but the author touch a process note, and inventing one so a sweep could use the front door is the widening the feature exists to refuse |
 | The audit page's user lookup is asserted to have no filter | `active = false` is the last thing a departure does, and a tidy-minded filter there would blank the trail of the person most likely to be under review |
 | The demo's refusal is triggered last, after the locked panel | Frame five has to show the grant and the refusal together; taken in the obvious order the only refusal in frame was the seed's, minutes older than the story |
+| The audit batch is a sibling of `auditEvent`, sharing one `row()` builder | Two ways to write an audit row is two places for PHI to reach one, which is the leak hard rule 3 exists to stop; one builder keeps the grep honest |
+| Only the career-shaped loops batch, not every loop | The caseload, the supervisees and the unread alerts are bounded by a practice, and a loop reads better than a collect-then-flush for a handful |
+| The check is a row-count assertion, not a timing one | A benchmark in the suite fails for reasons that are not this code; what can actually break is a batch that becomes one row |
 | The seed constructs the demo client's draft note explicitly | 85% of seeded notes get signed, so the frame-one draft would be lost to a seed tweak nobody connected to the README |
 | The ambiguous `read process_note · allowed` row stays in the picture | It is a supervisor reading her own empty list, and a reader who spots it and finds no explanation has reason to distrust every other frame |
 | The audit log records the request and outcome, never the rows returned | Distinguishing "read her own" from "read Priya's" would put the subject of a process note in the trail; the ambiguity is the cost of the ids-only rule, not a defect in it |

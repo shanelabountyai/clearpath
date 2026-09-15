@@ -35,23 +35,23 @@ interface GuardRequest {
   reason?: string;
 }
 
+const row = (req: GuardRequest, decision: Decision) => ({
+  actorId: req.actor.id,
+  actorRole: req.actor.role,
+  action: req.action,
+  resource: req.resource,
+  resourceId: req.resourceId ?? null,
+  clientId: req.clientId ?? null,
+  allowed: decision.allowed,
+  rule: decision.rule,
+  breakGlass: decision.breakGlass,
+  reason: req.reason ??
+    (decision.coveringLeaveId && `leave:${decision.coveringLeaveId}`) ??
+    req.actor.breakGlass?.reason ?? null,
+});
+
 async function record(db: Tx | typeof prisma, req: GuardRequest, decision: Decision) {
-  await db.auditEvent.create({
-    data: {
-      actorId: req.actor.id,
-      actorRole: req.actor.role,
-      action: req.action,
-      resource: req.resource,
-      resourceId: req.resourceId ?? null,
-      clientId: req.clientId ?? null,
-      allowed: decision.allowed,
-      rule: decision.rule,
-      breakGlass: decision.breakGlass,
-      reason: req.reason ??
-        (decision.coveringLeaveId && `leave:${decision.coveringLeaveId}`) ??
-        req.actor.breakGlass?.reason ?? null,
-    },
-  });
+  await db.auditEvent.create({ data: row(req, decision) });
 }
 
 /**
@@ -129,6 +129,20 @@ export function guardedAll<T>(
   return guarded(head, (t) => (rest.length ? guardedAll(rest, work, t) : work(t)), tx);
 }
 
+interface EventOpts {
+  resourceId?: string;
+  clientId?: string;
+  rule?: string;
+  reason?: string;
+  allowed?: boolean;
+}
+
+const decisionOf = (actor: Actor, opts: EventOpts): Decision => ({
+  allowed: opts.allowed ?? true,
+  rule: (opts.rule ?? 'system') as Decision['rule'],
+  breakGlass: !!actor.breakGlass,
+});
+
 /**
  * Log an event that is not itself a data access — a threshold alert firing, a
  * break-glass session opening. Carries reason codes, never content.
@@ -143,18 +157,42 @@ export async function auditEvent(
   actor: Actor,
   action: Action,
   resource: Resource,
-  opts: {
-    resourceId?: string;
-    clientId?: string;
-    rule?: string;
-    reason?: string;
-    allowed?: boolean;
-  } = {},
+  opts: EventOpts = {},
   tx?: Tx,
 ): Promise<void> {
-  await record(tx ?? prisma, { actor, action, resource, ...opts }, {
-    allowed: opts.allowed ?? true,
-    rule: (opts.rule ?? 'system') as Decision['rule'],
-    breakGlass: !!actor.breakGlass,
+  await record(tx ?? prisma, { actor, action, resource, ...opts }, decisionOf(actor, opts));
+}
+
+/**
+ * The same rows `auditEvent` writes, N of them, in one insert.
+ *
+ * Hard rule 4 wants a row per record touched, and some of those counts are
+ * tenure-shaped rather than caseload-shaped: a departure marks every process
+ * note its author can no longer reach, which is one row per note the leaver
+ * ever wrote — four years of weekly practice is ~4,000 of them. Sequentially
+ * that is 4,000 statements inside a transaction that has 30 seconds to finish.
+ *
+ * Batched it is 2, because Prisma chunks `createMany` at Postgres's 65,535
+ * parameter ceiling. Locally that is only 2.1s to 0.8s at 4,000 rows — a round
+ * trip to localhost costs ~0.1ms, so most of what is left is building rows and
+ * maintaining four indexes, which both paths pay. The latency is the point: at
+ * 5ms a trip against a hosted database the same 4,000 statements are ~20s of
+ * waiting and the batch is ~10ms, which is the difference between a departure
+ * that commits and one the budget rolls back for no reason but its shape.
+ * Measured 2026-09-15; the numbers are in WRITEUP.md §39.
+ *
+ * Use it where the count follows the data rather than the caseload — a loop
+ * stays clearer for the handful, and a handful is what the rest of this is.
+ */
+export async function auditEvents(
+  actor: Actor,
+  action: Action,
+  resource: Resource,
+  each: readonly EventOpts[],
+  tx?: Tx,
+): Promise<void> {
+  if (!each.length) return;
+  await (tx ?? prisma).auditEvent.createMany({
+    data: each.map((opts) => row({ actor, action, resource, ...opts }, decisionOf(actor, opts))),
   });
 }
