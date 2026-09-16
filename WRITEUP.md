@@ -4049,6 +4049,33 @@ before the change.
   screen already flags that cover, and the scan will block once the leave
   starts and moves its alerts.
 
+## 45. One timeline, not four lists
+
+**The problem.** "While you were away" (§P1-4, above) reads four kinds of
+thing a clinician's caseload did without them — screeners flagged, sessions
+somebody else held, notes somebody else wrote, notes somebody else
+countersigned — and rendered each `back.X.map()` block back to back. The order
+on screen was an artifact of which `Promise.all` slot a kind happened to sit
+in, not of when anything happened. A note countersigned on the leave's first
+day could sit below a session held on its last, because countersignatures are
+their own list.
+
+**The design.** `whileYouWereAway` still returns four separate, separately
+audited reads — that part is right, each rides the cell it is a read on. The
+page now builds one array from all four, tags each item with the date it is
+about (`submittedAt`, `startAt`, `startAt` through the appointment, or
+`coSignedAt`), sorts once, and maps once. The data layer and its tests
+(`leave-plan.test.ts`) are untouched; only the rendering changed.
+
+**What it deliberately does not do.** Give the four kinds a shared shape. A
+screener, a session, a note and a countersignature render differently and link
+differently — merging them into one row type for four call sites would be the
+abstraction nobody asked for. The `{ key, at, node }` tuple exists only long
+enough to sort; each `node` is still built by the same JSX that was already
+there.
+
+Loose thread 18, `NEXT.md`.
+
 ## Decisions log
 
 | Decision | Why |
@@ -4293,6 +4320,7 @@ before the change.
 | A preview deployment links to the production host rather than deriving its own | Previews do not message clients, and a second derivation rule is a second place to be quietly wrong |
 | The unread-alert blocker routes on the later of today and the last day, not today (departure D-31) | Execution cannot run before the last day, so that is the only day the answer matters. Asking about today blocked a departing cover for weeks over an alert the leave sweep would already have returned |
 | A cover whose planned last day is on or before the leave's last day counts as unavailable, not only one leaving before it | The departure moves the last day's sessions, so the leaver is not there that day. With `lt`, the leave screen called the cover fine while the departure was blocked |
+| "While you were away" merges its four reads into one array and sorts by date, in the page only | The data layer still audits each kind through its own cell — merging there would blur which read a row came from. The page has no such constraint, and grouping by kind instead of by when things happened was never the intent |
 
 ## What this project deliberately is not
 

@@ -20,34 +20,31 @@
    `VERCEL_PROJECT_PRODUCTION_URL` (the custom domain). `CLEARPATH_BASE_URL` is
    now in the local `.env.production` and `.env.e2e`.
 
-**Item: loose thread 18 — "While you were away" is four lists rendered as one
-flat list, ordered by kind rather than by date.** A presentation/ordering change
-on one screen with an existing test file, so **Sonnet**:
+No item currently picked. Loose threads 8, 9, 11, 12, 14, 17 are the open
+ones; 15, 16, 20, 21 are deliberate non-issues already argued in `WRITEUP.md`.
+Pick one and get a model recommendation at the start of that session.
 
-    /model sonnet
+## What just landed (loose thread 18)
 
-## What just landed (loose thread 10)
-
-- **The block itself was right and stays** (PRD risk line, `WRITEUP.md` §37): a
-  leaver holding an alert only as somebody's cover is refused, and naming
-  another cover clears it.
-- **What was wrong was the date the scan asked about.** `blockersOf` routed on
-  *today*, up to thirty days early. A cover whose last day falls after the leave
-  ends was blocked for weeks by an alert the sweep would already have sent home,
-  with nothing on any screen able to clear it. It now routes on the later of
-  today and the last day, which is what execution routes on (D-30).
-- **The leave screen disagreed on the boundary day.** `unavailableCoverers`
-  used `lastDayOn < toDate`, so a cover leaving *on* the leave's last day was
-  "fine" there while the departure was blocked. Now `lte`: the departure moves
-  the last day's sessions.
-- Two tests in `coverage.test.ts`, one per side, both red before the change.
-  `WRITEUP.md` §44, two decision rows, and a note on the PRD risk line.
+- **The four lists became one timeline.** "While you were away" rendered
+  `back.flagged.map()`, `back.sessions.map()`, `back.notes.map()`,
+  `back.coSigned.map()` back to back — order on screen was which
+  `Promise.all` slot a kind sat in, not when anything happened. The page now
+  tags each item with its date, merges all four arrays, sorts once, maps
+  once. `whileYouWereAway` (the data layer, `leave-plan.ts`) is untouched —
+  still four separately audited reads, only the rendering merges them.
+- `WRITEUP.md` §45, one decision row.
 
 ## Gate
 
-Typecheck clean. **Unit suite: 32 files, 3225 passed (+2), 0 skipped, exit 0.**
-No UI change, no migration, and no seeded departure involves a cover, so no e2e
-and no `shots`.
+Typecheck clean. **Unit suite (`leave-plan.test.ts`): 40 passed, 0 skipped,
+exit 0** — unaffected, since the merge is page-only. **e2e (`leave-demo.spec.ts`
++ `screenshots.spec.ts`): 5 passed, 1 skipped (the screenshot capture, gated on
+`SHOTS=1`), exit 0.** Ran `npm run shots` separately to refresh the checked-in
+`docs/screenshots/while-you-were-away.png` — confirmed chronological order
+(Sep 10 → 11 → 12 → 12). Five other screenshots also drifted on that run
+(clock-dated seed stories, loose thread 9) and were reverted, not committed —
+unrelated to this change.
 
 It took three runs. Run 1: 20s hook timeouts in `notes/service.test.ts` at load
 average 76, with four other projects' sweeps running. Run 2: fast "not found"
@@ -97,8 +94,8 @@ before investigating anything**, and bare `dotenv` is Python — use
     `WRITEUP.md` §41 — a feature, not a picture.
 17. §5b's screener result card, co-sign ageing row, audit row and form fields
     are inline page markup, not primitives, so the gallery cannot import them.
-18. **"While you were away" is four lists rendered as one flat list**, ordered
-    by kind rather than by date.
+18. ~~"While you were away" is four lists rendered as one flat list, ordered
+    by kind rather than by date.~~ Landed 2026-09-16. `WRITEUP.md` §45.
 19. ~~No cron run is monitored.~~ Landed 2026-09-15. `WRITEUP.md` §42.
 20. `fee-disclosure-es.png` is a 390×844 frame whose lower third is empty,
     deliberately — the emptiness is part of what the picture claims.
