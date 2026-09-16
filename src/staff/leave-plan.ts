@@ -57,7 +57,8 @@ function assertNotFrozen(leave: { phase: string }) {
  * for a client of their own, and whose notes need nobody's countersignature —
  * an associate's supervisor has no read on a covered client and would sign
  * blind. Then here for the window: active, not the person away, not leaving
- * before it ends, and not away themselves on any day still to come.
+ * on or before its last day (a departure moves the last day's sessions too),
+ * and not away themselves on any day still to come.
  *
  * One question with two askers. `assertCoverer` asks it of one person at the
  * door. The plan screen asks it of every coverer the leave names, on every
@@ -75,7 +76,7 @@ async function unavailableCoverers(
   const [users, departing, away] = await Promise.all([
     db.user.findMany({ where: { id: { in: unique } }, select: { id: true, role: true, active: true } }),
     db.departure.findMany({
-      where: { userId: { in: unique }, status: 'planned', lastDayOn: { lt: dbDate(leave.toDate) } }, select: { userId: true },
+      where: { userId: { in: unique }, status: 'planned', lastDayOn: { lte: dbDate(leave.toDate) } }, select: { userId: true },
     }),
     db.leave.findMany({
       where: {

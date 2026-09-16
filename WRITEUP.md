@@ -4006,6 +4006,49 @@ edge, and it is narrower than the one being closed: preview deployments do not
 message clients, and a second derivation rule is another place to be quietly
 wrong.
 
+## 44. The cover who was blocked by a leave that had already ended
+
+**The problem.** §37 left one refusal in place on purpose: if the leaver holds
+an unread alert only because they cover somebody else's leave, the departure is
+blocked, and the fix is on that leave. That is still right. What was wrong was
+*when* the scan asked. `blockersOf` routed each alert as the practice stands
+**today**, which can be thirty days before the departure runs. So if Dev covers
+Nour's leave and Dev's last day comes after Nour is back, Dev's plan showed an
+unread-alert blocker for weeks. Nothing on any screen could clear it, because
+nothing was wrong: by Dev's last day the leave sweep has already sent the alert
+back to Nour. Nour's leave screen was no help either, because it only counted a
+coverer as unavailable if they were leaving *before* the leave's last day. So
+the one case where the block was real, a cover whose last day *is* the leave's
+last day, left the departure blocked while the leave screen said the cover was
+fine.
+
+**The design.** Two comparisons, each moved to the date it was about.
+
+- The unread-alert scan now routes on the **later of today and the last day**.
+  That is the date execution routes on, since D-30 refuses to execute any
+  earlier, so the preview and the transaction now ask the same question. A
+  leave that is over by then no longer blocks. A leave still on that day
+  blocks, as §37 intends.
+- `unavailableCoverers` now counts a planned departure whose last day is **on
+  or before** the leave's last day. The last day's sessions move with the
+  departure, so the leaver is not there to cover that day. The leave screen and
+  the departure scan now agree about who is blocked, and "name another cover"
+  (`nameCoverer`, which moves stamped alerts in the same write) clears both.
+
+Two tests in `coverage.test.ts`, one for each side of the boundary. Both failed
+before the change.
+
+**What it deliberately does not do.**
+
+- **Route past a departing cover.** Choosing who covers is still somebody's
+  decision (§37). The change only stops the scan from asking about a day the
+  departure never reaches.
+- **Look ahead for leaves that have not started.** If the leaver is named to
+  cover a leave that starts before their last day, no alert is addressed to
+  them yet, so the departure scan has nothing to block on. The leave's own
+  screen already flags that cover, and the scan will block once the leave
+  starts and moves its alerts.
+
 ## Decisions log
 
 | Decision | Why |
@@ -4248,6 +4291,8 @@ wrong.
 | The refusal also fires on `CLEARPATH_ALLOW_CLOUD_DB`, not just `NODE_ENV` | `db:seed:prod` is a local `tsx` run against Neon with no `NODE_ENV`, writing every client-facing link in the demo over twenty five silent minutes — the exact command a `NODE_ENV` check misses |
 | Vercel's own `VERCEL_PROJECT_PRODUCTION_URL` is the fallback, with the explicit variable as the override | After `CRON_SECRET` spent two days unset, a deployment that is correct without anybody remembering a variable is worth more than one that is configurable |
 | A preview deployment links to the production host rather than deriving its own | Previews do not message clients, and a second derivation rule is a second place to be quietly wrong |
+| The unread-alert blocker routes on the later of today and the last day, not today (departure D-31) | Execution cannot run before the last day, so that is the only day the answer matters. Asking about today blocked a departing cover for weeks over an alert the leave sweep would already have returned |
+| A cover whose planned last day is on or before the leave's last day counts as unavailable, not only one leaving before it | The departure moves the last day's sessions, so the leaver is not there that day. With `lt`, the leave screen called the cover fine while the departure was blocked |
 
 ## What this project deliberately is not
 

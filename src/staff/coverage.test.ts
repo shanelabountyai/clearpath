@@ -14,7 +14,7 @@ import { zonedToUtc, type LocalDate } from '../time';
 import { alertRecipient } from './coverage';
 import { departureBlockers, executeDeparture, planDeparture } from './departure';
 import {
-  cancelLeave, createLeave, decideCoverage, editLeaveDates, nameCoverer, nameSupervisionCover, runLeaveAlertSweep,
+  cancelLeave, createLeave, decideCoverage, editLeaveDates, getLeavePlan, nameCoverer, nameSupervisionCover, runLeaveAlertSweep,
 } from './leave-plan';
 
 /** Midday in the practice's zone, so no test sits on a midnight it did not mean to. */
@@ -438,5 +438,38 @@ describe('the leaver\'s supervisor is away (D-26)', () => {
     expect(await p.at()).toMatchObject({ recipientId: p.dev.id, coveringLeaveId: leave.id });
     expect(await alertRecipient(prisma, p.ended.id, '2026-10-06')).toEqual({ recipientId: p.dev.id, coveringLeaveId: leave.id });
     expect(await alertRecipient(prisma, p.ended.id, '2026-11-28')).toEqual({ recipientId: p.sam.id, coveringLeaveId: null });
+  });
+});
+
+/**
+ * Dev covers Nour's leave, so an alert about Nour's client is Dev's while it
+ * is on, and Dev gives notice (D-31's risk line). Whether that blocks Dev's
+ * departure is a question about Dev's last day, not about the day it is asked.
+ */
+describe('a departing coverer (D-31)', () => {
+  async function devLeaves(lastDayOn: LocalDate) {
+    const p = await onLeave();
+    const alert = await prisma.alert.create({ data: { recipientId: p.nour.id, clientId: p.mine.id, kind: 'screener_threshold' } });
+    expect(await runLeaveAlertSweep(FIRST)).toEqual([alert.id]);
+    const departure = await planDeparture(actor(p.ray), { userId: p.dev.id, lastDayOn }, RECORDED);
+    return { ...p, alert, departure, blockers: (clock: Clock) => departureBlockers(actor(p.ray), departure.id, clock) };
+  }
+
+  it('is not blocked by a leave that is over before the last day: the alert goes home first', async () => {
+    const p = await devLeaves('2026-12-04');
+    expect(await p.blockers(DAY_TWO)).toEqual([]);
+
+    expect(await runLeaveAlertSweep(BACK)).toEqual([p.alert.id]);
+    await executeDeparture(actor(p.ray), p.departure.id, on('2026-12-04'));
+    expect(await prisma.alert.findUniqueOrThrow({ where: { id: p.alert.id } })).toMatchObject({ recipientId: p.nour.id });
+  });
+
+  it('is blocked by a leave still on the last day, which the leave\'s own screen flags, and naming another cover clears it', async () => {
+    const p = await devLeaves('2026-11-27');
+    expect(await p.blockers(DAY_TWO)).toEqual([{ kind: 'unread_alert', clientId: p.mine.id, alertId: p.alert.id }]);
+    expect((await getLeavePlan(actor(p.ray), p.leave.id, DAY_TWO)).unavailable).toContain(p.dev.id);
+
+    await nameCoverer(actor(p.ray), p.leave.id, p.sam.id, DAY_TWO);
+    expect(await p.blockers(DAY_TWO)).toEqual([]);
   });
 });

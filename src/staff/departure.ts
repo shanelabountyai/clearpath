@@ -409,10 +409,13 @@ async function blockersOf(db: Tx | typeof prisma, d: DepartureRow, today: LocalD
   // Ask routing where each would go once this commits — a transfer's receiver,
   // the leaver's supervisor, a departed supervisee's new supervisor, or a cover
   // (D-31). A route that names nobody is the blocker — `strands` says which.
+  // Routed on the last day, not today: a leave the leaver covers that is over
+  // by then has already sent its alert home, and one still on has not.
   if (alerts.length) {
     const after = new Map(alerts.map((a) =>
       [a.clientId, afterDeparture(d, leaver.supervisorId, a.client, decided.get(a.clientId)?.receivingClinicianId)]));
-    const routes = await routesOf(db, [...after.values()], today);
+    const lastDay = d.lastDayOn.toISOString().slice(0, 10);
+    const routes = await routesOf(db, [...after.values()], today > lastDay ? today : lastDay);
     for (const alert of alerts) {
       const c = after.get(alert.clientId)!;
       if (strands(d.userId, c, routes.get(alert.clientId)!.recipientId)) {
