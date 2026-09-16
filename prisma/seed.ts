@@ -18,7 +18,7 @@ const { materialiseSeries } = await import('../src/scheduling/booking');
 const {
   createProgressNote, signProgressNote, coSignProgressNote, createProcessNote, closeProcessNote, amendProcessNote,
 } = await import('../src/notes/service');
-const { planDeparture, decideAssignment } = await import('../src/staff/departure');
+const { planDeparture, decideAssignment, executeDeparture } = await import('../src/staff/departure');
 const { createLeave, decideCoverage } = await import('../src/staff/leave-plan');
 const { guarded } = await import('../src/auth/guard');
 const { addDays, localDateOf, zonedToUtc } = await import('../src/time');
@@ -1121,6 +1121,34 @@ async function main() {
   });
   if (waiting) await coSignProgressNote(actor(dev), waiting.id);
   log(`${rosa.name} away ${rosaLeave.fromDate.toISOString().slice(0, 10)} to ${rosaLeave.toDate.toISOString().slice(0, 10)}, ${tom.name} covering her clients and ${dev.name} her supervision${waiting ? `; ${dev.name} countersigned the oldest of ${priya.name}'s waiting notes` : ''}`);
+
+  // ── a clinician leaves under a supervisor who is away (departure D-26) ──
+  //
+  // `coverage.test.ts` proves the routing rule; nothing seeded had shown the
+  // picture. Elin's one client is discharged, not transferred, so the alert
+  // has nowhere to go but her supervisor — and her supervisor is Rosa, away
+  // above with Dev covering her supervision. Reusing that leave rather than
+  // seeding a second one is the point: the same leave that covers Priya's
+  // countersignatures covers this too.
+  const elin = await mk('Elin Sorensen', 'therapist', rosa.id);
+  const elinClient = await prisma.client.create({
+    data: {
+      code: 'TC-091', firstName: 'Test', lastName: `Client 091 ${SURNAMES[6]}`,
+      dateOfBirth: new Date(Date.UTC(1988, 3, 14)),
+      email: 'client091@example.test', phone: '555-0191',
+      emergencyContactName: 'Emergency Contact 91', emergencyContactPhone: '555-0291',
+      emergencyContactRelation: 'Sibling', treatingClinicianId: elin.id,
+      language: 'en', referralSource: REFERRAL_MIX[91 % REFERRAL_MIX.length]!,
+    },
+  });
+  const elinScreener = await issueForm(desk, { clientId: elinClient.id, templateKey: 'wellbeing-check-in' });
+  await submitForm(elinScreener.token, { ...zeros(), item_9: 2, difficulty: 'very' });
+
+  const elinNotice = fixedClock(zonedToUtc(addDays(realToday, -1), 16 * 60));
+  const elinDeparture = await planDeparture(admin, { userId: elin.id, lastDayOn: realToday }, elinNotice);
+  await decideAssignment(admin, elinDeparture.id, { clientId: elinClient.id, disposition: 'discharge' }, elinNotice);
+  await executeDeparture(admin, elinDeparture.id, fixedClock(zonedToUtc(realToday, 12 * 60)));
+  log(`${elin.name} left today, discharging their one client; the unread alert had nowhere to go but ${rosa.name}, who is away — it routes to ${dev.name} instead (D-26)`);
 
   // ── a supervisor back from leave (P1-4) ───────────────────────────────
   //

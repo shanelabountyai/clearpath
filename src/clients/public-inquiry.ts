@@ -70,16 +70,24 @@ const MAX = { name: 80, email: 160, phone: 40 } as const;
  * of everyone who enquired, recoverable by anybody who read it. An HMAC under a
  * secret they do not have is not.
  *
- * ponytail: with no `CLEARPATH_THROTTLE_SECRET` set the key falls back to a
- * per-process random, which fails safe rather than weak — the hashes stay
- * unrecoverable, and what degrades is the limit's reach, which no longer spans
- * instances or restarts. Set the env var in any deployment running more than
- * one instance.
+ * Unset in production it throws, the same shape as `clientUrl`'s
+ * `CLEARPATH_BASE_URL` guard: a per-process random key still keeps the hashes
+ * unrecoverable, but on Vercel every request can land on a different instance,
+ * so a silent fallback would throttle each instance separately instead of
+ * refusing loudly.
  */
-const SECRET = process.env.CLEARPATH_THROTTLE_SECRET || randomBytes(32).toString('hex');
+const DEV_FALLBACK_SECRET = randomBytes(32).toString('hex');
 
-export const submitterKey = (address: string): string =>
-  createHmac('sha256', SECRET).update(address).digest('base64url');
+function throttleSecret(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.CLEARPATH_THROTTLE_SECRET) return env.CLEARPATH_THROTTLE_SECRET;
+  if (env.NODE_ENV === 'production' || env.CLEARPATH_ALLOW_CLOUD_DB) {
+    throw new Error('CLEARPATH_THROTTLE_SECRET is not set: the rate limit would not span instances or restarts');
+  }
+  return DEV_FALLBACK_SECRET;
+}
+
+export const submitterKey = (address: string, env: NodeJS.ProcessEnv = process.env): string =>
+  createHmac('sha256', throttleSecret(env)).update(address).digest('base64url');
 
 /**
  * Claim one of this submitter's slots for the hour, or refuse.

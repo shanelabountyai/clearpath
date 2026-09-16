@@ -84,27 +84,3 @@ export function Refusal({ code, messages = REFUSAL }: { code?: string; messages?
   );
 }
 
-const CONTROL = 'mt-1 w-full rounded-[var(--radius)] border px-2 py-1.5 text-body';
-const CONTROL_STYLE = { borderColor: 'var(--border)', background: 'var(--surface)' };
-
-export function Pick({ name, label, options, defaultValue = '', id = name }: {
-  name: string; label: string; options: { value: string; label: string }[]; defaultValue?: string; id?: string;
-}) {
-  return (
-    <div>
-      <label htmlFor={id} className="block text-micro font-medium tracking-wide text-subtle uppercase">{label}</label>
-      <select id={id} name={name} defaultValue={defaultValue} className={CONTROL} style={CONTROL_STYLE}>
-        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
-    </div>
-  );
-}
-
-export function DateInput({ name, label, min, defaultValue }: { name: string; label: string; min?: string; defaultValue?: string }) {
-  return (
-    <div>
-      <label htmlFor={name} className="block text-micro font-medium tracking-wide text-subtle uppercase">{label}</label>
-      <input id={name} name={name} type="date" min={min} defaultValue={defaultValue} required className={CONTROL} style={CONTROL_STYLE} />
-    </div>
-  );
-}

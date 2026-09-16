@@ -7,9 +7,9 @@ import { requireSession } from '@/src/session';
 import { maySupervise, mayTreat } from '@/src/staff/departure';
 import { listLeaves } from '@/src/staff/leave-plan';
 import { localDateOf } from '@/src/time';
-import { Badge, Button, Card, EmptyState, PageHeader, TierBanner } from '@/src/ui/primitives';
+import { Badge, Button, Card, EmptyState, PageHeader, SelectField, TextField, TierBanner } from '@/src/ui/primitives';
 import { withDenial } from '@/src/ui/denied';
-import { DateInput, LEAVE_REFUSAL, PHASE_TONE, Pick, Refusal, dayLabel, plural } from '../departures/ui';
+import { LEAVE_REFUSAL, PHASE_TONE, Refusal, dayLabel, plural } from '../departures/ui';
 import { recordLeave } from './actions';
 
 export const dynamic = 'force-dynamic';
@@ -63,13 +63,13 @@ async function LeavePage({ searchParams }: { searchParams: Promise<{ error?: str
             </p>
             <form action={recordLeave} className="space-y-3">
               {/* Not `userId` as the id: the dev switcher in the sidebar already owns it. */}
-              <Pick id="away" name="userId" label="Who is away" options={clinicians.map((c) => ({ value: c.id, label: c.name }))} />
-              <DateInput name="fromDate" label="First day away" min={today} />
-              <DateInput name="toDate" label="Last day away" min={today} />
-              <Pick name="coveringClinicianId" label="Who covers"
+              <SelectField id="away" name="userId" label="Who is away" options={clinicians.map((c) => ({ value: c.id, label: c.name }))} />
+              <TextField name="fromDate" label="First day away" type="date" required min={today} />
+              <TextField name="toDate" label="Last day away" type="date" required min={today} />
+              <SelectField name="coveringClinicianId" label="Who covers"
                 options={clinicians.filter((c) => mayTreat(c) && !requiresCoSignature(c.role)).map((c) => ({ value: c.id, label: c.name }))} />
               {/* P1-3: required when the person away supervises anybody; the door says so if it is missed. */}
-              <Pick name="coveringSupervisorId" label="Supervision cover"
+              <SelectField name="coveringSupervisorId" label="Supervision cover"
                 options={[
                   { value: '', label: 'Nobody — they supervise nobody' },
                   ...clinicians.filter(maySupervise).map((c) => ({ value: c.id, label: c.name })),

@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { CHARGEABLE } from '../scheduling/lifecycle';
-import { minutesToHHMM } from '../time';
+import { localDateOf, minutesToHHMM } from '../time';
 import type { DaySession } from '../scheduling/calendar';
 
 /**
@@ -247,6 +247,197 @@ export function Field({ label, children }: { label: string; children: ReactNode 
       <dt className="text-micro font-medium tracking-wide text-subtle uppercase">{label}</dt>
       <dd className="mt-0.5">{children || <span className="text-subtle">—</span>}</dd>
     </div>
+  );
+}
+
+const FIELD_LABEL = 'block text-micro font-medium tracking-wide text-subtle uppercase';
+const FIELD_CONTROL = 'mt-1 w-full rounded-[var(--radius)] border px-2 py-1.5 text-body';
+const FIELD_CONTROL_STYLE = { borderColor: 'var(--border)', background: 'var(--surface)' };
+
+/**
+ * A form input, labelled — `Field`'s sibling for writing rather than reading.
+ * Three pages each reinvented this independently before it was one component.
+ *
+ * `id` defaults to the field name and is overridden where two forms on the
+ * same page collect the same one — a duplicated DOM id makes `htmlFor`
+ * ambiguous, and a screen reader then announces the wrong label for the
+ * wrong box.
+ */
+export function TextField({
+  name, label, type = 'text', required = false, min, defaultValue, id = name,
+}: {
+  name: string; label: string; type?: string; required?: boolean; min?: string; defaultValue?: string; id?: string;
+}) {
+  return (
+    <div>
+      <label htmlFor={id} className={FIELD_LABEL}>{label}</label>
+      <input
+        id={id} name={name} type={type} required={required} min={min} defaultValue={defaultValue}
+        className={FIELD_CONTROL} style={FIELD_CONTROL_STYLE}
+      />
+    </div>
+  );
+}
+
+export function SelectField({
+  name, label, defaultValue = '', options, id = name,
+}: {
+  name: string; label: string; defaultValue?: string; options: { value: string; label: string }[]; id?: string;
+}) {
+  return (
+    <div>
+      <label htmlFor={id} className={FIELD_LABEL}>{label}</label>
+      <select id={id} name={name} defaultValue={defaultValue} className={FIELD_CONTROL} style={FIELD_CONTROL_STYLE}>
+        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </div>
+  );
+}
+
+/**
+ * A screener submission's right column — score, why it flagged, and the
+ * signature — each conditional on that fact existing at all.
+ */
+export function ScreenerResult({
+  totalScore, band, needsReview, reviewReasons, signatureName, submittedAt,
+}: {
+  totalScore: number | null;
+  band?: { label: string } | null;
+  needsReview: boolean;
+  reviewReasons: readonly string[];
+  signatureName: string | null;
+  submittedAt: Date;
+}) {
+  return (
+    <div className="space-y-4">
+      {totalScore !== null && (
+        <Card>
+          <h2 className="mb-1 font-semibold">Score</h2>
+          <p className="font-mono text-3xl">{totalScore}</p>
+          {band && <p className="mt-1 text-body text-muted">{band.label} band</p>}
+          <p className="mt-3 text-caption text-subtle">
+            A total is a conversation starter, not a diagnosis, and not a trend to chase.
+          </p>
+        </Card>
+      )}
+      {needsReview && (
+        <Card>
+          <h2 className="mb-1 font-semibold">Why this is flagged</h2>
+          <ul className="space-y-1 font-mono text-caption text-muted">
+            {reviewReasons.map((r) => <li key={r}>{r}</li>)}
+          </ul>
+          <p className="mt-2 text-caption text-subtle">
+            Reason codes are what travel to the alert and the audit log. The answers do not.
+          </p>
+        </Card>
+      )}
+      {signatureName && (
+        <Card>
+          <h2 className="mb-1 font-semibold">Signature</h2>
+          <p className="font-serif text-subhead">{signatureName}</p>
+          <p className="text-caption text-subtle">Typed name, {localDateOf(submittedAt)}</p>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Ageing escalates, but not at day two. An unsigned supervisee note is a
+ * compliance clock, and a queue that shouts on the first day teaches people to
+ * ignore it.
+ */
+export function ageTone(days: number) {
+  if (days >= 14) return { tone: 'danger' as const, label: `${days} days` };
+  if (days >= 7) return { tone: 'warning' as const, label: `${days} days` };
+  return { tone: 'neutral' as const, label: days === 0 ? 'today' : `${days} day${days === 1 ? '' : 's'}` };
+}
+
+/** One row in the co-signature queue. The action arrives as a prop, the same
+ *  way `BreakGlassDialog`'s does: primitives never import from app/. */
+export function CoSignRow({
+  note, action,
+}: {
+  note: {
+    id: string;
+    client: { lastName: string; firstName: string; code: string };
+    author: { name: string };
+    appointment: { startAt: Date } | null;
+    signedAt: Date | null;
+    waitingDays: number;
+  };
+  action: (formData: FormData) => void | Promise<void>;
+}) {
+  const age = ageTone(note.waitingDays);
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+      <div className="min-w-0">
+        <Link href={`/notes/${note.id}`} className="font-medium text-accent hover:underline">
+          {note.client.lastName}, {note.client.firstName}
+        </Link>
+        <p className="text-caption text-muted">
+          <span className="font-mono">{note.client.code}</span> · {note.author.name} ·
+          session {note.appointment ? localDateOf(note.appointment.startAt) : '—'} ·
+          signed {note.signedAt ? localDateOf(note.signedAt) : '—'}
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <Badge tone={age.tone}>waiting {age.label}</Badge>
+        <form action={action}>
+          <input type="hidden" name="noteId" value={note.id} />
+          <input type="hidden" name="returnTo" value="queue" />
+          <button
+            className="rounded-[var(--radius)] px-3 py-1.5 text-caption font-medium"
+            style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}
+          >
+            Co-sign
+          </button>
+        </form>
+      </div>
+    </li>
+  );
+}
+
+/** `leave:<id>`, `departure:decided_transfer`: a namespace and an identifier, nothing a person typed. */
+const AUDIT_CODE = /^[a-z_]+:[\w-]+$/;
+
+/**
+ * One row of the audit log. Names are resolved by the caller and passed in —
+ * the log itself stores ids, and a primitive has no business querying users.
+ */
+export function AuditRow({
+  row, actorLabel, roleLabel, clientLabel,
+}: {
+  row: {
+    id: string; at: Date; action: string; resource: string;
+    breakGlass: boolean; allowed: boolean; reason: string | null;
+  };
+  actorLabel: ReactNode;
+  roleLabel: string;
+  clientLabel: string;
+}) {
+  return (
+    <tr style={{ background: row.breakGlass ? 'var(--danger-soft)' : !row.allowed ? 'var(--warning-soft)' : undefined }}>
+      <td className="border-b px-3 py-1.5 font-mono whitespace-nowrap text-subtle" style={{ borderColor: 'var(--border)' }}>
+        {row.at.toISOString().replace('T', ' ').slice(0, 19)}
+      </td>
+      <td className="border-b px-3 py-1.5" style={{ borderColor: 'var(--border)' }}>{actorLabel}</td>
+      <td className="border-b px-3 py-1.5 text-muted" style={{ borderColor: 'var(--border)' }}>{roleLabel}</td>
+      <td className="border-b px-3 py-1.5" style={{ borderColor: 'var(--border)' }}>{row.action}</td>
+      <td className="border-b px-3 py-1.5 font-mono" style={{ borderColor: 'var(--border)' }}>{row.resource}</td>
+      <td className="border-b px-3 py-1.5 font-mono text-muted" style={{ borderColor: 'var(--border)' }}>{clientLabel}</td>
+      <td className="border-b px-3 py-1.5" style={{ borderColor: 'var(--border)' }}>
+        {row.breakGlass && <Badge tone="danger" glyph="⚠">break-glass</Badge>}{' '}
+        {row.allowed ? <Badge tone="success" glyph="✓">allowed</Badge> : <Badge tone="warning" glyph="⊘">denied</Badge>}
+      </td>
+      <td className="border-b px-3 py-1.5 text-muted" style={{ borderColor: 'var(--border)' }}>
+        {/* Only a code is a link. A break-glass justification is somebody's free text,
+            and free text never goes in a URL (hard rule 3). */}
+        {row.reason && AUDIT_CODE.test(row.reason) ? (
+          <Link href={`/audit?reason=${encodeURIComponent(row.reason)}`} className="font-mono hover:underline">{row.reason}</Link>
+        ) : (row.reason ?? '')}
+      </td>
+    </tr>
   );
 }
 

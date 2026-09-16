@@ -1,8 +1,8 @@
 import { Logo, Wordmark } from '@/src/ui/logo';
 import {
-  AppointmentChip, Badge, BreakGlassBar, BreakGlassDialog, CONFIRMATION_META,
-  Button, Card, EmptyState, Field, LockedPanel, PageHeader, STATUS_META,
-  StatusChip, TierBanner, money,
+  AppointmentChip, AuditRow, Badge, BreakGlassBar, BreakGlassDialog, CONFIRMATION_META,
+  Button, Card, CoSignRow, EmptyState, Field, LockedPanel, PageHeader, STATUS_META,
+  ScreenerResult, SelectField, StatusChip, TextField, TierBanner, ageTone, money,
   type Tier, type Tone,
 } from '@/src/ui/primitives';
 
@@ -198,6 +198,90 @@ export default function DesignSystemPage() {
         <BreakGlassBar reason="client called the practice in distress and their clinician is on leave" endAction={specimen} />
         <div className="-my-5">
           <BreakGlassDialog resource="this client record" action={specimen} />
+        </div>
+      </Section>
+
+      <Section
+        title="Form fields"
+        note="A label, a control, and an id that defaults to the field's name — overridden only where two forms on the same page collect the same field. Three pages reinvented this independently before it was one component."
+      >
+        <form className="grid gap-3 sm:grid-cols-2">
+          <TextField name="specimen-name" label="First name" />
+          <TextField name="specimen-date" label="Last day away" type="date" required />
+          <SelectField
+            name="specimen-select"
+            label="Who covers"
+            defaultValue="dev"
+            options={[{ value: 'dev', label: 'Dev Marchetti' }, { value: 'kai', label: 'Kai Oyelaran' }]}
+          />
+        </form>
+      </Section>
+
+      <Section
+        title="Screener result"
+        note="A submission's score, why it flagged, and its signature — each conditional on that fact existing. §5b."
+      >
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <ScreenerResult
+            totalScore={14}
+            band={{ label: 'Moderate' }}
+            needsReview
+            reviewReasons={['item_9_above_threshold']}
+            signatureName="Jordan Ruiz"
+            submittedAt={new Date('2026-09-01T09:00:00Z')}
+          />
+        </div>
+      </Section>
+
+      <Section
+        title="Co-signature queue"
+        note={`Ageing escalates, but not at day two — ${ageTone(0).label}, ${ageTone(9).label} and ${ageTone(16).label} each read differently before a number does.`}
+      >
+        <Card className="p-0">
+          <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
+            {[
+              { id: 's1', waitingDays: 0 },
+              { id: 's2', waitingDays: 9 },
+              { id: 's3', waitingDays: 16 },
+            ].map((n) => (
+              <CoSignRow
+                key={n.id}
+                note={{
+                  id: n.id,
+                  waitingDays: n.waitingDays,
+                  client: { lastName: 'Okafor', firstName: 'Amara', code: 'TC-014' },
+                  author: { name: 'Priya Vance' },
+                  appointment: { startAt: new Date('2026-09-01T09:00:00Z') },
+                  signedAt: new Date('2026-09-01T09:00:00Z'),
+                }}
+                action={specimen}
+              />
+            ))}
+          </ul>
+        </Card>
+      </Section>
+
+      <Section
+        title="Audit row"
+        note="Ids only — names are resolved by the caller and passed in, since the log itself never stores one. A break-glass or denied row tints the whole row rather than adding a third badge column."
+      >
+        <div className="scroll-x rounded-[var(--radius-lg)] border" style={{ borderColor: 'var(--border)' }}>
+          <table className="w-full min-w-[700px] border-collapse text-caption">
+            <tbody>
+              <AuditRow
+                row={{ id: 'a1', at: new Date('2026-09-01T09:00:00Z'), action: 'read', resource: 'progress_note', breakGlass: false, allowed: true, reason: 'leave:abc123' }}
+                actorLabel="Dev Marchetti" roleLabel="Supervisor" clientLabel="TC-014"
+              />
+              <AuditRow
+                row={{ id: 'a2', at: new Date('2026-09-01T09:00:00Z'), action: 'read', resource: 'process_note', breakGlass: false, allowed: false, reason: null }}
+                actorLabel="Priya Vance" roleLabel="Associate" clientLabel="TC-021"
+              />
+              <AuditRow
+                row={{ id: 'a3', at: new Date('2026-09-01T09:00:00Z'), action: 'read', resource: 'client', breakGlass: true, allowed: true, reason: 'break-glass: client in crisis' }}
+                actorLabel="Elena Sarkis" roleLabel="Practice manager" clientLabel="TC-009"
+              />
+            </tbody>
+          </table>
         </div>
       </Section>
 

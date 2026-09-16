@@ -20,6 +20,9 @@ const day = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().s
 // By text: Next's route announcer is a `role="alert"` of its own.
 const refusal = (page: Page, text: string) => page.getByRole('alert').filter({ hasText: text });
 const heading = (page: Page) => page.getByRole('heading', { name: `${AWAY} — leave` });
+// By the row's own link, not by the name appearing in it: Rosa's row says
+// "covering: Tom Bergqvist" too, so an unscoped lookup by name is ambiguous.
+const awayRow = (page: Page) => page.locator('li').filter({ has: page.getByRole('link', { name: AWAY }) });
 
 test.describe('a clinician away, and who covers', () => {
   test.describe.configure({ mode: 'serial' });
@@ -33,10 +36,10 @@ test.describe('a clinician away, and who covers', () => {
   test('the practice manager records a leave, splits a client, and is refused dates that run backwards', async ({ page }) => {
     await actAs(page, USERS.manager);
     await page.goto('/leave');
-    await page.getByLabel('Who is away').selectOption({ label: AWAY });
+    await page.getByLabel('Who is away').selectOption(userId(AWAY));
     await page.getByLabel('First day away').fill(day(7));
     await page.getByLabel('Last day away').fill(day(14));
-    await page.getByLabel('Who covers').selectOption({ label: COVERER });
+    await page.getByLabel('Who covers').selectOption(userId(COVERER));
     await page.getByRole('button', { name: 'Record leave' }).click();
 
     await expect(heading(page)).toBeVisible();
@@ -44,7 +47,7 @@ test.describe('a clinician away, and who covers', () => {
     expect(sql(`select reason from "AvailabilityOverride" where "userId" = '${userId(AWAY)}' and reason = 'Leave'`)).toBe('Leave');
 
     const first = page.locator('li', { has: page.getByRole('button', { name: 'Save' }) }).first();
-    await first.getByLabel('Covered by').selectOption({ label: SPLIT_TO });
+    await first.getByLabel('Covered by').selectOption(userId(SPLIT_TO));
     await first.getByRole('button', { name: 'Save' }).click();
     await expect(page.getByText(`Covered by ${SPLIT_TO}`)).toBeVisible();
     await expect(page.getByText(`Decided by ${USERS.manager}`)).toBeVisible();
@@ -57,9 +60,7 @@ test.describe('a clinician away, and who covers', () => {
   test('front desk reads who is away and who covers, and is shown nothing to change', async ({ page }) => {
     await actAs(page, USERS.frontDesk);
     await page.goto('/leave');
-    // By the row's own link, not by the name appearing in it: the seed has
-    // somebody else away with Tom covering, and that row says his name too.
-    const row = page.locator('li').filter({ has: page.getByRole('link', { name: AWAY }) });
+    const row = awayRow(page);
     await expect(row).toContainText(`covering: ${COVERER}`);
     await expect(row).toContainText('1 client with somebody else');
 
@@ -77,7 +78,7 @@ test.describe('a clinician away, and who covers', () => {
   test('cancelling an upcoming leave gives its days back to the calendar', async ({ page }) => {
     await actAs(page, USERS.manager);
     await page.goto('/leave');
-    await page.getByRole('link', { name: AWAY }).click();
+    await awayRow(page).getByRole('link', { name: AWAY }).click();
     await page.getByRole('button', { name: 'Cancel leave' }).click();
 
     await expect(page.getByRole('heading', { name: 'Cancelled' })).toBeVisible();

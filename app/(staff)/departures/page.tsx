@@ -5,10 +5,10 @@ import { systemClock } from '@/src/clock';
 import { requireSession } from '@/src/session';
 import { listDepartures, maySupervise } from '@/src/staff/departure';
 import { localDateOf } from '@/src/time';
-import { Badge, Button, Card, EmptyState, PageHeader, TierBanner } from '@/src/ui/primitives';
+import { Badge, Button, Card, EmptyState, PageHeader, SelectField, TextField, TierBanner } from '@/src/ui/primitives';
 import { withDenial } from '@/src/ui/denied';
 import { recordNotice } from './actions';
-import { DateInput, Pick, Refusal, STATUS_TONE, dayLabel } from './ui';
+import { Refusal, STATUS_TONE, dayLabel } from './ui';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,9 +61,9 @@ async function DeparturesPage({ searchParams }: { searchParams: Promise<{ error?
             <form action={recordNotice} className="space-y-3">
               {/* Not `userId` as the id: the dev switcher in the sidebar already owns it, and
                   a duplicate id points this label at the wrong select. */}
-              <Pick id="leaver" name="userId" label="Who is leaving" options={clinicians.map((c) => ({ value: c.id, label: c.name }))} />
-              <DateInput name="lastDayOn" label="Last day" min={localDateOf(systemClock.now())} />
-              <Pick name="receivingSupervisorId" label="Their associates go to"
+              <SelectField id="leaver" name="userId" label="Who is leaving" options={clinicians.map((c) => ({ value: c.id, label: c.name }))} />
+              <TextField name="lastDayOn" label="Last day" type="date" required min={localDateOf(systemClock.now())} />
+              <SelectField name="receivingSupervisorId" label="Their associates go to"
                 options={[
                   { value: '', label: 'Nobody — they supervise nobody' },
                   ...clinicians.filter((c) => maySupervise(c)).map((c) => ({ value: c.id, label: c.name })),

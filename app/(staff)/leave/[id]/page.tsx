@@ -2,10 +2,10 @@ import { may } from '@/src/auth/guard';
 import { requireSession } from '@/src/session';
 import { getLeavePlan } from '@/src/staff/leave-plan';
 import { localDateOf } from '@/src/time';
-import { Badge, Button, Card, EmptyState, Field, PageHeader, TierBanner } from '@/src/ui/primitives';
+import { Badge, Button, Card, EmptyState, Field, PageHeader, SelectField, TextField, TierBanner } from '@/src/ui/primitives';
 import { withDenial } from '@/src/ui/denied';
 import { backToday, cancel, chooseCoverer, chooseSupervisionCover, decideClient, moveDates } from '../actions';
-import { DateInput, LEAVE_REFUSAL, PHASE_TONE, Pick, Refusal, dayLabel, plural } from '../../departures/ui';
+import { LEAVE_REFUSAL, PHASE_TONE, Refusal, dayLabel, plural } from '../../departures/ui';
 
 export const dynamic = 'force-dynamic';
 
@@ -82,7 +82,7 @@ async function LeavePlanPage({ params, searchParams }: {
                       <form action={decideClient} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                         <input type="hidden" name="id" value={plan.id} />
                         <input type="hidden" name="clientId" value={c.id} />
-                        <Pick id={`coverer-${c.id}`} name="coveringClinicianId" label="Covered by" defaultValue={who.id}
+                        <SelectField id={`coverer-${c.id}`} name="coveringClinicianId" label="Covered by" defaultValue={who.id}
                           options={[
                             { value: leaveCoverer.id, label: `${leaveCoverer.name}, as the leave` },
                             ...choices(who).filter((o) => o.value !== leaveCoverer.id),
@@ -138,7 +138,7 @@ async function LeavePlanPage({ params, searchParams }: {
             {canUpdate ? (
               <form action={chooseCoverer} className="mt-4 space-y-2 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
                 <input type="hidden" name="id" value={plan.id} />
-                <Pick name="coveringClinicianId" label="Covering the leave" defaultValue={leaveCoverer.id} options={choices(leaveCoverer)} />
+                <SelectField name="coveringClinicianId" label="Covering the leave" defaultValue={leaveCoverer.id} options={choices(leaveCoverer)} />
                 <Button variant="quiet">Name coverer</Button>
               </form>
             ) : (
@@ -162,7 +162,7 @@ async function LeavePlanPage({ params, searchParams }: {
               {canUpdate ? (
                 <form action={chooseSupervisionCover} className="mt-3 space-y-2">
                   <input type="hidden" name="id" value={plan.id} />
-                  <Pick name="coveringSupervisorId" label="Covering supervision" defaultValue={supervisionCover?.id ?? ''} options={supervisionChoices} />
+                  <SelectField name="coveringSupervisorId" label="Covering supervision" defaultValue={supervisionCover?.id ?? ''} options={supervisionChoices} />
                   <Button variant="quiet">Name supervision cover</Button>
                 </form>
               ) : (
@@ -182,9 +182,9 @@ async function LeavePlanPage({ params, searchParams }: {
                     <dl><Field label="First day away">{dayLabel(plan.fromDate)}, and it stays</Field></dl>
                   </>
                 ) : (
-                  <DateInput name="fromDate" label="First day away" min={plan.today} defaultValue={plan.fromDate} />
+                  <TextField type="date" required name="fromDate" label="First day away" min={plan.today} defaultValue={plan.fromDate} />
                 )}
-                <DateInput name="toDate" label="Last day away" min={plan.today} defaultValue={plan.toDate} />
+                <TextField type="date" required name="toDate" label="Last day away" min={plan.today} defaultValue={plan.toDate} />
                 <Button variant="quiet">Move dates</Button>
               </form>
 

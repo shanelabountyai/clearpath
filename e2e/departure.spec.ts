@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { actAs, expect, sql, test, USERS } from './fixtures';
+import { actAs, expect, sql, test, USERS, userId } from './fixtures';
 
 /**
  * The plan screen, against the production build (departure PRD, Phase 4).
@@ -18,6 +18,9 @@ const LEAVER = 'Tom Bergqvist';
 // By text: Next's route announcer is a `role="alert"` of its own.
 const refusal = (page: Page, text: string) => page.getByRole('alert').filter({ hasText: text });
 const lastDay = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+// By the row's own link, not by the name alone — a name-only lookup is only
+// safe while no other seeded story happens to say the leaver's name too.
+const leaverRow = (page: Page) => page.locator('li').filter({ has: page.getByRole('link', { name: LEAVER }) });
 
 test.describe('a clinician leaving', () => {
   test.describe.configure({ mode: 'serial' });
@@ -31,7 +34,7 @@ test.describe('a clinician leaving', () => {
   test('the practice manager records notice, decides, and is refused before the last day', async ({ page }) => {
     await actAs(page, USERS.manager);
     await page.goto('/departures');
-    await page.getByLabel('Who is leaving').selectOption({ label: LEAVER });
+    await page.getByLabel('Who is leaving').selectOption(userId(LEAVER));
     await page.getByLabel('Last day').fill(lastDay);
     await page.getByRole('button', { name: 'Record notice' }).click();
 
@@ -57,7 +60,7 @@ test.describe('a clinician leaving', () => {
   test('front desk reads the plan and is shown nothing to change', async ({ page }) => {
     await actAs(page, USERS.frontDesk);
     await page.goto('/departures');
-    await page.getByRole('link', { name: LEAVER }).click();
+    await leaverRow(page).getByRole('link', { name: LEAVER }).click();
 
     await expect(page.getByRole('heading', { name: `${LEAVER} is leaving` })).toBeVisible();
     await expect(page.getByRole('button', { name: /Decide|Change|Execute departure|Withdraw notice/ })).toHaveCount(0);

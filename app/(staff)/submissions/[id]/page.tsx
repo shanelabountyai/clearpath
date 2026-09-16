@@ -5,7 +5,7 @@ import { requireSession } from '../../../../src/session';
 import { localDateOf } from '../../../../src/time';
 import { inLanguage, type LocalizedText } from '../../../../src/forms/schema';
 import type { Language } from '../../../../src/strings';
-import { Badge, Card, LockedPanel, PageHeader, TierBanner } from '../../../../src/ui/primitives';
+import { Badge, Card, LockedPanel, PageHeader, ScreenerResult, TierBanner } from '../../../../src/ui/primitives';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,36 +69,14 @@ export default async function SubmissionPage({ params }: { params: Promise<{ id:
           )}
         </Card>
 
-        <div className="space-y-4">
-          {s.totalScore !== null && (
-            <Card>
-              <h2 className="mb-1 font-semibold">Score</h2>
-              <p className="font-mono text-3xl">{s.totalScore}</p>
-              {s.band && <p className="mt-1 text-body text-muted">{s.band.label} band</p>}
-              <p className="mt-3 text-caption text-subtle">
-                A total is a conversation starter, not a diagnosis, and not a trend to chase.
-              </p>
-            </Card>
-          )}
-          {s.needsReview && (
-            <Card>
-              <h2 className="mb-1 font-semibold">Why this is flagged</h2>
-              <ul className="space-y-1 font-mono text-caption text-muted">
-                {s.reviewReasons.map((r) => <li key={r}>{r}</li>)}
-              </ul>
-              <p className="mt-2 text-caption text-subtle">
-                Reason codes are what travel to the alert and the audit log. The answers do not.
-              </p>
-            </Card>
-          )}
-          {s.signatureName && (
-            <Card>
-              <h2 className="mb-1 font-semibold">Signature</h2>
-              <p className="font-serif text-subhead">{s.signatureName}</p>
-              <p className="text-caption text-subtle">Typed name, {localDateOf(s.submittedAt)}</p>
-            </Card>
-          )}
-        </div>
+        <ScreenerResult
+          totalScore={s.totalScore}
+          band={s.band}
+          needsReview={s.needsReview}
+          reviewReasons={s.reviewReasons}
+          signatureName={s.signatureName}
+          submittedAt={s.submittedAt}
+        />
       </div>
     </>
   );

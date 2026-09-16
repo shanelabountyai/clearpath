@@ -213,6 +213,17 @@ describe('the hourly ceiling', () => {
     expect(submitterKey(ADDRESS)).not.toBe(submitterKey('198.51.100.4'));
   });
 
+  it('refuses to key the throttle on a per-instance random secret in production', () => {
+    const env = (e: Record<string, string | undefined>) => e as NodeJS.ProcessEnv;
+    expect(() => submitterKey(ADDRESS, env({ NODE_ENV: 'production' })))
+      .toThrow(/CLEARPATH_THROTTLE_SECRET/);
+    expect(() => submitterKey(ADDRESS, env({ CLEARPATH_ALLOW_CLOUD_DB: '1' })))
+      .toThrow(/CLEARPATH_THROTTLE_SECRET/);
+    expect(submitterKey(ADDRESS, env({ NODE_ENV: 'development' }))).toBe(submitterKey(ADDRESS));
+    expect(submitterKey(ADDRESS, env({ NODE_ENV: 'production', CLEARPATH_THROTTLE_SECRET: 'x' })))
+      .not.toBe(submitterKey(ADDRESS));
+  });
+
   it('starts the window at the instant the clock gave, whatever zone the session is in', async () => {
     // The claim is raw SQL into a zone-less column, where Prisma is not there to
     // convert. Read back through Prisma, which the purge also compares with.

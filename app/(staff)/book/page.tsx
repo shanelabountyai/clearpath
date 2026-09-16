@@ -5,7 +5,7 @@ import { requireSession } from '../../../src/session';
 import { availableSlots } from '../../../src/scheduling/booking';
 import { DURATION_MINUTES, type AppointmentType } from '../../../src/scheduling/recurrence';
 import { addDays, localDateOf, minutesToHHMM, WEEKDAYS, weekdayOf } from '../../../src/time';
-import { Badge, Card, PageHeader, TierBanner } from '../../../src/ui/primitives';
+import { Badge, Card, PageHeader, SelectField, TextField, TierBanner } from '../../../src/ui/primitives';
 import { book } from './actions';
 import { systemClock } from '@/src/clock';
 import { withDenial } from '@/src/ui/denied';
@@ -78,21 +78,16 @@ async function BookPage({
             with someone standing in front of them. */}
         <Card>
           <form className="space-y-3">
-            <Select name="clientId" label="Client" defaultValue={clientId}
+            <SelectField name="clientId" label="Client" defaultValue={clientId}
               options={clients.map((c) => ({ value: c.id, label: `${c.lastName}, ${c.firstName} (${c.code})` }))} />
-            <Select name="clinicianId" label="Clinician" defaultValue={clinicianId}
+            <SelectField name="clinicianId" label="Clinician" defaultValue={clinicianId}
               options={clinicians.map((c) => ({ value: c.id, label: c.name }))} />
-            <div>
-              <label htmlFor="date" className="block text-micro font-medium tracking-wide text-subtle uppercase">Date</label>
-              <input id="date" name="date" type="date" defaultValue={date}
-                className="mt-1 w-full rounded-[var(--radius)] border px-2 py-1.5 text-body"
-                style={{ borderColor: 'var(--border)', background: 'var(--surface)' }} />
-            </div>
-            <Select name="type" label="Session type" defaultValue={type}
+            <TextField name="date" label="Date" type="date" defaultValue={date} />
+            <SelectField name="type" label="Session type" defaultValue={type}
               options={(Object.keys(DURATION_MINUTES) as AppointmentType[]).map((t) => ({
                 value: t, label: `${t} — ${DURATION_MINUTES[t]} min`,
               }))} />
-            <Select name="modality" label="Modality" defaultValue={modality}
+            <SelectField name="modality" label="Modality" defaultValue={modality}
               options={[
                 { value: 'in_person', label: 'In person — needs a room' },
                 { value: 'telehealth', label: 'Telehealth — no room needed' },
@@ -179,26 +174,6 @@ async function BookPage({
         </Card>
       </div>
     </>
-  );
-}
-
-function Select({
-  name, label, defaultValue, options,
-}: {
-  name: string; label: string; defaultValue: string;
-  options: { value: string; label: string }[];
-}) {
-  return (
-    <div>
-      <label htmlFor={name} className="block text-micro font-medium tracking-wide text-subtle uppercase">{label}</label>
-      <select
-        id={name} name={name} defaultValue={defaultValue}
-        className="mt-1 w-full rounded-[var(--radius)] border px-2 py-1.5 text-body"
-        style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
-      >
-        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
-    </div>
   );
 }
 

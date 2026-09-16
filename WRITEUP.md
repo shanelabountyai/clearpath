@@ -3010,9 +3010,9 @@ driver upgrade ever changes that.
   audit log already records every knock.
 - **Slide the window.** Still a fixed hour, and the purge sweeps spent rows
   exactly as it did.
-- **Span instances without a secret.** With no `CLEARPATH_THROTTLE_SECRET`,
-  each instance keys its own hashes. That `ponytail:` stays. It is a deployment
-  setting, not a race.
+- **Span instances without a secret.** §47 closes the gap this bullet used to
+  describe: production now refuses to start rather than silently keying each
+  instance's hashes differently.
 
 ## 36. A reader with an end date
 
@@ -4075,6 +4075,126 @@ enough to sort; each `node` is still built by the same JSX that was already
 there.
 
 Loose thread 18, `NEXT.md`.
+
+## 46. Located by the row, not the name on it
+
+**The problem.** The seed started at five clinicians and is ten now, and
+`e2e/fixtures.ts`'s `userId(name)` — a raw SQL lookup by `User.name` — is how
+every spec turns a display name into an id. Two collision shapes had already
+been fixed once each, by hand, with a comment explaining why: `leave.spec.ts`
+scopes its "away" row to the `<li>` holding a link with that name, because
+Rosa's own row says "covering: Tom Bergqvist" too; `screenshots.spec.ts` locates
+a note by its own `href`, because the seeded queue holds another note from the
+same client. Neither fix generalized — every other spec still either selected
+a `<select>` option by its visible label (when the option's `value` is already
+the id) or clicked an unscoped `getByRole('link', { name })`, safe only because
+the current roster happens not to reuse that exact name anywhere else on the
+page yet.
+
+**The design.** Two mechanical conversions, no new abstraction: `selectOption({
+label })` became `selectOption(userId(name))` everywhere it appeared
+(`leave.spec.ts`, `departure.spec.ts`) — the id was already sitting in the
+option's `value` attribute, so this is strictly more precise, not a new
+pattern (`departure-demo.spec.ts:47` already did it this way). And the two
+demonstrated-risk unscoped link lookups — the "away" row in `leave.spec.ts`,
+the "leaver" row in `departure.spec.ts` — got the same row-filter helper
+`leave.spec.ts` already used once, given a name (`awayRow`, `leaverRow`) so
+the intent reads at the call site instead of living only in a comment.
+
+**What it deliberately does not do.** Touch `departure-demo.spec.ts` or
+`leave-demo.spec.ts`'s own link lookups (Maren, Hana) — both files' own
+docstrings say that clinician is "seeded... whom no other spec signs in as,"
+so the collision the general fix guards against does not exist for them yet.
+Scoping those too would be defending against a name reuse nobody has written.
+Nor does it give the seed stable, exported ids — `userId()` staying a runtime
+lookup is what makes it survive a reseed; the fix is in what specs do with the
+id once they have it, not in how they get it.
+
+Loose thread 12, `NEXT.md`.
+
+## 47. A key that would not span the fleet
+
+**The problem.** `submitterKey` hashes a public-enquiry submitter's address
+under `CLEARPATH_THROTTLE_SECRET` so the throttle table never holds a
+recoverable address. Unset, it fell back to a random key generated once per
+process. That degrades safely in the sense the hashes stay unrecoverable —
+but a platform serverless function is multi-instance by construction, so an
+unset secret in production was never a hypothetical: it is the default the
+first deploy runs under, and it means the hourly limit is enforced separately
+per instance rather than per submitter, silently multiplying it by however
+many instances happen to be warm.
+
+**The design.** The same shape `clientUrl` already uses for
+`CLEARPATH_BASE_URL`: unset and `NODE_ENV === 'production'` (or
+`CLEARPATH_ALLOW_CLOUD_DB`, for a local command pointed at the deployed
+database), it throws instead of falling back. Locally and in tests, the
+per-process random stays — nothing there needs the limit to span anything.
+`submitterKey` takes an optional `env`, defaulting to `process.env`, the same
+parameter `clientUrl` takes, so a test can assert the production path without
+setting real environment variables.
+
+**What it deliberately does not do.** Read `VERCEL_ENV` instead of
+`NODE_ENV` — `clientUrl`'s guard already established `NODE_ENV === 'production'
+|| CLEARPATH_ALLOW_CLOUD_DB` as this codebase's one production marker; a second
+spelling for the same question would be the inconsistency, not the fix.
+
+Loose thread 8, `NEXT.md`.
+
+## 48. The alert with nowhere to go but the cover
+
+**The problem.** D-26 says an alert belongs to the treating clinician, or —
+once they have left — to their supervisor, and a leave covers whoever it
+belongs to. `coverage.test.ts`'s `alexLeavesUnderSam` proves all three timing
+cases against the routing rule. Nothing seeded had shown it: the seed's one
+departure (Maren, the capstone) is planned rather than executed on purpose —
+executing it would spend the departure demo — and the seed's one discharged-
+under-an-away-supervisor case simply did not exist.
+
+**The design.** One new clinician, Elin, supervised by Rosa — reusing Rosa's
+own leave rather than seeding a second one, because that leave already covers
+a supervision (Dev is already its `coveringSupervisorId`, for Priya's
+countersignatures). Elin's one client is discharged, not transferred, so the
+alert has nowhere to go but Rosa, and Rosa is away: `executeDeparture` routes
+it to Dev in the same write, because Rosa's leave already exists when it
+runs. `screenshots.spec.ts` signs in as Dev and captures the alert sitting in
+his inbox, and README.md gets the paragraph the picture is evidence for.
+
+**What it deliberately does not do.** Seed the sweep-based timing case
+(departure before the window, or a cover named mid-leave) — `coverage.test.ts`
+already proves those at the unit level with a clock it can move by the
+minute; a seeded picture cannot show a sweep firing, only a state after one
+would have, and the immediate-routing case is the one a screenshot can
+actually be evidence of.
+
+Loose thread 11, `NEXT.md`.
+
+## 49. Four things page markup, not gallery specimens
+
+**The problem.** The design gallery (§41, §15) shows the vocabulary the app
+imports — so a component that exists only as inline markup inside a page has
+no way to appear in it. Four pieces were in that state: a screener's result
+card, a co-signature queue row, an audit log row, and — worst of the four —
+a labelled form input, independently reinvented in three separate files
+(`book/page.tsx`'s `Select`, `departures/ui.tsx`'s `Pick`/`DateInput`,
+`inquiries/page.tsx`'s `Text`/`Pick`) down to an identical Tailwind class
+string repeated nineteen times.
+
+**The design.** Six new exports on `src/ui/primitives.tsx`, each pulled out
+verbatim from where it lived and given the one gallery specimen §15 exists to
+require: `TextField`/`SelectField` (the form input, now one definition, six
+call sites across `book`, `departures` and `leave`'s four pages, and
+`inquiries`), `ScreenerResult`, `ageTone`/`CoSignRow`, and `AuditRow`. Each
+keeps primitives.tsx's own rule — no import from `app/` — by taking a server
+action or resolved display strings as props instead of reaching for one
+itself, the same shape `BreakGlassDialog`'s `action` prop already used.
+
+**What it deliberately does not do.** Extract the audit page's filter form or
+its `<table>`/`<thead>` shell, or `departures/ui.tsx`'s `Refusal` banner —
+none of those are duplicated anywhere, and the gallery's own rule (§41) is
+that a picture argues for something that already repeats or was missing
+entirely; a component with one caller and no absence to fill is not either.
+
+Loose thread 17, `NEXT.md`.
 
 ## Decisions log
 

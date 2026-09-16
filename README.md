@@ -82,6 +82,14 @@ The coverer's own process notes are not in it, and there is no version of this
 screen in which they would be — the same rule as the table above, applied to a
 permission that was temporary.
 
+Cover composes with departure, too. An alert belongs to the treating clinician,
+or — once they have left — to their supervisor; a leave covers whoever it
+belongs to. So a clinician who departs while their own supervisor is away
+leaves an alert that lands on the supervisor's cover, not on the closed
+account and not on a supervisor who cannot open it that day:
+
+![One alert in a clinician's inbox: a client code, a threshold badge, and an Acknowledge button, under the private tier banner. The alert belongs to a client whose treating clinician has since left the practice.](docs/screenshots/alert-routed-after-departure.png)
+
 Every one of those cells is asserted in [`src/auth/permissions.test.ts`](src/auth/permissions.test.ts).
 Authorization happens in exactly one place — [`src/auth/permissions.ts`](src/auth/permissions.ts) —
 and a test greps the rest of `src/` to prove no endpoint re-implements a role check.

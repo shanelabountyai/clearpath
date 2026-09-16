@@ -1,8 +1,7 @@
-import Link from 'next/link';
 import { queryAuditLog } from '../../../src/reports/audit';
 import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
-import { Badge, Card, EmptyState, PageHeader } from '../../../src/ui/primitives';
+import { AuditRow, Card, EmptyState, PageHeader } from '../../../src/ui/primitives';
 import { ROLE_LABEL } from '../../../src/ui/shell';
 import { withDenial } from '@/src/ui/denied';
 
@@ -106,34 +105,13 @@ async function AuditPage({
             </thead>
             <tbody>
               {result.rows.map((r) => (
-                <tr
+                <AuditRow
                   key={r.id}
-                  style={{ background: r.breakGlass ? 'var(--danger-soft)' : !r.allowed ? 'var(--warning-soft)' : undefined }}
-                >
-                  <td className="border-b px-3 py-1.5 font-mono whitespace-nowrap text-subtle" style={{ borderColor: 'var(--border)' }}>
-                    {r.at.toISOString().replace('T', ' ').slice(0, 19)}
-                  </td>
-                  <td className="border-b px-3 py-1.5" style={{ borderColor: 'var(--border)' }}>
-                    {userName.get(r.actorId) ?? <span className="font-mono text-subtle">{clientCode.get(r.actorId) ?? r.actorId.slice(0, 8)}</span>}
-                  </td>
-                  <td className="border-b px-3 py-1.5 text-muted" style={{ borderColor: 'var(--border)' }}>{ROLE_LABEL[r.actorRole]}</td>
-                  <td className="border-b px-3 py-1.5" style={{ borderColor: 'var(--border)' }}>{r.action}</td>
-                  <td className="border-b px-3 py-1.5 font-mono" style={{ borderColor: 'var(--border)' }}>{r.resource}</td>
-                  <td className="border-b px-3 py-1.5 font-mono text-muted" style={{ borderColor: 'var(--border)' }}>
-                    {r.clientId ? clientCode.get(r.clientId) ?? '—' : '—'}
-                  </td>
-                  <td className="border-b px-3 py-1.5" style={{ borderColor: 'var(--border)' }}>
-                    {r.breakGlass && <Badge tone="danger" glyph="⚠">break-glass</Badge>}{' '}
-                    {r.allowed ? <Badge tone="success" glyph="✓">allowed</Badge> : <Badge tone="warning" glyph="⊘">denied</Badge>}
-                  </td>
-                  <td className="border-b px-3 py-1.5 text-muted" style={{ borderColor: 'var(--border)' }}>
-                    {/* Only a code is a link. A break-glass justification is somebody's free text,
-                        and free text never goes in a URL (hard rule 3). */}
-                    {r.reason && CODE.test(r.reason) ? (
-                      <Link href={`/audit?reason=${encodeURIComponent(r.reason)}`} className="font-mono hover:underline">{r.reason}</Link>
-                    ) : (r.reason ?? '')}
-                  </td>
-                </tr>
+                  row={r}
+                  actorLabel={userName.get(r.actorId) ?? <span className="font-mono text-subtle">{clientCode.get(r.actorId) ?? r.actorId.slice(0, 8)}</span>}
+                  roleLabel={ROLE_LABEL[r.actorRole] ?? r.actorRole}
+                  clientLabel={r.clientId ? clientCode.get(r.clientId) ?? '—' : '—'}
+                />
               ))}
             </tbody>
           </table>
@@ -147,9 +125,6 @@ async function AuditPage({
     </>
   );
 }
-
-/** `leave:<id>`, `departure:decided_transfer`: a namespace and an identifier, nothing a person typed. */
-const CODE = /^[a-z_]+:[\w-]+$/;
 
 export default withDenial(AuditPage, {
   title: 'The audit log is the auditor’s',

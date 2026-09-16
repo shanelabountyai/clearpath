@@ -1,22 +1,9 @@
-import Link from 'next/link';
 import { coSignQueue } from '../../../src/notes/service';
 import { requireSession } from '../../../src/session';
-import { localDateOf } from '../../../src/time';
-import { Badge, Card, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
+import { CoSignRow, Card, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { coSignNote } from '../notes/actions';
 
 export const dynamic = 'force-dynamic';
-
-/**
- * Ageing escalates, but not at day two. An unsigned supervisee note is a
- * compliance clock, and a queue that shouts on the first day teaches people to
- * ignore it.
- */
-function ageTone(days: number) {
-  if (days >= 14) return { tone: 'danger' as const, label: `${days} days` };
-  if (days >= 7) return { tone: 'warning' as const, label: `${days} days` };
-  return { tone: 'neutral' as const, label: days === 0 ? 'today' : `${days} day${days === 1 ? '' : 's'}` };
-}
 
 export default async function CoSignPage() {
   const { actor } = await requireSession();
@@ -43,36 +30,7 @@ export default async function CoSignPage() {
       ) : (
         <Card className="p-0">
           <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-            {queue.map((n) => {
-              const age = ageTone(n.waitingDays);
-              return (
-                <li key={n.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-                  <div className="min-w-0">
-                    <Link href={`/notes/${n.id}`} className="font-medium text-accent hover:underline">
-                      {n.client.lastName}, {n.client.firstName}
-                    </Link>
-                    <p className="text-caption text-muted">
-                      <span className="font-mono">{n.client.code}</span> · {n.author.name} ·
-                      session {n.appointment ? localDateOf(n.appointment.startAt) : '—'} ·
-                      signed {n.signedAt ? localDateOf(n.signedAt) : '—'}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge tone={age.tone}>waiting {age.label}</Badge>
-                    <form action={coSignNote}>
-                      <input type="hidden" name="noteId" value={n.id} />
-                      <input type="hidden" name="returnTo" value="queue" />
-                      <button
-                        className="rounded-[var(--radius)] px-3 py-1.5 text-caption font-medium"
-                        style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}
-                      >
-                        Co-sign
-                      </button>
-                    </form>
-                  </div>
-                </li>
-              );
-            })}
+            {queue.map((n) => <CoSignRow key={n.id} note={n} action={coSignNote} />)}
           </ul>
         </Card>
       )}

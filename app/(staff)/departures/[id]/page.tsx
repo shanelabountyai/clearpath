@@ -4,10 +4,10 @@ import { clinicianCapacity, listReferrers } from '@/src/clients/inquiry';
 import { requireSession } from '@/src/session';
 import { getDeparturePlan, maySupervise, ownDrafts, type DepartureBlocker } from '@/src/staff/departure';
 import { localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '@/src/time';
-import { Badge, Button, Card, EmptyState, Field, PageHeader, TierBanner } from '@/src/ui/primitives';
+import { Badge, Button, Card, EmptyState, Field, PageHeader, SelectField, TierBanner } from '@/src/ui/primitives';
 import { withDenial } from '@/src/ui/denied';
 import { chooseSupervisor, decide, execute, withdraw } from '../actions';
-import { Pick, Refusal, STATUS_TONE, dayLabel, plural } from '../ui';
+import { Refusal, STATUS_TONE, dayLabel, plural } from '../ui';
 
 export const dynamic = 'force-dynamic';
 
@@ -134,14 +134,14 @@ async function DeparturePlanPage({ params, searchParams }: {
                         <form action={decide} className="grid gap-2 sm:grid-cols-[repeat(3,minmax(0,1fr))_auto] sm:items-end">
                           <input type="hidden" name="id" value={plan.id} />
                           <input type="hidden" name="clientId" value={c.id} />
-                          <Pick id={`disposition-${c.id}`} name="disposition" label="Decision"
+                          <SelectField id={`disposition-${c.id}`} name="disposition" label="Decision"
                             defaultValue={a?.disposition ?? 'transfer'} options={DISPOSITIONS} />
-                          <Pick id={`receiver-${c.id}`} name="receivingClinicianId" label="Receiving clinician"
+                          <SelectField id={`receiver-${c.id}`} name="receivingClinicianId" label="Receiving clinician"
                             defaultValue={a?.receivingClinicianId ?? ''}
                             options={[{ value: '', label: '—' }, ...receivers.map((r) => ({
                               value: r.id, label: `${r.name} · ${plural(r.caseload, 'client')}${r.accepting ? '' : ' · closed'}`,
                             }))]} />
-                          <Pick id={`referrer-${c.id}`} name="referredOutToId" label="Referred to"
+                          <SelectField id={`referrer-${c.id}`} name="referredOutToId" label="Referred to"
                             defaultValue={a?.referredOutToId ?? ''}
                             options={[{ value: '', label: '—' }, ...referrers.map((r) => ({ value: r.id, label: r.practice }))]} />
                           <Button variant="quiet">{a ? 'Change' : 'Decide'}</Button>
@@ -220,7 +220,7 @@ async function DeparturePlanPage({ params, searchParams }: {
             {canDecide && (orphans > 0 || plan.receivingSupervisor) && (
               <form action={chooseSupervisor} className="mt-4 space-y-2 border-t pt-3" style={{ borderColor: 'var(--border)' }}>
                 <input type="hidden" name="id" value={plan.id} />
-                <Pick name="supervisorId" label="Their associates go to" defaultValue={plan.receivingSupervisor?.id ?? ''}
+                <SelectField name="supervisorId" label="Their associates go to" defaultValue={plan.receivingSupervisor?.id ?? ''}
                   options={[
                     { value: '', label: 'Nobody named' },
                     ...receivers.filter((r) => maySupervise(r)).map((r) => ({ value: r.id, label: r.name })),

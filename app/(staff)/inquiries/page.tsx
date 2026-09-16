@@ -4,7 +4,7 @@ import { requireSession } from '../../../src/session';
 import { may } from '../../../src/auth/guard';
 import { clinicianCapacity, listInquiries, listReferrers, previewInquiryPurge, type InquiryStatus } from '../../../src/clients/inquiry';
 import { possibleDuplicates } from '../../../src/clients/repository';
-import { Badge, Card, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
+import { Badge, Card, EmptyState, PageHeader, SelectField, TextField, TierBanner } from '../../../src/ui/primitives';
 import { withDenial } from '@/src/ui/denied';
 import { addReferrer, assign, convert, discard, recordInquiry, setAccepting, toggleReferrer } from './actions';
 
@@ -200,17 +200,17 @@ async function InquiriesPage({
               </p>
               <form action={convert} className="grid gap-3 sm:grid-cols-2">
                 <input type="hidden" name="id" value={converting.id} />
-                <Text name="code" label="Client code" required />
-                <Text name="dateOfBirth" label="Date of birth" type="date" required />
-                <Pick name="treatingClinicianId" label="Treating clinician"
+                <TextField name="code" label="Client code" required />
+                <TextField name="dateOfBirth" label="Date of birth" type="date" required />
+                <SelectField name="treatingClinicianId" label="Treating clinician"
                   defaultValue={converting.requestedClinicianId ?? ''}
                   options={clinicians.map((c) => ({
                     value: c.id,
                     label: c.accepting ? c.name : `${c.name} — not taking anybody new`,
                   }))} />
-                <Pick name="language" label="Language" defaultValue="en"
+                <SelectField name="language" label="Language" defaultValue="en"
                   options={[{ value: 'en', label: 'English' }, { value: 'es', label: 'Spanish' }]} />
-                <Pick name="templateKey" label="Intake packet to send" defaultValue=""
+                <SelectField name="templateKey" label="Intake packet to send" defaultValue=""
                   options={[{ value: '', label: 'Do not send anything yet' },
                     ...templates.map((t) => ({ value: t.key, label: t.name }))]} />
                 <div className="flex items-end gap-2">
@@ -436,14 +436,14 @@ async function InquiriesPage({
                   one lives beside the call form rather than behind a settings
                   page a clinician cannot reach. */}
               <form action={addReferrer} className="mt-3 space-y-3">
-                <Text id="ref-practice" name="practice" label="Practice or agency" required />
-                <Text id="ref-name" name="name" label="Doctor or contact" />
+                <TextField id="ref-practice" name="practice" label="Practice or agency" required />
+                <TextField id="ref-name" name="name" label="Doctor or contact" />
                 {/* Labelled apart from the caller's own phone and email on
                     the form below — two boxes on one page called "Phone" is a
                     screen reader reading the same word twice for two
                     different people. */}
-                <Text id="ref-phone" name="phone" label="Practice phone" type="tel" />
-                <Text id="ref-email" name="email" label="Practice email" type="email" />
+                <TextField id="ref-phone" name="phone" label="Practice phone" type="tel" />
+                <TextField id="ref-email" name="email" label="Practice email" type="email" />
                 <button className="w-full rounded-[var(--radius)] border px-3 py-1.5 text-caption font-medium" style={{ borderColor: 'var(--border-strong)' }}>
                   Add to the directory
                 </button>
@@ -459,22 +459,22 @@ async function InquiriesPage({
             is nobody to consent yet. That happens at conversion, as its own act.
           </p>
           <form action={recordInquiry} className="space-y-3">
-            <Text name="firstName" label="First name" required />
-            <Text name="lastName" label="Last name" required />
-            <Text name="phone" label="Phone" type="tel" />
-            <Text name="email" label="Email" type="email" />
-            <Pick name="requestedClinicianId" label="Asked for" defaultValue=""
+            <TextField name="firstName" label="First name" required />
+            <TextField name="lastName" label="Last name" required />
+            <TextField name="phone" label="Phone" type="tel" />
+            <TextField name="email" label="Email" type="email" />
+            <SelectField name="requestedClinicianId" label="Asked for" defaultValue=""
               options={[{ value: '', label: 'Anybody' }, ...clinicians.map((c) => ({ value: c.id, label: c.name }))]} />
-            <Pick name="referralSource" label="How they found us" defaultValue="search"
+            <SelectField name="referralSource" label="How they found us" defaultValue="search"
               options={Object.entries(REFERRAL_LABEL).map(([value, label]) => ({ value, label }))} />
             {/* Only kept when the source above is a GP or clinician — the
                 server drops it otherwise and the database refuses the row that
                 disagrees, so a change of mind on the select above cannot leave
                 a surgery attached to "found us online". */}
-            <Pick name="referrerId" label="Which practice (GP referrals only)" defaultValue=""
+            <SelectField name="referrerId" label="Which practice (GP referrals only)" defaultValue=""
               options={[{ value: '', label: 'Not recorded' },
                 ...openReferrers.map((r) => ({ value: r.id, label: referrerLabel.get(r.id)! }))]} />
-            <Text name="referralNote" label="Referral detail" />
+            <TextField name="referralNote" label="Referral detail" />
             <div>
               <label htmlFor="note" className="block text-micro font-medium tracking-wide text-subtle uppercase">
                 Scheduling preferences
@@ -498,44 +498,6 @@ async function InquiriesPage({
         </div>
       </div>
     </>
-  );
-}
-
-/**
- * `id` defaults to the field name and is overridden where two forms on this
- * page collect the same one — a duplicated DOM id makes `htmlFor` ambiguous,
- * and a screen reader then announces the wrong label for the wrong box.
- */
-function Text({ name, label, type = 'text', required = false, id = name }: {
-  name: string; label: string; type?: string; required?: boolean; id?: string;
-}) {
-  return (
-    <div>
-      <label htmlFor={id} className="block text-micro font-medium tracking-wide text-subtle uppercase">{label}</label>
-      <input
-        id={id} name={name} type={type} required={required}
-        className="mt-1 w-full rounded-[var(--radius)] border px-2 py-1.5 text-body"
-        style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
-      />
-    </div>
-  );
-}
-
-function Pick({ name, label, defaultValue, options }: {
-  name: string; label: string; defaultValue: string;
-  options: { value: string; label: string }[];
-}) {
-  return (
-    <div>
-      <label htmlFor={name} className="block text-micro font-medium tracking-wide text-subtle uppercase">{label}</label>
-      <select
-        id={name} name={name} defaultValue={defaultValue}
-        className="mt-1 w-full rounded-[var(--radius)] border px-2 py-1.5 text-body"
-        style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
-      >
-        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
-    </div>
   );
 }
 

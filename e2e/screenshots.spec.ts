@@ -149,6 +149,17 @@ test.describe('README screenshots', () => {
     await expect(away.locator('li', { hasText: 'countersigned' })).toContainText('TC-090');
     await away.screenshot({ path: `${shot}/while-you-were-away.png` });
 
+    // D-26: a clinician leaves under a supervisor who is away. Elin's one
+    // client was discharged, not transferred, so the alert had nowhere to go
+    // but her supervisor, Rosa — and Rosa is away, with Dev covering her
+    // supervision. The picture is that alert sitting in Dev's inbox, not
+    // Rosa's or the closed account's.
+    await actAs(page, 'Dev Marchetti');
+    await page.goto('/alerts');
+    const routed = page.locator('li').filter({ has: page.getByText('TC-091', { exact: true }) });
+    await expect(routed).toBeVisible();
+    await routed.screenshot({ path: `${shot}/alert-routed-after-departure.png` });
+
     // ── the client's own tier ─────────────────────────────────────────────
     //
     // Every picture above is of a staff screen, and the access table they
