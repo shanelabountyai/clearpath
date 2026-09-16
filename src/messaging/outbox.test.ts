@@ -1,7 +1,8 @@
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../db';
 import { makeClient, makeUser, resetDb, settings } from '../test/harness';
-import { CLIENT_TEMPLATES, DENY_LISTS, IndiscreetMessage, LANGUAGES, assertDiscreet, fold, indiscreetTerms, queueToClient, queueToClinician } from './outbox';
+import { CLIENT_TEMPLATES, DENY_LISTS, IndiscreetMessage, LANGUAGES, assertDiscreet, clientUrl, fold, indiscreetTerms, queueToClient, queueToClinician } from './outbox';
 
 beforeEach(async () => {
   await resetDb();
@@ -193,4 +194,78 @@ it('a clinician-directed message goes to a person, never to a client row', async
   });
   expect(msg.userId).toBe(t.id);
   expect(msg.clientId).toBeNull();
+});
+
+describe('the base URL a client-facing link points at', () => {
+  const env = (e: Record<string, string | undefined>) => e as NodeJS.ProcessEnv;
+
+  it('uses the explicit variable, trimmed of its trailing slash', () => {
+    expect(clientUrl('/p/abc', env({ CLEARPATH_BASE_URL: 'https://clinic.example.org/' })))
+      .toBe('https://clinic.example.org/p/abc');
+  });
+
+  it('adds the scheme a pasted host is missing, because a host alone is not a link', () => {
+    expect(clientUrl('/f/abc', env({ CLEARPATH_BASE_URL: 'clinic.example.org' })))
+      .toBe('https://clinic.example.org/f/abc');
+  });
+
+  it("falls back to the deployment's own production host", () => {
+    expect(clientUrl('/p/abc', env({ VERCEL_PROJECT_PRODUCTION_URL: 'clearpath.vercel.app' })))
+      .toBe('https://clearpath.vercel.app/p/abc');
+  });
+
+  it('prefers the explicit variable over it, which is what a custom domain needs', () => {
+    expect(clientUrl('/p/abc', env({
+      CLEARPATH_BASE_URL: 'https://clinic.example.org',
+      VERCEL_PROJECT_PRODUCTION_URL: 'clearpath.vercel.app',
+    }))).toBe('https://clinic.example.org/p/abc');
+  });
+
+  it('is the dev default when nothing is set outside production', () => {
+    expect(clientUrl('/p/abc', env({ NODE_ENV: 'development' }))).toBe('http://localhost:3700/p/abc');
+  });
+
+  /**
+   * The whole point of the item. A queued link is unrecallable and reports
+   * success, so the run has to stop instead.
+   */
+  it('refuses to build a link in production with no host configured', () => {
+    expect(() => clientUrl('/p/abc', env({ NODE_ENV: 'production' }))).toThrow(/CLEARPATH_BASE_URL/);
+  });
+
+  /**
+   * `db:seed:prod` is a local `tsx` run against Neon: no NODE_ENV, every link
+   * it writes client-facing, and 25 minutes of it before anyone looks.
+   */
+  it('refuses for a command pointed at the deployed database, NODE_ENV or not', () => {
+    expect(() => clientUrl('/p/abc', env({ CLEARPATH_ALLOW_CLOUD_DB: '1' }))).toThrow(/CLEARPATH_BASE_URL/);
+  });
+
+  it('names no token in the refusal', () => {
+    try {
+      clientUrl('/p/secret-token-abc', env({ NODE_ENV: 'production' }));
+      expect.unreachable();
+    } catch (e) {
+      expect((e as Error).message).not.toContain('secret-token-abc');
+    }
+  });
+
+  it('is the only place that knows a client-facing host', () => {
+    const offenders: string[] = [];
+    for (const dir of ['src', 'app', 'prisma']) {
+      for (const f of readdirSync(dir, { recursive: true, encoding: 'utf8' })) {
+        const path = `${dir}/${f}`;
+        if (!/\.tsx?$/.test(f) || f.endsWith('.test.ts')) continue;
+        if (path === 'src/messaging/outbox.ts' || path.startsWith('src/generated/')) continue;
+        if (!statSync(path).isFile()) continue;
+        // A client-facing link is an absolute URL somewhere near a portal or
+        // form path. Anything building one outside `clientUrl` is a host that
+        // can be wrong in production with nothing to report it.
+        if (/https?:\/\/[^'"`\s]*(localhost:3700|\/[pf]\/)/.test(readFileSync(path, 'utf8'))) {
+          offenders.push(path);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
 });

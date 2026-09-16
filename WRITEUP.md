@@ -3918,6 +3918,94 @@ On the deployed demo the card currently shows three jobs that have never run.
 That is not a seeding gap. It is the true state of the deployment, and it is the
 first time anything has said so.
 
+## 43. The link that pointed at a laptop
+
+The three schedules from §40 are hourly, and what they queue is a message with a
+link in it. Six places in the codebase built one of those links. Five of them
+named `http://localhost:3700`.
+
+Four wore it as a default — `input.baseUrl ?? 'http://localhost:3700'` — which
+reads like configuration and is not, because nothing in this repository has ever
+passed `baseUrl`. Not a route, not an action, not a script, not a test. A
+parameter no caller supplies is a default with a longer signature, and the fifth
+site dropped even that pretence and wrote the string in. The sixth is the seed,
+which is how the deployed demo got its rows.
+
+So every portal link, form link and appointment reminder the production
+deployment has ever queued carries a URL that resolves to nothing on a client's
+phone.
+
+It is the same failure as §42 wearing different clothes. The queue row is
+correct. The template rendered. The deny-list passed — `localhost:3700` says
+nothing about what kind of practice this is, so the one control that reads every
+outgoing body had no reason to object. The audit row is written, the job returns
+a count, the card on `/practice` goes green. Every instrument the application has
+reports a success, and the only instrument that would have caught it is a
+client's thumb.
+
+The difference is what it costs. A 401 did nothing, for two days, and the fix was
+to set a variable and let the next hour run. A message is *sent*. It cannot be
+recalled, it arrives on a lock screen at the moment somebody is deciding whether
+to keep an appointment, and what it asks them to do is tap something that fails.
+
+### One function, because a default is not a decision
+
+`clientUrl(path)` in `src/messaging/outbox.ts` is now the only code in the
+project that knows a client-facing host, and the four `baseUrl` parameters are
+gone rather than plumbed. The module choice is not filing: the base URL is part
+of what the practice says to a client, and it belongs beside the deny-list and
+the templates, which are the other two things that decide what a body contains.
+
+Unset in production it **throws**, and does not fall back. That is the whole
+decision. A fallback is what produced this: `??` is a promise that the wrong
+answer will be used quietly. A queued dead link is unrecallable and reports
+success; a stopped run is recoverable and reports failure, and §42 is what makes
+the second sentence true — the throw lands in `JobRun` as an error class and a
+timestamp, and the badge is red inside two ticks. The two sections are one
+mechanism: a monitor that only watches for absence is only as useful as the code
+that is willing to be absent.
+
+`NODE_ENV === 'production'` is not the whole test, and the hole is a specific
+command. `db:seed:prod` is a local `tsx` run against Neon with no `NODE_ENV` set
+at all, it writes client-facing links for the entire demo, and it takes twenty
+five minutes printing nothing. It would have sailed straight past a
+`NODE_ENV` check and quietly written the same localhost rows again. So the guard
+also refuses on `CLEARPATH_ALLOW_CLOUD_DB` — the marker every command pointed at
+the deployed database already carries, and the only thing in this project that
+means "this process is talking to production."
+
+On Vercel the variable is optional, because `VERCEL_PROJECT_PRODUCTION_URL` is
+the project's own production domain and is already correct. That is deliberate
+after §42: a deployment that is right by default cannot spend two days being
+wrong because somebody did not know a variable existed. The explicit variable
+stays as the override a custom domain needs.
+
+Two smaller guards. A host pasted without its scheme becomes `https://` rather
+than being used as written, because `clinic.example.org/p/abc` in a text message
+is a relative link — a link that does nothing, which is the failure this section
+is about, reintroduced by a missing eight characters. And the refusal names the
+variable and no token: it is thrown while building a URL, so the one thing in
+scope is a credential, and hard rule 3's reach into error messages is tested by
+asserting the token is nowhere in the message.
+
+### The grep, again
+
+The thing that actually went wrong was not a wrong default. It was that there
+were six places, and nobody could see all six at once. That is what this
+codebase already answers with a test that reads its own source — `permissions.ts`
+for role checks, `notes/service.ts` for `authorId`, `vercel.json` for job names —
+so `outbox.test.ts` now fails the build on any absolute URL near a `/p/` or `/f/`
+path outside `clientUrl`. It was verified against the five lines it was written
+to catch, and against a hardcoded *production* domain, which is the mistake
+somebody makes next while fixing this one.
+
+What it deliberately does not do is derive a different host per environment. A
+preview deployment now builds links pointing at the production domain, where the
+token it minted against a preview database will not resolve. That is a real
+edge, and it is narrower than the one being closed: preview deployments do not
+message clients, and a second derivation rule is another place to be quietly
+wrong.
+
 ## Decisions log
 
 | Decision | Why |
@@ -4155,6 +4243,11 @@ first time anything has said so.
 | A returning supervisor's countersignature list rides its own guard request, and the dismissal rides no cell at all | Two halves of one screen, opposite answers. The list is a real clinical read on a door the actor genuinely holds — `authorSupervisorId`, the co-sign queue's — so it earns its own audit row rather than hiding inside the treating one. The dismissal is a banner being cleared: routing it through `leave.update` would have meant giving clinicians the cell that decides who covers their clients, to clear a banner. Self-scoped by the query instead, and off the record, because it writes no clinical fact and reveals none |
 | `nonresponse:run` gets an hourly cron and `delivery:run` deliberately gets none | Both are runner scripts, and only one reads evidence. The delivery stub marks messages `delivered` with no carrier having said so, and the no-show fee rests on that state — scheduling it is a job that fabricates the evidence for a charge. The sweep that reads it is idempotent and costs only lateness when missed |
 | The non-response sweep is its own runner rather than a second sweep on `remindersRun` | The reminder runner touches no money and this is the only automatic path to a charge, so they need separate stop switches: sharing one means the way to stop billing for silence is to stop reminding anybody |
+| Every client-facing link is built by one function, and the four `baseUrl` parameters were deleted rather than plumbed | Nothing had ever passed one in two months, so they were defaults wearing a signature — and the fifth site skipped the pretence and hardcoded the host. A configuration point nobody configures is where the wrong answer hides |
+| `clientUrl` throws in production rather than falling back to localhost | A `??` is a promise that the wrong answer will be used quietly, and this one is unrecallable: it reaches a lock screen and reports success. A stopped run is recoverable and, since §42, visible |
+| The refusal also fires on `CLEARPATH_ALLOW_CLOUD_DB`, not just `NODE_ENV` | `db:seed:prod` is a local `tsx` run against Neon with no `NODE_ENV`, writing every client-facing link in the demo over twenty five silent minutes — the exact command a `NODE_ENV` check misses |
+| Vercel's own `VERCEL_PROJECT_PRODUCTION_URL` is the fallback, with the explicit variable as the override | After `CRON_SECRET` spent two days unset, a deployment that is correct without anybody remembering a variable is worth more than one that is configurable |
+| A preview deployment links to the production host rather than deriving its own | Previews do not message clients, and a second derivation rule is a second place to be quietly wrong |
 
 ## What this project deliberately is not
 

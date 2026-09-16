@@ -1,71 +1,67 @@
 # Next
 
-**First, the step that needs a person** (carried, and now visible).
+**First, the steps that need a person** (carried, and one new).
 
 1. **`CRON_SECRET` is still unset on Vercel.** All three cron routes answer 401
    until it is set:
 
        openssl rand -hex 32 | tr -d '\n' | vercel env add CRON_SECRET production --sensitive
 
-   Then redeploy. The check is no longer "read the platform log": open
-   **/practice → Scheduled jobs** and the three badges should go from
-   **Never run** to **Ran**, with counts and a timestamp, within the hour.
+   Then redeploy. Check: **/practice → Scheduled jobs**, the three badges go
+   from **Never run** to **Ran** within the hour.
 
-**Item: loose thread 7 — every queued link in production says
-`http://localhost:3700`.** Four places build a client-facing URL and three of
-them default to that stub; `src/staff/departure.ts:847` hardcodes it with no
-override to pass. Every portal link, every form link and every reminder the
-practice has queued in production carries a URL that resolves to nothing on the
-client's phone — and two hourly crons now queue them on a schedule. Client-facing
-and on the messaging path, so **Opus**:
+2. **Production's existing outbox rows still say `http://localhost:3700`.** The
+   fix stops new ones; it does not rewrite rows already queued. Nothing sends
+   (the outbox is the stub), so this only affects what the demo *shows*.
+   Re-seeding fixes it — `npm run db:seed:prod`, ~25 silent minutes, do not kill
+   it. Your call whether the demo needs it.
+
+   Nothing to set for the fix itself: on Vercel `clientUrl` falls back to
+   `VERCEL_PROJECT_PRODUCTION_URL` (the custom domain). `CLEARPATH_BASE_URL` is
+   now in the local `.env.production` and `.env.e2e`.
+
+**Item: loose thread 10 — an alert the leaver holds only as a *coverer* on
+someone else's leave still blocks their departure** (D-31 risk line). It's a
+correctness bug in the departure blocker, so **Opus**:
 
     /model opus
 
-## What just landed (loose thread 19)
+## What just landed (loose thread 7)
 
-- **The 500 was the smaller half.** The larger half was in this file the whole
-  time: `CRON_SECRET` is unset, so the routes answer **401 — a *successful*
-  HTTP response**. Three jobs have done nothing, hourly, for two days, and
-  every instrument that exists reports them healthy. `WRITEUP.md` §42.
-- **A monitor inside the thing that can fail is not a monitor.** Every real way
-  these stop — a cron that never fires, a route turned away at the door, a
-  function killed at its timeout — is a path on which no handler code runs. So
-  the new `JobRun` table records **runs**, and the signal is **absence**: the
-  last row per job, and how old it is.
-- **`overdueAfter` is two ticks, not one.** These runners are documented as
-  late-rather-than-wrong when missed, so one skipped hour is not news. Nothing
-  that is running misses two.
-- **The error's class name, never its message.** Hard rule 3 reaches the
-  monitoring table: a Prisma error quotes the row that caused it. `TypeError`
-  plus a timestamp is enough to know which log to open. A test throws an error
-  carrying a client's name and asserts the name is nowhere in the row.
-- **One name in three places.** `SCHEDULED`, `vercel.json` and `app/api/cron`
-  are now held to the same list by the wiring test — a job recorded as `purge`
-  and watched as `purges` is a green badge nothing is looking at.
-- **The surface is a card on /practice**, next to the retention windows. It
-  reads unguarded and writes no audit row, for the reason `may()` gives for
-  staying silent, and is reached only after that page's own guard has run.
-- **Deliberately not an alert**, and the `ponytail:` on `jobHealth` says so: the
-  app has one outbound channel and it goes to clients. The missing piece is an
-  operations channel, not the detection.
-- **Two `ponytail:` remain in `src/`** — `public-inquiry.ts` and `inbound.ts`,
-  plus the new one on `jobHealth`.
+- **Six places built a client URL; five said `http://localhost:3700`.** Four
+  took a `baseUrl` nobody ever passed, `departure.ts` hardcoded it, and the seed
+  did too. `WRITEUP.md` §43.
+- **`clientUrl(path)` in `src/messaging/outbox.ts` is now the only code that
+  knows a client-facing host.** The four `baseUrl` params were deleted, not
+  wired up.
+- **It throws rather than fall back** when production has no host. A dead link
+  can't be recalled and still reports success. A throw stops the run and shows
+  up in `JobRun`.
+- **It also refuses on `CLEARPATH_ALLOW_CLOUD_DB`.** `db:seed:prod` runs locally
+  with no `NODE_ENV`, so a `NODE_ENV` check alone would have let it write
+  localhost links into production again.
+- **A host pasted without `https://` gets the scheme added.** Otherwise it's a
+  relative link in a text message.
+- **A grep test in `outbox.test.ts`** fails the build on an absolute URL near
+  `/p/` or `/f/` anywhere else. Checked against the five lines it replaced and
+  against a hardcoded production domain.
+- **Deliberately not per-environment:** a preview deployment links to the
+  production host. Previews don't message clients.
 
 ## Gate
 
-Typecheck clean. **Unit suite: 32 files, 3214 passed, 0 skipped, exit 0.**
-**e2e `denials`: 7 passed, exit 0** — that spec walks every static staff route
-as every seeded person, so it is the one that proves the new card renders (and
-does not 500) for all six roles.
+Typecheck clean. **Unit suite: 32 files, 3223 passed (+9), 0 skipped, exit 0.**
+**e2e `intake`: 11 passed, exit 0**, against the production build. It ran after
+`db:seed:e2e`, which now goes through `clientUrl`. The resolved host was checked
+directly under each environment: e2e in production mode → `localhost:3700`;
+the `db:seed:prod` env → `https://clinic.labintelligence.co`; cloud DB with the
+variable unset → refuses.
 
-Migrations applied to dev, test and e2e. `npm run db:migrate:prod` is still
-manual before the next push.
+No migration, so no `db:migrate:prod`. No full e2e sweep and no `shots`: the
+seeded links are byte-identical locally, so no picture changed.
 
-**No full e2e sweep, and no `npm run shots`.** No screenshotted page changed —
-`/practice` appears in no README picture.
-
-Carried from before: **run long sweeps as tracked background tasks and re-run
-on a 137 before investigating anything**, and `dotenv` bare is Python — use
+Carried: **run long sweeps as tracked background tasks and re-run on a 137
+before investigating anything**, and bare `dotenv` is Python — use
 `./node_modules/.bin/dotenv`.
 
 ## Loose threads
@@ -82,10 +78,8 @@ on a 137 before investigating anything**, and `dotenv` bare is Python — use
 5. ~~§5c's ten uncaptured screens.~~ Landed 2026-09-15. `WRITEUP.md` §41.
 6. ~~`executeDeparture`'s `ponytail:` 30s transaction budget.~~ Landed
    2026-09-15.
-7. **Queued links use the stub's `http://localhost:3700`**, on two hourly crons.
-   `portal/service.ts:101`, `forms/service.ts:117`, `scheduling/reminders.ts:172`
-   default to it; `staff/departure.ts:847` hardcodes it. **This is the next
-   item.**
+7. ~~Queued links use the stub's `http://localhost:3700`.~~ Landed 2026-09-16.
+   `WRITEUP.md` §43.
 8. `CLEARPATH_THROTTLE_SECRET` must be set on any multi-instance deployment.
 9. **Three of the seed's stories are dated from the real clock** — the capstone
    leave, Rosa's, and Anders'. Cause **unknown**: one `shots` run produced a

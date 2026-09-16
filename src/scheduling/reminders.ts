@@ -2,7 +2,7 @@ import { guarded } from '../auth/guard';
 import type { Actor } from '../auth/permissions';
 import { DAY, systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
-import { queueToClient } from '../messaging/outbox';
+import { clientUrl, queueToClient } from '../messaging/outbox';
 import { ensurePortalLink } from '../portal/service';
 import {
   cadenceStages,
@@ -64,7 +64,7 @@ export interface HorizonResult {
  */
 export async function runReminderHorizon(
   clock: Clock = systemClock,
-  opts: { horizonDays?: number; baseUrl?: string } = {},
+  opts: { horizonDays?: number } = {},
 ): Promise<HorizonResult> {
   const now = clock.now();
   const s = await prisma.practiceSettings.findUnique({ where: { id: 1 } });
@@ -169,7 +169,7 @@ export async function runReminderHorizon(
             templateKey: 'appointment_reminder',
             scheduledFor: now,
             startAt: appt.startAt,
-            link: `${opts.baseUrl ?? 'http://localhost:3700'}/p/${link.token}`,
+            link: clientUrl(`/p/${link.token}`),
           }, tx);
           // Unreachable after `confirmationRequired`, and a hard stop rather
           // than a skip if it ever is: a reminder row without its outbox row

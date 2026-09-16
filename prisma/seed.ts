@@ -26,7 +26,7 @@ const { bookGroupSession } = await import('../src/scheduling/groups');
 const { waiveFee } = await import('../src/scheduling/lifecycle');
 const { stageDueAt } = await import('../src/scheduling/confirmation');
 const { ensurePortalLink } = await import('../src/portal/service');
-const { queueToClient } = await import('../src/messaging/outbox');
+const { clientUrl, queueToClient } = await import('../src/messaging/outbox');
 const { dispatchOutbox, recordDeliveryReceipt } = await import('../src/messaging/delivery');
 const { systemClock, fixedClock } = await import('../src/clock');
 const { receiveInbound, resolveInboundReply } = await import('../src/messaging/inbound');
@@ -318,7 +318,7 @@ async function main() {
         templateKey: 'appointment_reminder',
         scheduledFor: dueAt,
         startAt: appt.startAt,
-        link: `http://localhost:3700/p/${link.token}`,
+        link: clientUrl(`/p/${link.token}`),
       });
       if (!message) return false; // the client is on `none`; nothing was asked
       await prisma.appointmentReminder.create({
@@ -423,7 +423,7 @@ async function main() {
       const dueAt = stageDueAt(soon.startAt, stage, { graceMinutes: 20, dayOfLeadHours: 3 });
       const message = await queueToClient({
         clientId: soon.clientId, templateKey: 'appointment_reminder', scheduledFor: dueAt,
-        startAt: soon.startAt, link: `http://localhost:3700/p/${(await ensurePortalLink(soon.clientId, systemClock)).token}`,
+        startAt: soon.startAt, link: clientUrl(`/p/${(await ensurePortalLink(soon.clientId, systemClock)).token}`),
       });
       if (message) {
         await prisma.appointmentReminder.create({

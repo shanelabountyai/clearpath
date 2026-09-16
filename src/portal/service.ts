@@ -5,7 +5,7 @@ import { clientTarget } from '../clients/repository';
 import { systemClock, DAY, type Clock } from '../clock';
 import { prisma, type Tx } from '../db';
 import { Conflict, NotFound } from '../errors';
-import { indiscreetTerms, queueToClient } from '../messaging/outbox';
+import { clientUrl, indiscreetTerms, queueToClient } from '../messaging/outbox';
 import { cancelAppointment, classifyCancellation, type DeclineReason } from '../scheduling/lifecycle';
 
 /**
@@ -42,7 +42,6 @@ const newPortalToken = (): string => {
 interface IssuePortalLink {
   clientId: string;
   expiresInDays?: number;
-  baseUrl?: string;
   clock?: Clock;
 }
 
@@ -98,7 +97,7 @@ export async function issuePortalLink(actor: Actor, input: IssuePortalLink) {
           clientId: input.clientId,
           templateKey: 'portal_link',
           scheduledFor: clock.now(),
-          link: `${input.baseUrl ?? 'http://localhost:3700'}/p/${token}`,
+          link: clientUrl(`/p/${token}`),
         },
         tx,
       );

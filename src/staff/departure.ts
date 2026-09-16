@@ -4,7 +4,7 @@ import type { Actor, Role } from '../auth/permissions';
 import { DAY, systemClock, type Clock } from '../clock';
 import { prisma, type Tx } from '../db';
 import { Conflict, NotFound } from '../errors';
-import { queueToClient } from '../messaging/outbox';
+import { clientUrl, queueToClient } from '../messaging/outbox';
 import { ensurePortalLink } from '../portal/service';
 import { conflictKind } from '../scheduling/booking';
 import { TRANSITIONS as SESSION_TRANSITIONS, type Status as SessionStatus } from '../scheduling/lifecycle';
@@ -844,7 +844,7 @@ export async function executeDeparture(actor: Actor, departureId: string, clock:
               const door = await ensurePortalLink(a.clientId, clock, tx);
               await queueToClient({
                 clientId: a.clientId, templateKey: 'clinician_changed', scheduledFor: now,
-                startAt: firstMoved.startAt, link: `http://localhost:3700/p/${door.token}`,
+                startAt: firstMoved.startAt, link: clientUrl(`/p/${door.token}`),
               }, tx);
             }
           } else {

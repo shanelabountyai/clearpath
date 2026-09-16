@@ -5,7 +5,7 @@ import { systemClock, type Clock, DAY } from '../clock';
 import { clientTarget } from '../clients/repository';
 import { prisma, type Tx } from '../db';
 import { Conflict, NotFound } from '../errors';
-import { queueToClient, queueToClinician } from '../messaging/outbox';
+import { clientUrl, queueToClient, queueToClinician } from '../messaging/outbox';
 import { alertRecipient } from '../staff/coverage';
 import { localDateOf } from '../time';
 import { missingLanguages, renderSubmission, validateSubmission, type Answers, type TemplateSchema } from './schema';
@@ -69,7 +69,7 @@ const latestTemplate = (key: string) =>
 
 export async function issueForm(
   actor: Actor,
-  input: { clientId: string; templateKey: string; expiresInDays?: number; clock?: Clock; baseUrl?: string },
+  input: { clientId: string; templateKey: string; expiresInDays?: number; clock?: Clock },
 ) {
   const clock = input.clock ?? systemClock;
   const template = await latestTemplate(input.templateKey);
@@ -114,7 +114,7 @@ export async function issueForm(
           clientId: input.clientId,
           templateKey: 'form_request',
           scheduledFor: clock.now(),
-          link: `${input.baseUrl ?? 'http://localhost:3700'}/f/${token}`,
+          link: clientUrl(`/f/${token}`),
         },
         tx,
       );

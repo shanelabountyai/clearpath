@@ -264,6 +264,47 @@ async function messagingContext(db: Tx | typeof prisma): Promise<{ practice: str
   return { practice: s?.messagingName ?? 'Stillwater', phone: s?.practicePhone ?? '(555) 010-0199' };
 }
 
+/**
+ * The absolute URL of a client-facing door.
+ *
+ * Every link the practice sends is built here and nowhere else, because a base
+ * URL is the one part of a message whose being wrong is invisible from the
+ * inside: the body passes the deny-list, the outbox row looks right, the job
+ * reports success, and the only instrument that would have caught it is a
+ * client's thumb. Four call sites each defaulted to `http://localhost:3700`
+ * and one hardcoded it, so two hourly crons queued links that resolve to
+ * nothing on a phone. `outbox.test.ts` greps for the literal to keep a fifth
+ * from appearing.
+ *
+ * Unset in production it throws rather than falling back. A dead link is the
+ * expensive failure — it reaches a client, it cannot be recalled, and nothing
+ * reports it — while a throw stops the run and lands in `JobRun` as an error
+ * class the /practice card shows within two ticks.
+ */
+export function clientUrl(path: string, env: NodeJS.ProcessEnv = process.env): string {
+  // `VERCEL_PROJECT_PRODUCTION_URL` is the deployment's own production host, so
+  // a Vercel deploy is right without anyone remembering a variable — the
+  // failure mode `CRON_SECRET` spent two days demonstrating. The explicit
+  // variable overrides it, which is what a custom domain needs.
+  const raw =
+    env.CLEARPATH_BASE_URL?.trim() ||
+    (env.VERCEL_PROJECT_PRODUCTION_URL && `https://${env.VERCEL_PROJECT_PRODUCTION_URL}`);
+  if (!raw) {
+    // `CLEARPATH_ALLOW_CLOUD_DB` is the one marker every deployed-database
+    // command already carries, and `db:seed:prod` is a local `tsx` run whose
+    // `NODE_ENV` is nothing at all — so without this clause the prod seed is
+    // exactly the silent localhost writer this guard exists to stop.
+    if (env.NODE_ENV === 'production' || env.CLEARPATH_ALLOW_CLOUD_DB) {
+      throw new Error('CLEARPATH_BASE_URL is not set: a client-facing link has no host to point at');
+    }
+    return `http://localhost:3700${path}`;
+  }
+  // A host pasted without its scheme is a relative link in a text message,
+  // which is a link that does nothing rather than one that looks wrong.
+  const base = (/^https?:\/\//.test(raw) ? raw : `https://${raw}`).replace(/\/+$/, '');
+  return `${base}${path}`;
+}
+
 interface QueueToClient {
   clientId: string;
   templateKey: TemplateKey;
