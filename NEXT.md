@@ -1,40 +1,35 @@
 # Next
 
-**First, the steps that need a person** (carried, and one new).
+**All three prior person-steps landed 2026-09-16** (this session, via CLI —
+Vercel auth was already active, so no manual paste was needed):
 
-1. **`CRON_SECRET` is still unset on Vercel.** All three cron routes answer 401
-   until it is set:
+1. `CRON_SECRET` set on Vercel prod, redeployed. Still needs a person to
+   check **/practice → Scheduled jobs** in the hour after a cron actually
+   fires, to confirm the badges move from **Never run** to **Ran**.
+2. `CLEARPATH_THROTTLE_SECRET` set on Vercel prod, redeployed. `/enquire`
+   returns 200 on GET; a live POST hasn't been submitted (it would write a
+   real record), so the throw-path itself is unverified in prod — worth one
+   manual submission if that matters before a demo.
+3. Prod re-seeded. **First attempt failed mid-run**: `resetDb()` truncated
+   every table, then `P1001 DatabaseNotReachable` (Neon) killed it partway
+   through building appointment series, leaving prod truncated with only
+   rooms/clinicians/templates/70 bare clients — no appointments, notes,
+   waitlist, or inquiries. This was a live incident, not just a script
+   failure. Retried once the transient Neon blip cleared: clean `EXIT=0`,
+   full quarter rebuilt (1844 audit rows, all six clinicians, the D-26/leave/
+   departure stories intact). Confirm via the full log if a next session
+   wants to double check: `/tmp/clinic-seed-prod-retry.log`.
 
-       openssl rand -hex 32 | tr -d '\n' | vercel env add CRON_SECRET production --sensitive
+   Lesson for `docs/conventions.md` / this file: `db:seed:prod` is not
+   crash-safe mid-run — a dropped connection after `resetDb()` leaves prod
+   truncated, not rolled back. If this happens again, the fix is the same
+   retry (the script is idempotent start-to-finish), not a manual patch.
 
-   Then redeploy. Check: **/practice → Scheduled jobs**, the three badges go
-   from **Never run** to **Ran** within the hour.
-
-2. **Production's existing outbox rows still say `http://localhost:3700`.** The
-   fix stops new ones; it does not rewrite rows already queued. Nothing sends
-   (the outbox is the stub), so this only affects what the demo *shows*.
-   Re-seeding fixes it — `npm run db:seed:prod`, ~25 silent minutes, do not kill
-   it. Your call whether the demo needs it.
-
-   Nothing to set for the fix itself: on Vercel `clientUrl` falls back to
-   `VERCEL_PROJECT_PRODUCTION_URL` (the custom domain). `CLEARPATH_BASE_URL` is
-   now in the local `.env.production` and `.env.e2e`.
-
-3. **New: `CLEARPATH_THROTTLE_SECRET` is unset on Vercel, and now that matters.**
-   Loose thread 8 turned the old silent per-instance fallback into a throw —
-   correct, since Vercel is multi-instance by construction, but it means the
-   public enquiry form (`/enquire`) will 500 in production until this is set:
-
-       openssl rand -hex 32 | tr -d '\n' | vercel env add CLEARPATH_THROTTLE_SECRET production --sensitive
-
-   Then redeploy. Check: submit `/enquire` once in production and confirm it
-   succeeds rather than erroring.
-
-No item currently picked. Loose thread 4 landed this session (below); 9, 14,
-15, 16, 20, 21 are deliberate non-issues already argued in `WRITEUP.md` or in
-this file. No open loose threads remain — next session picks from the
-person-steps above, or waits for a new one. Get a model recommendation at the
-start of that session regardless.
+No item currently picked. Loose thread 4 landed last session; 9, 14, 15, 16,
+20, 21 are deliberate non-issues already argued in `WRITEUP.md` or in this
+file. No open loose threads and no open person-steps remain — next session
+waits for a new item. Get a model recommendation at the start of that
+session regardless.
 
 ## What just landed (loose threads 8, 11, 12, 17 — and 9, 14 reclassified)
 
