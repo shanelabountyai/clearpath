@@ -30,10 +30,11 @@
    Then redeploy. Check: submit `/enquire` once in production and confirm it
    succeeds rather than erroring.
 
-No item currently picked. Loose thread 4 (the alarm-pattern notes) is the one
-open item left; 9, 14, 15, 16, 20, 21 are deliberate non-issues already argued
-in `WRITEUP.md` or in this file. Pick one and get a model recommendation at
-the start of that session.
+No item currently picked. Loose thread 4 landed this session (below); 9, 14,
+15, 16, 20, 21 are deliberate non-issues already argued in `WRITEUP.md` or in
+this file. No open loose threads remain — next session picks from the
+person-steps above, or waits for a new one. Get a model recommendation at the
+start of that session regardless.
 
 ## What just landed (loose threads 8, 11, 12, 17 — and 9, 14 reclassified)
 
@@ -93,6 +94,29 @@ reverted — same pattern the prior session already diagnosed) and one
 (`design-system.png`) was the expected, intentional result of the gallery
 gaining six new sections — kept.
 
+## This session — loose thread 4 landed
+
+Picked as the only open loose thread; no product code touched, only
+`CLAUDE.md` (new *Watching a test sweep* section) and `WRITEUP.md` (§50).
+
+Verified against real runs rather than reasoned from the old notes alone: a
+clean unit sweep (3226 passed, exit 0, 35.91s) and a deliberately-broken one
+(`1 failed | 31 passed (32)`, exit 1) confirmed the reporter's actual marker
+shapes and the two concrete false-positive sources (the e2e seed's own "3
+failed" narration; a *passing* test whose description contains the word).
+A live process inspection confirmed vitest's real tree and that killing only
+`dotenv` orphans the worker (reparented to PID 1, still holding a DB
+connection) — then, better than planned, a third run collided with another
+project's concurrent e2e sweep on the shared local Postgres and hit a real
+Prisma transaction timeout, a test timeout, and a `40P01` deadlock. The new
+alarm pattern caught all three inline, and the pgid kill took the whole
+group down in one shot (TERM left two `node` stragglers; `-9` finished it).
+Six leaked `tail -f` monitors from prior sessions, still watching deleted
+log files 3-5 days later, were found and killed along the way — not part of
+the thread, just found in the process.
+
+`WRITEUP.md` §50.
+
 ## Loose threads
 
 1. ~~`listProgressNotes`' audit row names the first leave a cover holds.~~
@@ -100,12 +124,10 @@ gaining six new sections — kept.
 2. ~~P1-4 lists nothing for a returning supervisor.~~ Landed 2026-09-14.
 3. ~~`delivery:run` and `nonresponse:run` have no scheduler.~~ Landed
    2026-09-15.
-4. Kill-on-alarm: `pkill -f "$PWD.*playwright test "` matches nothing. An e2e
-   alarm must also match `Error:`, and a totals grep must anchor on
-   `^ *N passed` because the seed's summary contains "failed". Arm the monitor
-   *after* the redirect has created the log file. Killing `dotenv` orphans the
-   vitest workers (re-parented to 1): kill the `node (vitest N)` children by
-   cwd too. And a wait loop on `pgrep -f vitest` matches its own command line.
+4. ~~Kill-on-alarm: six individually-patched string-match breakages.~~ Landed
+   2026-09-16: one mechanism (job-control process group + log-file `EXIT=`
+   line) replaces all six. `WRITEUP.md` §50, `CLAUDE.md` → *Watching a test
+   sweep*.
 5. ~~§5c's ten uncaptured screens.~~ Landed 2026-09-15. `WRITEUP.md` §41.
 6. ~~`executeDeparture`'s `ponytail:` 30s transaction budget.~~ Landed
    2026-09-15.

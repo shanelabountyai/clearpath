@@ -44,6 +44,47 @@ Pure logic first, because all three are the actual lessons: permission matrix
 (including every denial cell) → form scoring rules → recurrence expansion.
 Persistence and UI come after the logic they serve is green.
 
+## Watching a test sweep
+
+Verified against real runs (2026-09-16), including an induced failure and a
+killed sweep — this replaced six brittle, individually-patched string
+matches with one mechanism.
+
+- **Launch under job control and kill by process group, never by pattern.**
+  `npm test`'s real tree is `npm` → `dotenv` → vitest's master → one OS
+  process per worker (`node (vitest N)`, no path in its argv — a `pkill -f`
+  anchored to the project path never matches these). Worse, the whole tree
+  is reparented to PID 1 within moments of backgrounding, so killing only
+  the `dotenv`/`npm` layer leaves the master and every worker running,
+  orphaned, still holding DB connections. Launch with `bash -c 'set -m; CMD
+  > LOG 2>&1 & echo $!'` — job control puts every process the command forks
+  into one process group whose id equals that leader's own pid, and
+  reparenting to init does not change it. Kill the whole tree in one shot
+  with `kill -TERM -- -<leader pid>`, at any point, orphans included. TERM
+  alone can still leave a `node` straggler or two behind (confirmed live —
+  two survived TERM under real load); follow with `kill -9 -- -<leader
+  pid>` and check the group is empty before trusting it's dead.
+- **Detect completion from the log's own terminal line, never from a
+  process-existence poll.** `CMD > LOG 2>&1; echo "EXIT=$?" >> LOG` and watch
+  for `^EXIT=` — a `pgrep -f vitest` wait loop can match its own invocation's
+  command-line text and never see zero.
+- **Arm the monitor only once the log file exists** (the shell creates it
+  the moment the redirect is parsed, immediately after backgrounding — check
+  once before arming rather than racing it).
+- **Never grep a bare `failed`.** Two real false positives, both hit in the
+  same log: `npm run test:e2e` seeds first, and the seed's own narration
+  prints e.g. `197 messages delivered, 3 failed, 0 not yet due`; separately,
+  a *passing* vitest test can have "failed" in its own description (`✓ ...
+  charges nothing when the carrier said it failed`). Anchor instead:
+  - vitest inline failure: `^\s*×` (a file with any failures also gets its
+    own line, `^❯ .*\| *[0-9]+ failed\)`). Totals come only from the
+    reporter's own `Test Files` / `Tests` summary lines at the end of the run.
+  - Playwright inline failure: `✘` (the `list` reporter's per-test marker —
+    distinct from vitest's `×`, don't reuse one sweep's pattern for the
+    other). Because a webServer crash or an uncaught exception can end the
+    run before any test prints a marker, the e2e alarm must also fire on a
+    bare `Error:` line, not rely on `✘` alone.
+
 ## Write-up
 
 `WRITEUP.md` is maintained as the project goes, not archaeologically at the end.

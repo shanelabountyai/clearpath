@@ -4196,6 +4196,50 @@ entirely; a component with one caller and no absence to fill is not either.
 
 Loose thread 17, `NEXT.md`.
 
+## 50. One mechanism instead of six patched patterns
+
+**The problem.** The notes for watching a test sweep for a failure alarm had
+accreted six separate, individually-discovered breakages: a `pkill -f`
+pattern anchored to the project path that matched nothing, because a vitest
+worker's argv is just `node (vitest N)` with no path in it at all; killing
+only the `dotenv`/`npm` layer left that worker running anyway, reparented to
+PID 1 within moments of backgrounding; a `pgrep -f vitest` wait loop that
+could match its own invocation's command-line text and never see zero; a
+bare `grep failed` that false-positived twice over, once on the e2e seed's
+own delivery narration and once on a *passing* vitest test whose description
+happens to contain the word; and a monitor armed before its log file
+existed. Each fix was correct and none of them shared a cause.
+
+**The design.** One mechanism replaces all six. `bash -c 'set -m; CMD > LOG
+2>&1 & echo $!'` puts the whole tree — `npm` → `dotenv` → vitest's master →
+every worker — into one process group under bash's own job control, and
+reparenting to init does not change a process's group. `kill -TERM --
+-<leader pid>`, escalating to `-9` if anything survives (confirmed live: two
+`node` stragglers ignored TERM once under real cross-project load), reaches
+every member whatever it's called or who it's now parented to — no pattern
+matching, no argv inspection. Completion is read off the log's own `EXIT=`
+line, appended by the wrapper, never off whether a process is still listed.
+Failure detection is anchored to each reporter's actual shape — vitest's
+`×`/`❯ ... | N failed)`, Playwright's `✘`, both also alarming on a bare
+`Error:` since a crashed webServer or an uncaught exception can end a run
+before any per-test marker prints — never a bare substring search.
+
+**What it deliberately does not do.** Reach for `setsid` (not on macOS
+without a new dependency) or a cwd-matching `lsof` loop per orphaned worker
+(works, but per-process-type, which is exactly the six-patches problem
+recurring). The pgid mechanism needs neither — it is the one-line fix
+underneath all six symptoms, not a seventh patch alongside them.
+
+Verified against real runs, 2026-09-16: an induced failure (clean 35.91s
+pass, then a confirmed `1 failed | 31 passed (32)` run), and — unplanned but
+better evidence — a live sweep that hit genuine cross-project Postgres
+contention (a Prisma interactive-transaction timeout, a test timeout, a
+`40P01` deadlock) while another project's e2e sweep ran concurrently on the
+same machine. The alarm fired inline, mid-run, off exactly the patterns
+above, and the group-kill took the whole tree down in one shot.
+
+Loose thread 4, `NEXT.md`. `CLAUDE.md` → *Watching a test sweep*.
+
 ## Decisions log
 
 | Decision | Why |
