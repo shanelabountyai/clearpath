@@ -79,42 +79,47 @@ async function WorkListsPage() {
             </p>
             <Card className="p-0">
               <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                {back.flagged.map((s) => (
-                  <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body">
-                    <span>
-                      <Link href={`/submissions/${s.id}`} className="font-medium text-accent hover:underline">{s.template.name}</Link>
-                      <span className="ml-2 text-muted">{s.client.code} · {dayLabel(localDateOf(s.request.submittedAt!))}</span>
-                    </span>
-                    <Badge tone="danger" glyph="!">flagged for review</Badge>
-                  </li>
-                ))}
-                {back.sessions.map((a) => (
-                  <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body">
-                    <span>
-                      Session with {a.clinician.name}
-                      <span className="ml-2 text-muted">{a.client.code} · {dayLabel(localDateOf(a.startAt))}</span>
-                    </span>
-                    <Badge tone="neutral">{a.status.replace('_', ' ')}</Badge>
-                  </li>
-                ))}
-                {back.notes.map((n) => (
-                  <li key={n.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body">
-                    <span>
-                      <Link href={`/notes/${n.id}`} className="font-medium text-accent hover:underline">Progress note by {n.author.name}</Link>
-                      <span className="ml-2 text-muted">{n.client.code} · {dayLabel(localDateOf(n.appointment.startAt))}</span>
-                    </span>
-                    <Badge tone={n.status === 'draft' ? 'warning' : 'neutral'}>{n.status}</Badge>
-                  </li>
-                ))}
-                {back.coSigned.map((n) => (
-                  <li key={n.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body">
-                    <span>
-                      <Link href={`/notes/${n.id}`} className="font-medium text-accent hover:underline">{n.author.name}&apos;s note</Link>
-                      <span className="ml-2 text-muted">{n.client.code} · countersigned by {n.coSignedBy!.name} · {dayLabel(localDateOf(n.coSignedAt!))}</span>
-                    </span>
-                    <Badge tone="neutral">countersigned</Badge>
-                  </li>
-                ))}
+                {/* Four kinds, one timeline: sorted by when it happened, not grouped by what it was. */}
+                {[
+                  ...back.flagged.map((s) => ({ key: `flagged-${s.id}`, at: s.request.submittedAt!, node: (
+                    <li key={`flagged-${s.id}`} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body">
+                      <span>
+                        <Link href={`/submissions/${s.id}`} className="font-medium text-accent hover:underline">{s.template.name}</Link>
+                        <span className="ml-2 text-muted">{s.client.code} · {dayLabel(localDateOf(s.request.submittedAt!))}</span>
+                      </span>
+                      <Badge tone="danger" glyph="!">flagged for review</Badge>
+                    </li>
+                  ) })),
+                  ...back.sessions.map((a) => ({ key: `session-${a.id}`, at: a.startAt, node: (
+                    <li key={`session-${a.id}`} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body">
+                      <span>
+                        Session with {a.clinician.name}
+                        <span className="ml-2 text-muted">{a.client.code} · {dayLabel(localDateOf(a.startAt))}</span>
+                      </span>
+                      <Badge tone="neutral">{a.status.replace('_', ' ')}</Badge>
+                    </li>
+                  ) })),
+                  ...back.notes.map((n) => ({ key: `note-${n.id}`, at: n.appointment.startAt, node: (
+                    <li key={`note-${n.id}`} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body">
+                      <span>
+                        <Link href={`/notes/${n.id}`} className="font-medium text-accent hover:underline">Progress note by {n.author.name}</Link>
+                        <span className="ml-2 text-muted">{n.client.code} · {dayLabel(localDateOf(n.appointment.startAt))}</span>
+                      </span>
+                      <Badge tone={n.status === 'draft' ? 'warning' : 'neutral'}>{n.status}</Badge>
+                    </li>
+                  ) })),
+                  ...back.coSigned.map((n) => ({ key: `cosign-${n.id}`, at: n.coSignedAt!, node: (
+                    <li key={`cosign-${n.id}`} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-body">
+                      <span>
+                        <Link href={`/notes/${n.id}`} className="font-medium text-accent hover:underline">{n.author.name}&apos;s note</Link>
+                        <span className="ml-2 text-muted">{n.client.code} · countersigned by {n.coSignedBy!.name} · {dayLabel(localDateOf(n.coSignedAt!))}</span>
+                      </span>
+                      <Badge tone="neutral">countersigned</Badge>
+                    </li>
+                  ) })),
+                ]
+                  .sort((a, b) => +a.at - +b.at)
+                  .map((item) => item.node)}
                 {back.flagged.length + back.sessions.length + back.notes.length + back.coSigned.length === 0 && (
                   <li className="px-4 py-3 text-body text-muted">Nothing on your caseload needed anybody while you were away.</li>
                 )}
