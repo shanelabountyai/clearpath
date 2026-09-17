@@ -1,168 +1,72 @@
 # Next
 
-**All three prior person-steps landed 2026-09-16** (this session, via CLI —
-Vercel auth was already active, so no manual paste was needed):
+**Pick up the UX/accessibility review's P1 tickets.** The full review is a
+Claude Doc — "Clearpath — UX & Accessibility Review", 2026-09-17 — and the
+decisions it surfaced are six new `prd-*.md` stubs in this directory. Read the
+stub before building anything from it; each one's open questions are genuinely
+unanswered, and two of them need a clinician rather than an engineer.
 
-1. `CRON_SECRET` set on Vercel prod, redeployed. Still needs a person to
-   check **/practice → Scheduled jobs** in the hour after a cron actually
-   fires, to confirm the badges move from **Never run** to **Ran**.
-2. `CLEARPATH_THROTTLE_SECRET` set on Vercel prod, redeployed. `/enquire`
-   returns 200 on GET; a live POST hasn't been submitted (it would write a
-   real record), so the throw-path itself is unverified in prod — worth one
-   manual submission if that matters before a demo.
-3. Prod re-seeded. **First attempt failed mid-run**: `resetDb()` truncated
-   every table, then `P1001 DatabaseNotReachable` (Neon) killed it partway
-   through building appointment series, leaving prod truncated with only
-   rooms/clinicians/templates/70 bare clients — no appointments, notes,
-   waitlist, or inquiries. This was a live incident, not just a script
-   failure. Retried once the transient Neon blip cleared: clean `EXIT=0`,
-   full quarter rebuilt (1844 audit rows, all six clinicians, the D-26/leave/
-   departure stories intact). Confirm via the full log if a next session
-   wants to double check: `/tmp/clinic-seed-prod-retry.log`.
+## What landed 2026-09-16/17 (commit 23593ea)
 
-   Lesson for `docs/conventions.md` / this file: `db:seed:prod` is not
-   crash-safe mid-run — a dropped connection after `resetDb()` leaves prod
-   truncated, not rolled back. If this happens again, the fix is the same
-   retry (the script is idempotent start-to-finish), not a manual patch.
+The review read all 40 UI files in three slices (public/client surfaces, staff
+lists, staff detail pages) against WCAG 2.2 AA and this project's hard rules.
+5 P0s, 15 P1s. Only the one finding needing no product decision was built:
 
-No item currently picked. Loose thread 4 landed last session; 9, 14, 15, 16,
-20, 21 are deliberate non-issues already argued in `WRITEUP.md` or in this
-file. No open loose threads and no open person-steps remain — next session
-waits for a new item. Get a model recommendation at the start of that
-session regardless.
+- **Contrast tokens.** `--text-subtle` was 3.52:1 light / 3.77:1 on dark cards;
+  `--tier-operational` was 4.34:1 on its own soft background. Now >= 4.60:1
+  against every surface, hue preserved. **Not yet eyeballed in a browser** —
+  the change is arithmetic and tested, but nobody has looked at a real page in
+  either theme. Thirty seconds on `/clients` before trusting it aesthetically.
+- **A contrast assertion in `design-system.test.ts`**, verified against the old
+  values before being trusted (fails at exactly 3.52:1, passes after).
+- **`.claude/agents/ux-a11y-reviewer.md`** — the reviewer agent. Note it was
+  written mid-session and the registry only loads at session start, so the
+  three review passes ran as `general-purpose` with the brief inlined. It
+  should register normally now; if a future session wants another pass, use it
+  rather than re-inlining.
 
-## What just landed (loose threads 8, 11, 12, 17 — and 9, 14 reclassified)
+## The five P0s, none of them built
 
-Picked as #12; the goal then widened to all open threads in one session.
+All five are blocked on a product decision, which is why all five have a stub:
 
-- **#12 — collision-prone e2e fixtures.** `e2e/fixtures.ts`'s `userId(name)`
-  turns a display name into an id, and the seed has grown from five
-  clinicians to ten without every spec catching up. Two collisions were
-  already fixed by hand (`leave.spec.ts`'s row-scoped lookup, `screenshots.spec.ts`'s
-  lookup by `href`); the rest either selected a `<select>` by visible label
-  instead of the id already sitting in its `value`, or clicked an unscoped
-  `getByRole('link', { name })` safe only by the current roster's luck.
-  `leave.spec.ts` and `departure.spec.ts` now do both consistently.
-  `WRITEUP.md` §46.
-- **#8 — the throttle secret's silent fallback.** Unset, `CLEARPATH_THROTTLE_SECRET`
-  fell back to a per-process random key — fine for a single process, wrong
-  for Vercel's multi-instance default, which is what production actually is.
-  Now throws in production, the same shape `clientUrl` already uses for
-  `CLEARPATH_BASE_URL`. `.env.e2e` needed the var added, since `next
-  build`/`next start` set `NODE_ENV=production` for the e2e sweep too.
-  `WRITEUP.md` §47. **Needs the person-step above before the next deploy.**
-- **#11 — D-26 had no seeded picture.** The routing rule (a departed
-  clinician's alert falls to their supervisor, who may themself be covered)
-  was already correct and unit-tested; nothing demonstrated it. One new
-  seeded clinician (Elin, under Rosa) whose one client is discharged during
-  her departure, reusing Rosa's own leave rather than seeding a second one.
-  New screenshot `docs/screenshots/alert-routed-after-departure.png`, a
-  README paragraph, `WRITEUP.md` §48.
-- **#17 — four things were page markup, not primitives.** Extracted
-  `TextField`/`SelectField` (real duplication — three pages had independently
-  reinvented the same labelled input), `ScreenerResult`, `ageTone`/`CoSignRow`,
-  and `AuditRow` into `src/ui/primitives.tsx`, each with a gallery specimen.
-  `WRITEUP.md` §49.
-- **#9 and #14 reclassified, not fixed.** Both turned out to already be
-  deliberate: #9's three real-clock-dated seed stories are on purpose ("the
-  point is a leave that is on while the specs run"), and #14's dismissal
-  already has a WRITEUP.md rationale (§45, "no undo... the wrong shape for a
-  banner") that predates this session. `NEXT.md` had just never caught up to
-  either. No code or WRITEUP.md change for these two — moved to the
-  deliberate-non-issue list above.
+1. **Client name in the URL** — `/clients?q=Jane+Doe`, `app/(staff)/clients/page.tsx:22-28`.
+   Violates hard rule 3. → `prd-client-safe-search.md`
+2. **A progress note can vanish** — no autosave, no `beforeunload`, no
+   `error.tsx` anywhere in the app. → `prd-note-draft-protection.md`
+3. **A flagged screener shows the client a generic thank-you** — the crisis-line
+   copy exists, but only on the enquiry form. → `prd-client-risk-response.md`
+4. **Intake form deletes everything on a failed submit** — full-page redirect,
+   `app/enquire/actions.ts:56`. → `prd-recoverable-forms.md`
+5. **Sign / execute departure fire on one unconfirmed click** — and the staff
+   app has no client component anywhere, so there is nowhere to put a confirm
+   step. Architectural. → `prd-action-confirmation.md`
 
-## Gate
+Plus `prd-accessibility-conformance.md` — do we commit to AA, and does a check
+join CI. Decide early, build last.
 
-Typecheck clean throughout. **Unit suite: 3226 passed, 0 failed, exit 0**
-(full `npm test`, after the #17 primitive extraction — caught one real bug on
-the first run: a gallery specimen used bare `new Date()`, which
-`clock.test.ts`'s repo-wide grep correctly flagged; fixed to a fixed instant).
-**e2e, twice:** first full sweep (62 passed, 1 skipped) validated #12 before
-#8 and #17 landed; second full sweep, run after all four, caught a real
-regression — `enquire.spec.ts` failing with `CLEARPATH_THROTTLE_SECRET is not
-set`, because the e2e webServer is a production build and `.env.e2e` didn't
-have it yet. Fixed, reran: 62 passed, 0 failed, exit 0. **`npm run shots`: 1
-passed, exit 0** — confirmed the D-26 alert actually lands in Dev's inbox
-before trusting the screenshot. Five screenshot files drifted on that run;
-four were pixel noise from the real-clock-dated seed stories (#9, unrelated,
-reverted — same pattern the prior session already diagnosed) and one
-(`design-system.png`) was the expected, intentional result of the gallery
-gaining six new sections — kept.
+## Suggested next item
 
-## This session — loose thread 4 landed
+**The P1 batch, tickets B and C** (doc has the full grouping). B is the staff
+shell: no skip link, no `aria-current`, scroll containers unreachable by
+keyboard. C is the clinical screener: required state hidden from screen
+readers, invisible focus on every answer option, and a validation error that
+never says which question — that last one is plumbing data the server already
+computes, not new capability. Highest-stakes surface in the product.
 
-Picked as the only open loose thread; no product code touched, only
-`CLAUDE.md` (new *Watching a test sweep* section) and `WRITEUP.md` (§50).
+## Open question waiting on a person
 
-Verified against real runs rather than reasoned from the old notes alone: a
-clean unit sweep (3226 passed, exit 0, 35.91s) and a deliberately-broken one
-(`1 failed | 31 passed (32)`, exit 1) confirmed the reporter's actual marker
-shapes and the two concrete false-positive sources (the e2e seed's own "3
-failed" narration; a *passing* test whose description contains the word).
-A live process inspection confirmed vitest's real tree and that killing only
-`dotenv` orphans the worker (reparented to PID 1, still holding a DB
-connection) — then, better than planned, a third run collided with another
-project's concurrent e2e sweep on the shared local Postgres and hit a real
-Prisma transaction timeout, a test timeout, and a `40P01` deadlock. The new
-alarm pattern caught all three inline, and the pgid kill took the whole
-group down in one shot (TERM left two `node` stragglers; `-9` finished it).
-Six leaked `tail -f` monitors from prior sessions, still watching deleted
-log files 3-5 days later, were found and killed along the way — not part of
-the thread, just found in the process.
+Left as a comment in the doc: does the risk-response PRD go with a general
+safety footer on every screener completion, or a message that differs for
+flagged clients? The general footer sidesteps the disclosure problem and is
+cheaper; it is the recommendation but not the decision.
 
-`WRITEUP.md` §50.
+## Gate state at handoff
 
-## Loose threads
+`npm test` green — 32 files, 3227 tests, EXIT=0, 99.8s under job control.
+`tsc --noEmit` clean. Committed and pushed (`23593ea`).
 
-1. ~~`listProgressNotes`' audit row names the first leave a cover holds.~~
-   Landed 2026-09-15.
-2. ~~P1-4 lists nothing for a returning supervisor.~~ Landed 2026-09-14.
-3. ~~`delivery:run` and `nonresponse:run` have no scheduler.~~ Landed
-   2026-09-15.
-4. ~~Kill-on-alarm: six individually-patched string-match breakages.~~ Landed
-   2026-09-16: one mechanism (job-control process group + log-file `EXIT=`
-   line) replaces all six. `WRITEUP.md` §50, `CLAUDE.md` → *Watching a test
-   sweep*.
-5. ~~§5c's ten uncaptured screens.~~ Landed 2026-09-15. `WRITEUP.md` §41.
-6. ~~`executeDeparture`'s `ponytail:` 30s transaction budget.~~ Landed
-   2026-09-15.
-7. ~~Queued links use the stub's `http://localhost:3700`.~~ Landed 2026-09-16.
-   `WRITEUP.md` §43.
-8. ~~`CLEARPATH_THROTTLE_SECRET` must be set on any multi-instance
-   deployment.~~ Landed 2026-09-16: unset in production now throws instead of
-   silently degrading. `WRITEUP.md` §47. The person-step above is the other
-   half — the code alone does not set Vercel's env var.
-9. **Deliberate, not a bug.** Three of the seed's stories are dated from the
-   real clock — the capstone leave, Rosa's, and Anders' — on purpose, so each
-   leave is on while the specs run rather than sitting at a fixed historical
-   date. Confirmed 2026-09-16. The known side effect: occasional single-cell
-   screenshot drift at a day boundary, already diagnosed and not itself a bug.
-10. ~~A departing coverer's alert blocks their departure.~~ Landed 2026-09-16:
-    the block stays, it is now asked about the last day. `WRITEUP.md` §44.
-11. ~~D-26's routing had no seeded picture.~~ Landed 2026-09-16. `WRITEUP.md`
-    §48.
-12. ~~Seven clinicians in the seed, so a new leave collided with a spec that
-    named one by name.~~ Landed 2026-09-16: specs locate by id or by row link
-    now, not by name alone. `WRITEUP.md` §46.
-13. ~~No seeded picture of a returning supervisor.~~ Landed 2026-09-15.
-14. **Deliberate, not a bug.** The dismissal has no undo, and `WRITEUP.md`
-    §45 already argues why: a clinician holds no `leave.update` cell, so the
-    write is self-scoped and deliberately off the audit log; undo would need
-    widening that permission. Confirmed 2026-09-16, no change made.
-15. The gallery coverage test knows a component's name appears in
-    `app/design/page.tsx`, not that the specimen shows anything useful.
-16. §5b's loading and error states have nothing to photograph. Argued in
-    `WRITEUP.md` §41 — a feature, not a picture.
-17. ~~§5b's screener result card, co-sign ageing row, audit row and form
-    fields were inline page markup, not primitives.~~ Landed 2026-09-16.
-    `WRITEUP.md` §49.
-18. ~~"While you were away" is four lists rendered as one flat list, ordered
-    by kind rather than by date.~~ Landed 2026-09-16. `WRITEUP.md` §45.
-19. ~~No cron run is monitored.~~ Landed 2026-09-15. `WRITEUP.md` §42.
-20. `fee-disclosure-es.png` is a 390×844 frame whose lower third is empty,
-    deliberately — the emptiness is part of what the picture claims.
-21. **`JobRun` has no retention sweep.** ~17.5k rows a year, so nothing is
-    urgent, and it was left out on purpose: a purge that trims the table
-    watching the purge can destroy the evidence that the purge stopped. If it
-    ever needs one, the safe shape is a floor — keep the last N per job
-    regardless of age — not a window.
+One oddity worth knowing: a first run of `npm test` launched directly died at
+`EXIT=137` partway through, with 61% memory available, `vm.memory_pressure` 0,
+and no JetsamEvent within three hours — so not the OS. It did not reproduce
+under the documented `set -m` job-control launch. If it recurs, that pattern is
+the workaround and the cause is still unknown.
