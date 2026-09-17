@@ -75,3 +75,43 @@ it('every component in the vocabulary has a specimen in the gallery', () => {
   expect(exported.length).toBeGreaterThan(10);
   expect(exported.filter((name) => !new RegExp(`\\b${name}\\b`).test(gallery))).toEqual([]);
 });
+
+/**
+ * Contrast drifts silently: nothing renders wrong, it just stops being readable.
+ * Both pairs below shipped failing AA - `--text-subtle` at 3.52:1 in light mode
+ * carried every field label, timestamp and piece of legal small print in the
+ * product, including "this link is personal to you" on the client-facing pages.
+ */
+function ratio(fg: string, bg: string) {
+  const lum = (hex: string) =>
+    [1, 3, 5]
+      .map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+      .reduce((acc, v, i) => acc + [0.2126, 0.7152, 0.0722][i]! * v, 0);
+  const [hi, lo] = [lum(fg), lum(bg)].sort((a, b) => b - a) as [number, number];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+it('text tokens clear AA against every surface they sit on', () => {
+  const theme = readFileSync('app/theme.css', 'utf8');
+  const split = theme.indexOf('@media');
+  const value = (css: string, name: string) => {
+    const m = css.match(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})`));
+    if (!m?.[1]) throw new Error(`${name} not found`);
+    return m[1];
+  };
+  const surfaces = ['--surface', '--surface-raised', '--surface-sunken'];
+  // `--text-subtle` is the smallest type in the product, so it is never "large
+  // text": 4.5:1 is the bar, not 3:1.
+  for (const [label, css] of [
+    ['light', theme.slice(0, split)],
+    ['dark', theme.slice(split)],
+  ] as const) {
+    for (const surface of surfaces) {
+      const r = ratio(value(css, '--text-subtle'), value(css, surface));
+      expect(r, `${label}: --text-subtle on ${surface} is ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+    }
+    const tier = ratio(value(css, '--tier-operational'), value(css, '--tier-operational-soft'));
+    expect(tier, `${label}: --tier-operational on its soft background is ${tier.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+  }
+});

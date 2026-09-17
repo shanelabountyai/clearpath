@@ -13,3 +13,6 @@ src/generated/
 # tsc incremental cache — regenerated on every typecheck
 *.tsbuildinfo
 .vercel
+
+# Claude Code session state (the agent definitions are tracked).
+.claude/scheduled_tasks.lock

@@ -32,7 +32,7 @@
 
   --text: #22201d;
   --text-muted: #5f5a53;
-  --text-subtle: #8a847b;
+  --text-subtle: #706b63;
 
   --accent: #2f5d50;
   --accent-hover: #24493f;
@@ -49,7 +49,7 @@
   --info-soft: #e2ecf5;
 
   /* Sensitivity tiers. */
-  --tier-operational: #4a6fa5;
+  --tier-operational: #476b9f;
   --tier-operational-soft: #e6edf7;
   --tier-clinical: #2f5d50;
   --tier-clinical-soft: #e4ede9;
@@ -137,7 +137,7 @@
 
     --text: #ece9e4;
     --text-muted: #a8a49d;
-    --text-subtle: #7d7973;
+    --text-subtle: #8b8882;
 
     --accent: #7fb5a3;
     --accent-hover: #99c6b7;
