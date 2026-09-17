@@ -33,7 +33,8 @@
     "nonresponse:run": "dotenv -e .env -- tsx scripts/nonresponse-run.ts",
     "delivery:run": "dotenv -e .env -- tsx scripts/delivery-run.ts",
     "inbound:simulate": "dotenv -e .env -- tsx scripts/inbound-simulate.ts",
-    "purge:run": "dotenv -e .env -- tsx scripts/purge-run.ts"
+    "purge:run": "dotenv -e .env -- tsx scripts/purge-run.ts",
+    "design-system:sync": "node scripts/design-system/sync.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

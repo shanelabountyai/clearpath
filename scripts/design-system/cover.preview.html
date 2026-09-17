@@ -1,0 +1,35 @@
+<!-- @dsCard height=300 -->
+<div style="width:960px; height:300px; background: var(--surface);">
+<svg width="960" height="300" viewBox="0 0 960 300" xmlns="http://www.w3.org/2000/svg">
+  <!--
+    Derivation:
+    blocks: one accent(clinical) block at radius-lg (10px) sized 300x176, one ink block at radius (6px) sized 96x96, from the spacing scale
+    arrangement: a tall accent slab right of x=480 with a small ink satellite behind its top-left corner
+    pattern: three concentric ring arcs, radii 40/62/84 (spacing x160/248/336), stroked in the three tier colors, echoing src/ui/logo.tsx's own mark
+    scales used: --radius-lg, --radius, --tier-operational/-clinical/-private, --accent, --text
+  -->
+  <style>
+    .ground { fill: var(--surface); }
+    .ink { fill: var(--text); }
+    .accentblock { fill: var(--accent); }
+    .ring-op { stroke: var(--tier-operational); }
+    .ring-cl { stroke: var(--tier-clinical); }
+    .ring-pr { stroke: var(--tier-private); }
+    .name { fill: var(--text); font-family: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, ui-serif, serif; }
+    .tagline { fill: var(--text-muted); font-family: ui-sans-serif, system-ui, sans-serif; }
+  </style>
+  <rect class="ground" x="0" y="0" width="960" height="300" />
+
+  <rect class="ink" x="560" y="40" width="96" height="96" rx="6" opacity="0.9" />
+  <rect class="accentblock" x="600" y="62" width="300" height="176" rx="10" />
+
+  <g fill="none" stroke-linecap="round">
+    <circle class="ring-op" cx="760" cy="150" r="84" stroke-width="7" opacity="0.9" />
+    <circle class="ring-cl" cx="760" cy="150" r="62" stroke-width="7" opacity="0.95" />
+    <circle class="ring-pr" cx="760" cy="150" r="40" stroke-width="7" />
+  </g>
+
+  <text class="name" x="64" y="168" font-size="112" font-weight="500">Clearpath</text>
+  <text class="tagline" x="66" y="200" font-size="14" font-weight="600" letter-spacing="0.06em">LAYERED CONFIDENTIALITY, MADE VISIBLE</text>
+</svg>
+</div>
