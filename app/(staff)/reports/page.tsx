@@ -35,8 +35,14 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
         subtitle={`${from} to ${to}`}
         actions={
           <form className="flex items-end gap-2">
-            <input type="date" name="from" defaultValue={from} className="rounded-[var(--radius)] border px-2 py-1.5 text-body" style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }} />
-            <input type="date" name="to" defaultValue={to} className="rounded-[var(--radius)] border px-2 py-1.5 text-body" style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }} />
+            <label className="block text-micro font-medium uppercase tracking-wide text-subtle">
+              From
+              <input type="date" name="from" defaultValue={from} className="mt-1 block rounded-[var(--radius)] border px-2 py-1.5 text-body normal-case" style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }} />
+            </label>
+            <label className="block text-micro font-medium uppercase tracking-wide text-subtle">
+              To
+              <input type="date" name="to" defaultValue={to} className="mt-1 block rounded-[var(--radius)] border px-2 py-1.5 text-body normal-case" style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }} />
+            </label>
             <button className="rounded-[var(--radius)] px-3 py-1.5 text-body font-medium" style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}>Apply</button>
           </form>
         }

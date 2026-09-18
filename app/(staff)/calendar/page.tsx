@@ -88,13 +88,14 @@ async function CalendarPage({
           </div>
 
           {day.rooms.map((room) => (
-            <Column key={room.id} title={room.name} subtitle="In person" sessions={byRoom.get(room.id) ?? []} hours={hours} />
+            <Column key={room.id} id={`room-${room.id}`} title={room.name} subtitle="In person" sessions={byRoom.get(room.id) ?? []} hours={hours} />
           ))}
 
           {/* The telehealth lane belongs to no room. That is the entire point of
               the conditional resource, made visible: a full room map does not
               block a video session. */}
           <Column
+            id="room-telehealth"
             title="Telehealth"
             subtitle="No room needed"
             accent
@@ -120,12 +121,14 @@ function DayLink({ date, label }: { date: string; label: string }) {
 }
 
 function Column({
-  title, subtitle, sessions, hours, accent,
+  id, title, subtitle, sessions, hours, accent,
 }: {
-  title: string; subtitle: string; sessions: DaySession[]; hours: number[]; accent?: boolean;
+  id: string; title: string; subtitle: string; sessions: DaySession[]; hours: number[]; accent?: boolean;
 }) {
+  // A named group, so moving into a column's appointments says which room they
+  // are in. Position is the only thing that said so before (review E2).
   return (
-    <div className="min-w-[150px] flex-1 border-r last:border-r-0" style={{ borderColor: 'var(--border)' }}>
+    <div role="group" aria-labelledby={id} className="min-w-[150px] flex-1 border-r last:border-r-0" style={{ borderColor: 'var(--border)' }}>
       <div
         className="flex h-9 flex-col justify-center border-b px-2"
         style={{
@@ -133,7 +136,7 @@ function Column({
           background: accent ? 'var(--accent-soft)' : 'var(--surface-sunken)',
         }}
       >
-        <span className="text-caption font-semibold leading-tight">{title}</span>
+        <span id={id} className="text-caption font-semibold leading-tight">{title}</span>
         <span className="text-nano leading-tight text-subtle">{subtitle}</span>
       </div>
       <div className="relative" style={{ height: (hours[hours.length - 1]! - hours[0]!) * PX_PER_MIN + 60 }}>
