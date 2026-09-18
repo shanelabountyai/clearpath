@@ -12,9 +12,15 @@ WRITEUP §56. With that, all five P0s are built.
 Refusals now carry a `Conflict` code in the URL, never its message. A guard in
 `no-phi-in-urls.test.ts` enforces that.
 
-**Next item: PRD 6, `prd-accessibility-conformance.md`.** Do we commit to AA,
-and does a check join CI? The review says decide first and build last, and
-every other item is now built. Read the PRD, then ask one question at a time.
+**PRD 6 (accessibility conformance) is decided** (2026-09-18). All five
+questions are answered in the PRD's Decisions section. **Next item: build it.**
+Suggested order: widen the contrast test to every text token against every
+surface, in both themes (Q2). Then add focus-visible and error gallery
+specimens, and have the gallery test enforce them (Q4). Then an axe spec with
+the WCAG 2.2 AA tags (Q3). Last, a GitHub Actions workflow: Postgres service,
+seed, production build, full sweep (Q3). The repo has no `.github/` yet.
+Finally, Shane does one VoiceOver pass on intake, the screener and the enquiry
+form (Q5). That pass is his, and the PRD is not done without it.
 
 **Known gaps:** e2e SQL that converts `startAt` to practice time disagrees with
 the app by the psql session's timezone (America/Chicago on this laptop). The

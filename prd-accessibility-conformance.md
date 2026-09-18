@@ -1,7 +1,7 @@
 # PRD: Accessibility Conformance — the target, and the test that holds it
 
 **Sample business:** "Stillwater Counseling" (as in the parent PRD)
-**Status:** v0.1 — **stub, 2026-09-17.** Raised by the UX/accessibility review. Open questions below are unanswered; this is not yet a buildable spec. **Decide early, build last.** Feature PRD, child of `prd-clearpath-counseling-ops.md`
+**Status:** v0.2 — **decided, 2026-09-18; not yet built** (see Decisions). Raised by the UX/accessibility review. Feature PRD, child of `prd-clearpath-counseling-ops.md`
 **Learning objective:** the cleanest natural experiment this codebase has produced — two data-protection rules with source-grepping build tests held for the life of the project, and the third, with no test, drifted. The lesson is not about accessibility. It is about which rules get tests
 
 ---
@@ -61,6 +61,37 @@ tests held, the rules without them did not.
    client-facing flows?** Automated checks do not catch "this is technically
    labelled and still incomprehensible." One session on the intake form and the
    screener would be worth more than further code reading.
+
+## Decisions
+
+- **2026-09-18, Q1: WCAG 2.2 AA is the internal target, for every screen,
+  staff and client-facing alike.** Shane's call. It is a target, not a claim.
+  Nothing here lets the project state conformance publicly. The review's P1
+  list is now a definition of done, not a wish list.
+- **2026-09-18, Q2: every text token against every surface token, in both
+  themes, at 4.5:1.** Shane's call. The check is derived from `theme.css`, not
+  kept by hand, so a new token is covered the day it lands. A pair that never
+  renders is fixed or listed as a named exception in the test, with its reason.
+  Keeping a list by hand is how the contrast failures shipped.
+- **2026-09-18, Q3: an axe-core spec joins the e2e sweep, and this PRD also
+  sets up the CI that runs the sweep.** Shane's call, taken over the smaller
+  option of leaving CI as a later item. `@axe-core/playwright` runs with the
+  WCAG 2.2 AA rule tags against the client-facing pages and the main staff pages.
+  A GitHub Actions workflow runs lint, typecheck, unit tests and the full e2e
+  sweep against a Postgres service, on a seeded database and a production build.
+  That makes the convention that CI owns the full sweep true. Until now the repo
+  had no `.github/` directory.
+- **2026-09-18, Q4: the gallery gains focus-visible and error specimens, and
+  the gallery test enforces them. Disabled does not.** Shane's call. Both states
+  already render in the product (focus rings, and `aria-invalid` on refused
+  fields). Disabled is not used anywhere, so defining it now would mean
+  designing a state nobody sees. It gets a specimen in the same change that
+  first renders it.
+- **2026-09-18, Q5: one VoiceOver pass (Safari, macOS) on intake, the screener
+  and the enquiry form, done by Shane, before this PRD is called done.** Shane's
+  call. Automated checks cannot catch a page that is labelled and still
+  incomprehensible. The findings are written into WRITEUP, and any defect they
+  find is fixed or ticketed. It is a one-time pass, not a gate on every change.
 
 ## Not in scope
 
