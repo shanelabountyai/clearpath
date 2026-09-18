@@ -1,7 +1,7 @@
 # PRD: Draft Protection — the note that survives the interruption
 
 **Sample business:** "Stillwater Counseling" (as in the parent PRD)
-**Status:** v0.1 — **stub, 2026-09-17.** Raised by the UX/accessibility review. Open questions below are unanswered; this is not yet a buildable spec. Feature PRD, child of `prd-clearpath-counseling-ops.md`
+**Status:** v0.3 — **decided and built, 2026-09-18.** All five open questions answered (see Decisions). Raised by the UX/accessibility review. Feature PRD, child of `prd-clearpath-counseling-ops.md`
 **Learning objective:** that "save the user's work" is not a UI convenience in a clinical record system — a draft that persists is a draft that is discoverable, so the safe-feeling answer carries a legal cost that has to be chosen deliberately
 
 ---
@@ -62,6 +62,35 @@ This is not a WCAG issue. It is data loss on the application's core task.
    is audit-logged in the same transaction. An autosave firing every thirty
    seconds would flood the audit log. Is an autosave a "write" for rule 4's
    purposes, or is only an explicit save?
+
+## Decisions
+
+- **2026-09-18, Q1+Q2: the app never saves note text the clinician did not
+  choose to save.** Shane's call. Both note types already write to the
+  database on an explicit Save draft or Save, so a persisted draft is already a
+  record, and that is the clinician's decision each time. Nothing is added to
+  it: no interval autosave, no save on blur, no browser storage. The fix keeps
+  the text on the page instead. A failed save, whether from a thrown error or a
+  lapsed session, returns to the form with the text still in the box, and
+  leaving the page with unsaved changes asks first. That also answers Q5: an
+  explicit save is the only write, and it is audited as it already is.
+  **Ceiling:** a closed tab, a crashed browser or a dead laptop still loses
+  unsaved text. That is the price of creating no record the clinician did not
+  choose.
+- **2026-09-18, Q3: nothing to extend.** Default taken, not asked, because it
+  follows from Q1. `src/session.ts` is a cookie-based person picker with no
+  expiry. A "lapse" means the cookie is gone, or it now names someone else
+  after a switch in another tab. The save returns `signed-out` or `denied`, and
+  the text stays in the box.
+- **2026-09-18, Q4: yes, on the form itself, not on an error screen.** Default
+  taken, not asked, because it follows from Q1. The staff `error.tsx` exists
+  now, but a thrown save would unmount the form into it. So the save actions
+  never throw: they return a code, and the form shows a fixed sentence above
+  the text it kept.
+- **Found while building:** Close note did not send the textarea, so edits
+  since the last Save were lost on every close. It now saves first, as Sign does.
+
+Built as WRITEUP §54.
 
 ## Not in scope
 

@@ -4363,6 +4363,43 @@ first one that did. A filtered client list is no longer bookmarkable. Nothing
 here survives pagination: once `/clients` pages, search has to move to the
 server, sent as a POST body.
 
+## 54. The note that was only ever in the textarea
+
+**The problem.** Both note pages were plain server-action forms around an
+uncontrolled textarea. Any save that did not land took the text with it. A
+missing session made `requireSession` redirect to the person picker. A thrown
+`Conflict` or database error unmounted the page into the error boundary. On a
+process note, **Close note** never sent the textarea at all, so anything typed
+since the last Save was dropped when the note closed, even though nothing failed.
+
+**The design.** Decided with Shane in PRD 2. The app never saves text the
+clinician did not choose to save, so there is no autosave and no browser
+storage. An explicit save already creates a record, and that stays the
+clinician's choice. The fix keeps the text on the page instead:
+
+- `NoteEditor` (`src/ui/note-editor.tsx`) holds the text in state and submits
+  through `useActionState`. `saved`, the server's copy, is a prop. A successful
+  save revalidates the page, the prop catches up, and the form is clean again
+  with no bookkeeping.
+- One action per note type (`saveProgressNoteText` and `saveProcessNoteText`),
+  where the button's `intent` picks the path. `keepingText` returns a code for
+  every failure instead of throwing or redirecting. It uses `currentSession`,
+  not `requireSession`, for the same reason. `saveFailureOf` maps the error to
+  a code, so a thrown message never crosses to the browser (hard rule 3). An
+  unrecognised error is logged by its name and the note id only.
+- Close note saves before closing, the way Sign always has.
+- With unsaved changes, `beforeunload` asks before a reload or close, and a
+  capture-phase click listener asks before any in-app link. The capture runs
+  before React's own listener, so a cancelled click never reaches the router.
+- Denials are still audited by the service before it throws. Catching the error
+  afterwards does not change that.
+
+**What it deliberately does not do.** A closed tab, a crashed browser or a dead
+laptop still loses unsaved text. That is the price of creating no record the
+clinician did not choose. The browser's back button inside the app is not
+caught, because that needs a history guard entry. Amendment and later-thought
+forms are unchanged: they are short, and they fail the old way.
+
 ## Decisions log
 
 | Decision | Why |
@@ -4614,6 +4651,7 @@ server, sent as a POST body.
 | PRD 1 Q2: client search filters the already-rendered list in the browser (2026-09-18) | The page already ships every row the actor may read, so a client-side filter exposes nothing new, and the term never reaches a network request, a log, history or a referrer. A filtered view stops being bookmarkable; pagination would force a server search, sent as a POST body |
 | PRD 1 Q3: the audit reason filter is validated against `AUDIT_CODE` and stays a GET parameter (2026-09-18) | An auditor's filtered view is worth sharing, and a reason is a code by design. The row already refuses to link a non-code reason, so the filter applies the same test instead of reopening that door |
 | PRD 1 Q4: hard rule 3 gets a test that fails on any `searchParams` key not in an allowlist (2026-09-18) | Rules 1 and 2 have grep tests and did not drift; rule 3 had none and did. The allowlist fails closed, so a new key needs a deliberate approval. It sees names, not values, so `?error=` stays a known gap |
+| PRD 2 Q1+Q2: the app never saves note text the clinician did not choose to save; unsaved text stays on the page (2026-09-18) | An explicit save already creates a record, and that stays the clinician's choice. Autosave to the server adds records nobody chose to write, and browser storage leaves clinical text on a possibly shared machine outside access control. A failed save keeps the text in the box, and leaving with unsaved changes asks first. A crashed browser still loses the text |
 
 ## What this project deliberately is not
 

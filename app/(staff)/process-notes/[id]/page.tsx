@@ -4,7 +4,8 @@ import { Forbidden, NotFound } from '../../../../src/errors';
 import { requireSession } from '../../../../src/session';
 import { localDateOf } from '../../../../src/time';
 import { Badge, Card, LockedPanel, PageHeader, TierBanner } from '../../../../src/ui/primitives';
-import { amendMyProcessNote, closeMyProcessNote, saveProcessNote } from '../../notes/actions';
+import { NoteEditor } from '../../../../src/ui/note-editor';
+import { amendMyProcessNote, saveProcessNoteText } from '../../notes/actions';
 import { Button } from '@/src/ui/primitives';
 
 export const dynamic = 'force-dynamic';
@@ -52,24 +53,15 @@ export default async function ProcessNotePage({ params }: { params: Promise<{ id
           {note.closedAt ? (
             <article className="font-serif text-subhead leading-reading whitespace-pre-wrap">{note.content}</article>
           ) : (
-            <form action={saveProcessNote}>
-              <input type="hidden" name="noteId" value={note.id} />
-              <label htmlFor="content" className="sr-only">Note</label>
-              <textarea
-                id="content" name="content" rows={14} defaultValue={note.content}
-                className="w-full rounded-[var(--radius)] border p-4 font-serif text-subhead leading-reading"
-                style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
-              />
-              <div className="mt-3 flex items-center gap-2">
-                <Button variant="quiet">
-                  Save
-                </Button>
-                <Button variant="private" formAction={closeMyProcessNote}>
-                  Close note
-                </Button>
-                <span className="text-caption text-subtle">Closing freezes it; later thoughts append.</span>
-              </div>
-            </form>
+            <NoteEditor noteId={note.id} saved={note.content} rows={14} action={saveProcessNoteText}>
+              <Button variant="quiet" name="intent" value="save">
+                Save
+              </Button>
+              <Button variant="private" name="intent" value="close">
+                Close note
+              </Button>
+              <span className="text-caption text-subtle">Closing saves and freezes it; later thoughts append.</span>
+            </NoteEditor>
           )}
         </Card>
 

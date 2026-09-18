@@ -5,7 +5,8 @@ import { requireSession } from '../../../../src/session';
 import { localDateOf } from '../../../../src/time';
 import { Badge, Card, PageHeader, TierBanner } from '../../../../src/ui/primitives';
 import { BreakGlassPrompt } from '../../break-glass';
-import { amendNote, coSignNote, saveDraftNote, signNote } from '../actions';
+import { NoteEditor } from '../../../../src/ui/note-editor';
+import { amendNote, coSignNote, saveProgressNoteText } from '../actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,33 +55,25 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
         <div className="space-y-4">
           <Card>
             {note.status === 'draft' && isAuthor ? (
-              <form action={signNote}>
-                <input type="hidden" name="noteId" value={note.id} />
-                <label htmlFor="content" className="sr-only">Note</label>
-                <textarea
-                  id="content" name="content" rows={16} defaultValue={note.content}
-                  className="w-full rounded-[var(--radius)] border p-4 font-serif text-subhead leading-reading"
-                  style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
-                />
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <button
-                    formAction={saveDraftNote}
-                    className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
-                    style={{ borderColor: 'var(--border-strong)' }}
-                  >
-                    Save draft
-                  </button>
-                  <button
-                    className="rounded-[var(--radius)] px-3 py-1.5 text-body font-medium"
-                    style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}
-                  >
-                    Sign
-                  </button>
-                  <span className="text-caption text-subtle">
-                    Signing freezes the text. Corrections after that append as amendments.
-                  </span>
-                </div>
-              </form>
+              <NoteEditor noteId={note.id} saved={note.content} rows={16} action={saveProgressNoteText}>
+                <button
+                  name="intent" value="draft"
+                  className="rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium"
+                  style={{ borderColor: 'var(--border-strong)' }}
+                >
+                  Save draft
+                </button>
+                <button
+                  name="intent" value="sign"
+                  className="rounded-[var(--radius)] px-3 py-1.5 text-body font-medium"
+                  style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}
+                >
+                  Sign
+                </button>
+                <span className="text-caption text-subtle">
+                  Signing freezes the text. Corrections after that append as amendments.
+                </span>
+              </NoteEditor>
             ) : (
               <article className="font-serif text-subhead leading-reading whitespace-pre-wrap">
                 {note.content || <span className="text-subtle">This note is empty.</span>}
