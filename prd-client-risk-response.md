@@ -1,7 +1,7 @@
 # PRD: Client-Facing Risk Response — what the person sees after they disclose
 
 **Sample business:** "Stillwater Counseling" (as in the parent PRD)
-**Status:** v0.1 — **stub, 2026-09-17.** Raised by the UX/accessibility review. Open questions below are unanswered; this is not yet a buildable spec. **Start the conversation before the build — this one needs a clinician.** Feature PRD, child of `prd-clearpath-counseling-ops.md`
+**Status:** v0.2 — **decided and built, 2026-09-18.** All five open questions answered (see Decisions). The footer ships with the enquiry form's copy; a clinician's wording is the one thing still pending. Feature PRD, child of `prd-clearpath-counseling-ops.md`
 **Learning objective:** the difference between routing a signal correctly and answering the person who sent it — the alert side of this is already right, and the person is still looking at a blank thank-you
 
 ---
@@ -55,6 +55,20 @@ a usability one.
 5. **Does this copy need to exist in both languages?** The done page already
    reads the client's language from the row. Whatever is written here must be
    written twice, and the Spanish is clinical copy too, not a translation task.
+
+## Decisions
+
+- **2026-09-18, Q1 and Q2: the same safety footer on every screener completion,
+  flagged or not.** Shane's call. No client is told, even by implication, that
+  their answers were flagged. This also settles **Q3**: `needsReview` does not
+  leave the submission transaction, and `/done` still takes no result. **Q4**
+  lapses too, because the footer makes no promise about follow-up time.
+- **2026-09-18, Q5: reuse the existing `enquireUrgent` string, in both
+  languages.** It is already live on the enquiry form in English and Spanish,
+  so the footer invents no new clinical copy and no language gets it first.
+  **Pending clinician review:** a clinician may replace the wording, possibly
+  adding 988. The string lives in one place, `src/strings.ts`, so that is a
+  single edit.
 
 ## Not in scope
 

@@ -77,7 +77,9 @@ test.describe('the client form', () => {
     const token = sql(`
       select r.token from "FormRequest" r
       join "FormTemplate" t on t.id = r."templateId"
-      where t.key = 'intake' and r.status <> 'submitted' limit 1`);
+      join "Client" c on c.id = r."clientId"
+      where t.key = 'intake' and r.status <> 'submitted' and c.language = 'en'
+      order by r.token limit 1`);
     test.skip(!token, 'no unsubmitted intake in the seed');
 
     await context.clearCookies();
@@ -90,7 +92,7 @@ test.describe('the client form', () => {
 
     // A conditional branch stays shut until its parent opens it.
     await expect(page.getByText('Roughly when was that?')).toHaveCount(0);
-    await page.getByRole('group', { name: /worked with a therapist before/ }).getByText('Yes').click();
+    await page.getByRole('radiogroup', { name: /worked with a therapist before/ }).getByText('Yes').click();
     await expect(page.getByText('Roughly when was that?')).toBeVisible();
 
     await page.getByRole('button', { name: 'Save and finish later' }).click();
@@ -98,6 +100,17 @@ test.describe('the client form', () => {
 
     await page.reload();
     await expect(page.getByText('Roughly when was that?')).toBeVisible();
+  });
+
+  /** PRD 3. The same safety line after every submission — nothing here says whether answers were flagged. */
+  test('ends every submission with where to go if it cannot wait', async ({ page, context }) => {
+    const { sql } = await import('./fixtures');
+    const token = sql(`select token from "FormRequest" where status = 'submitted' limit 1`);
+    test.skip(!token, 'no submitted form in the seed');
+
+    await context.clearCookies();
+    await page.goto(`/f/${token}/done`);
+    await expect(page.getByText(/call 911|llame al 911/)).toBeVisible();
   });
 });
 

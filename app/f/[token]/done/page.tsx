@@ -6,7 +6,7 @@ export const metadata = { title: UI.en.doneTitle };
 
 export default async function DonePage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const practice = await prisma.practiceSettings.findUnique({ where: { id: 1 }, select: { messagingName: true } });
+  const practice = await prisma.practiceSettings.findUnique({ where: { id: 1 }, select: { messagingName: true, practicePhone: true } });
 
   /**
    * The token is spent by the time anyone lands here — `openForm` refuses a
@@ -27,6 +27,14 @@ export default async function DonePage({ params }: { params: Promise<{ token: st
       <h1 className="text-xl font-semibold">{ui.doneHeading}</h1>
       <p className="mt-2 text-subhead leading-relaxed text-muted">{ui.doneBody}</p>
       <p className="mt-6 text-body text-subtle">{ui.doneClose}</p>
+      {/*
+        Every completion, flagged or not (PRD 3): a footer shown to everyone
+        discloses nothing, so `needsReview` never leaves the submission. The
+        enquiry form's copy, pending a clinician's own wording.
+      */}
+      {practice?.practicePhone && (
+        <p className="mt-6 text-body leading-relaxed text-muted">{ui.enquireUrgent(practice.practicePhone)}</p>
+      )}
     </main>
   );
 }

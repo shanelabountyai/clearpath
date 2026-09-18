@@ -1,20 +1,24 @@
 # Next
 
-**The review's no-decision work is finished** (WRITEUP sections 51 and 52).
-Everything left in it waits on a person. The next item is the first of those
-decisions: **PRD 3, client-facing risk response.** The review ranks it first
-because it needs a clinician's view, and that takes calendar time rather than
-engineering time. Read `prd-client-risk-response.md`.
+**PRD 3 (client risk response) is decided and built** (2026-09-18). Every
+screener done page now shows `enquireUrgent` (practice phone + 911) in the
+client's language, flagged or not. `needsReview` never leaves the transaction.
+The only thing still pending is a clinician's own wording, and that is one edit in
+`src/strings.ts`.
+
+**Next item: PRD 1, client-safe search** (search by name or by code?). Read
+`prd-client-safe-search.md`. Then PRD 2 (draft protection) and PRD 5
+(confirmation). Tickets D, E, F2 to F4 and G are P1s that were not in the "Now" group.
+Read each one in the doc before assuming it needs no decision.
 
 Shane wants decisions **one at a time**: one question, options, the
-recommendation first. Ask the most blocking question in the PRD, wait for the
-answer, record it in the PRD and the WRITEUP decisions log, then ask the next.
-Do not batch them.
+recommendation first. Record each answer in the PRD and the WRITEUP decisions
+log before asking the next.
 
-Remaining order from the review: PRD 3, then PRD 1 (search by name or by
-code?), PRD 2 (draft protection), PRD 5 (confirmation). Tickets D, E, F2 to F4
-and G are P1s that were not in the "Now" group. Read each one in the doc before
-assuming it needs no decision.
+**e2e note:** ticket C's `role="radiogroup"` change had broken
+`scheduling.spec.ts` "the client form", and its token query could pick a
+Spanish client. Both are fixed now. That commit's gate never ran e2e, so run the full
+sweep (or let CI) before trusting the rest of it.
 
 ## Before anything else: thirty seconds in a browser
 
@@ -53,7 +57,7 @@ All five are blocked on a product decision, which is why all five have a stub:
    Violates hard rule 3. → `prd-client-safe-search.md`
 2. **A progress note can vanish** — no autosave, no `beforeunload`, no
    `error.tsx` anywhere in the app. → `prd-note-draft-protection.md`
-3. **A flagged screener shows the client a generic thank-you** — the crisis-line
+3. ~~**A flagged screener shows the client a generic thank-you**~~ — built 2026-09-18. — the crisis-line
    copy exists, but only on the enquiry form. → `prd-client-risk-response.md`
 4. **Intake form deletes everything on a failed submit** — full-page redirect,
    `app/enquire/actions.ts:56`. → `prd-recoverable-forms.md`
@@ -64,13 +68,6 @@ All five are blocked on a product decision, which is why all five have a stub:
 
 Plus `prd-accessibility-conformance.md` — do we commit to AA, and does a check
 join CI. Decide early, build last.
-
-## Open question waiting on a person
-
-Left as a comment in the doc: does the risk-response PRD go with a general
-safety footer on every screener completion, or a message that differs for
-flagged clients? The general footer sidesteps the disclosure problem and is
-cheaper; it is the recommendation but not the decision.
 
 ## Gate state at handoff
 

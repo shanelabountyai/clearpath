@@ -4561,6 +4561,8 @@ to load. That needs its own small decision, not an English page.
 | The unread-alert blocker routes on the later of today and the last day, not today (departure D-31) | Execution cannot run before the last day, so that is the only day the answer matters. Asking about today blocked a departing cover for weeks over an alert the leave sweep would already have returned |
 | A cover whose planned last day is on or before the leave's last day counts as unavailable, not only one leaving before it | The departure moves the last day's sessions, so the leaver is not there that day. With `lt`, the leave screen called the cover fine while the departure was blocked |
 | "While you were away" merges its four reads into one array and sorts by date, in the page only | The data layer still audits each kind through its own cell — merging there would blur which read a row came from. The page has no such constraint, and grouping by kind instead of by when things happened was never the intent |
+| PRD 3: every screener completion shows the same safety footer (crisis line, 911), flagged or not (2026-09-18) | A flagged-only message either tells the client they were flagged or hints at it, before a clinician has seen the answers. A footer shown to everyone discloses nothing, keeps `needsReview` inside the submission transaction, and closes the P0 gap at the lowest cost. The wording still comes from a clinician |
+| PRD 3 Q5: the footer reuses `enquireUrgent` in both languages, pending a clinician's review (2026-09-18) | Copy already live in English and Spanish means nothing clinical is invented and no language gets it first. The clinician's wording, if different, is one edit in `src/strings.ts` |
 
 ## What this project deliberately is not
 
