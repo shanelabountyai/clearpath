@@ -1,21 +1,13 @@
 # Next
 
-**PRD 5 (action confirmation) is decided and built** (2026-09-18). All five
-questions were answered, and the answers are recorded in the PRD and the WRITEUP
-decisions log. `ConfirmButton` (`src/ui/confirm-button.tsx`) now guards sign,
-co-sign, execute departure, group cancel, cancel session, waive fee, and
-record notice/leave. Its native `<dialog>` states the consequence first.
-Acknowledged alerts and handled replies get an audited Reopen instead of a
-dialog. The departure and leave selects open blank and are `required`. WRITEUP
-§55. PRD 1, 2 and 3 were built earlier the same day.
+**PRD 4 (recoverable forms) is decided and built** (2026-09-18), and ticket F2
+went with it. The intake and group-booking forms are `useActionState` client
+components. A refusal returns `{ id, code|error, values }`, and the form is
+keyed on `id` so its selects refill too. The values travel in the response body,
+never a URL, and an e2e with JavaScript off proves the public form still works.
+WRITEUP §56. With that, all five P0s are built.
 
-**Next item: PRD 4, recoverable forms** (`prd-recoverable-forms.md`). It is the
-last unbuilt P0: the intake form loses everything on a failed submit. Ticket
-F2 (group booking discards the form on a conflict) is the same defect, so decide
-them together. `NoteEditor` is the working pattern: the server action returns a
-code, and the client keeps its state.
-
-After that, the remaining P1 tickets from the review (a Claude Doc titled
+**Next item: the remaining P1 tickets** from the review (a Claude Doc titled
 "Clearpath — UX & Accessibility Review"): D1–D3, E1–E2, F3, F4's `?error=`
 half, and G1. The audit-reason half of F4 was done in PRD 1. Read each ticket
 in the doc before assuming it needs no decision.
@@ -24,7 +16,10 @@ Shane wants decisions **one at a time**: one question, options, the
 recommendation first. Record each answer in the PRD and the WRITEUP decisions
 log before asking the next.
 
-**Known gaps:** booking's `?error=` still carries messages, not codes
+**Known gaps:** e2e SQL that converts `startAt` to practice time disagrees with
+the app by the psql session's timezone (America/Chicago on this laptop). The
+cause is unknown, so check it before any spec picks a slot by SQL time.
+Individual booking's `?error=` still carries messages, not codes
 (`app/(staff)/book/actions.ts:34-35,63`). PRD 2 does not catch the browser's
 back button inside the app, and the amendment forms still lose their text on a
 failed save (§54). `screenshots.spec.ts` was edited for the dialog but only
@@ -67,14 +62,13 @@ been looked at in either theme:
 
 ## The five P0s
 
-Each one was blocked on a product decision, so each has a stub. 1, 2, 3 and 5 are built:
+Each one was blocked on a product decision. All five are built:
 
 1. ~~**Client name in the URL**~~ — built 2026-09-18. → `prd-client-safe-search.md`
 2. ~~**A progress note can vanish**~~ — built 2026-09-18. → `prd-note-draft-protection.md`
 3. ~~**A flagged screener shows the client a generic thank-you**~~ — built 2026-09-18. — the crisis-line
    copy exists, but only on the enquiry form. → `prd-client-risk-response.md`
-4. **Intake form deletes everything on a failed submit** — full-page redirect,
-   `app/enquire/actions.ts:56`. → `prd-recoverable-forms.md`
+4. ~~**Intake form deletes everything on a failed submit**~~ — built 2026-09-18, with F2. → `prd-recoverable-forms.md`
 5. ~~**Sign / execute departure fire on one unconfirmed click.**~~ — built 2026-09-18. Until 2026-09-18
    the staff app had no client component. `src/ui/nav-list.tsx` is now the
    first, and it is the pattern for adding one: the server decides
@@ -86,5 +80,6 @@ join CI. Decide early, build last.
 ## Gate state at handoff
 
 `npm test` passed under the `set -m` job-control launch: 35 files, 3240 tests,
-EXIT=0. `tsc --noEmit` is clean. The e2e production build passed, and the seven
-touched specs ran 20 passed and 1 skipped.
+EXIT=0. `tsc --noEmit` is clean. `enquire.spec.ts` and `scheduling.spec.ts`
+ran 20 passed on a production build. The full e2e sweep has not run since
+ticket C.

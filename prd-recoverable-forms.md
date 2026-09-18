@@ -1,7 +1,7 @@
 # PRD: Recoverable Forms — a failed submit that does not delete the answer
 
 **Sample business:** "Stillwater Counseling" (as in the parent PRD)
-**Status:** v0.1 — **stub, 2026-09-17.** Raised by the UX/accessibility review. Open questions below are unanswered; this is not yet a buildable spec. Feature PRD, child of `prd-clearpath-counseling-ops.md`
+**Status:** v0.3 — **decided and built, 2026-09-18** (see Decisions; WRITEUP §56). Raised by the UX/accessibility review. Feature PRD, child of `prd-clearpath-counseling-ops.md`
 **Learning objective:** that hard rule 3 forecloses the conventional fix — you cannot echo the values back through the URL when the values are a name, an email and a phone number
 
 ---
@@ -57,6 +57,32 @@ examples of what must never appear in a URL.
    is what lets a person reach the server-side either/or rule at all. Making the
    pair required in the browser is not expressible in plain HTML, so this is part
    of question 1.
+
+## Decisions
+
+- **2026-09-18, Q1: `useActionState`, with the action returning a code and the
+  submitted values.** Shane's call. The form becomes a small client component,
+  following the `NoteEditor` pattern. A refusal returns `{ code, values }` rather
+  than redirecting, and the fields are refilled from `values` through
+  `defaultValue`. The values travel only in the response body, never in a URL or
+  a log. Next renders action state into the POST response, so the form is
+  expected to keep working with JavaScript off. An e2e with JavaScript disabled
+  has to prove that before it is claimed.
+- **2026-09-18, Q2: every refusal keeps the values, not just `invalid`.**
+  Shane's call. There is one return path, so this is the smaller diff. Someone
+  who is rate-limited, or finds the form closed, keeps what they typed and can
+  read it back on a phone call.
+- **2026-09-18, Q3 (and ticket F2): group booking uses the same
+  `useActionState` form.** Shane's call. `bookGroup` returns `{ error, values }`
+  and the form refills, ticked attendees included. A review step would not fix
+  this: the conflict comes from the database at write time, after any review.
+  This also takes the free-text `?error=` message off this page's URL.
+- **2026-09-18, Q4: email and phone stay unrequired in the browser, and the
+  either/or rule stays on the server.** Shane's call. Now that the values
+  survive, a refusal costs one round trip and an alert saying what to fix. An
+  `invalid` refusal is thrown before the rate-limit slot is claimed, so it does
+  not use up an attempt. A client-side copy of the rule would be a second place
+  to keep in step.
 
 ## Not in scope
 

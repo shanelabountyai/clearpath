@@ -151,3 +151,44 @@ test.describe('booking', () => {
     expect(video.length).toBeGreaterThanOrEqual(inPerson.length);
   });
 });
+
+test.describe('group booking (PRD 4, ticket F2)', () => {
+  test('a clash keeps the ticked attendees, topic and time, and puts nothing in the URL', async ({ page }) => {
+    // Book a slot, then book the same clinician into it again. Telehealth needs
+    // no room, so the only thing that can clash is the clinician. Far enough out
+    // that no seeded session is near it; the e2e seed resets it every run.
+    const date = addDays(nextMonday(), 70);
+    await actAs(page, USERS.frontDesk);
+    const form = page.locator('main form');
+    const boxes = form.locator('input[name="clientIds"]');
+    const fill = async () => {
+      await page.goto('/book/group');
+      await form.locator('input[name="date"]').fill(date);
+      await form.locator('select[name="startMinute"]').selectOption(String(9 * 60));
+      await form.locator('select[name="modality"]').selectOption('telehealth');
+    };
+
+    await fill();
+    const clinician = await form.locator('select[name="clinicianId"]').inputValue();
+    await boxes.nth(0).check();
+    await page.getByRole('button', { name: 'Book the group' }).click();
+    await expect(page).toHaveURL(/\/groups\//);
+
+    await fill();
+    await form.locator('input[name="topic"]').fill('Clash check');
+    await boxes.nth(1).check();
+    await boxes.nth(3).check();
+    await page.getByRole('button', { name: 'Book the group' }).click();
+
+    await expect(page.getByText('That clinician is already booked at this time')).toBeVisible();
+    await expect(page).toHaveURL(/\/book\/group$/);
+    await expect(form.locator('select[name="clinicianId"]')).toHaveValue(clinician);
+    await expect(form.locator('input[name="date"]')).toHaveValue(date);
+    await expect(form.locator('select[name="startMinute"]')).toHaveValue(String(9 * 60));
+    await expect(form.locator('select[name="modality"]')).toHaveValue('telehealth');
+    await expect(form.locator('input[name="topic"]')).toHaveValue('Clash check');
+    await expect(boxes.nth(0)).not.toBeChecked();
+    await expect(boxes.nth(1)).toBeChecked();
+    await expect(boxes.nth(3)).toBeChecked();
+  });
+});

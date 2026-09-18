@@ -4440,6 +4440,37 @@ nothing, which is failing closed. The late-fee wording in the cancel dialog is
 a preview, and the server decides from its own clock when you confirm. Handled
 replies older than a week cannot be reopened from the page.
 
+## 56. The form that forgot the person filling it in
+
+**The problem.** The public enquiry form and the group booking form each
+redirected on a refusal, and a redirect throws away everything typed. On the
+enquiry form, only the name was browser-required. A person who gave a name and
+no contact details passed the browser's check, then came back to a blank form
+that told them what was missing. Group booking lost every ticked attendee
+because of one clash. The conventional fix, putting the values in the query
+string, is exactly what hard rule 3 forbids.
+
+**The design.** Decided with Shane in PRD 4. Both actions now return state
+instead of redirecting on a refusal. `enquire` returns `{ code, values }` and
+`bookGroup` returns `{ error, values }`. The forms moved into small client
+components (`app/enquire/enquire-form.tsx`, `app/(staff)/book/group/group-form.tsx`)
+built on `useActionState`, and every field refills through `defaultValue`,
+checkboxes included. The first e2e run caught a trap. React 19 resets a form
+after its action runs. The text inputs survived, because their new
+`defaultValue` was already in place, but every select went back to its first
+option. So each refusal now carries a fresh `id`, and the form is keyed on it.
+The form remounts with the returned values and there is nothing left to reset. The values go back in the response body, only to the person
+who typed them. Next renders action state into a no-JavaScript POST response,
+and an e2e with JavaScript turned off proves it, so the public form did not
+start needing JavaScript. Success still redirects. The `?e=` and group
+`?error=` parameters are gone, and `e` was taken off the rule 3 allowlist.
+
+**What it deliberately does not do.** The either/or contact rule stays on the
+server only. An `invalid` refusal happens before the rate-limit slot is
+claimed, so it costs no attempt. The honeypot is never echoed back. The
+individual booking page (`/book`) still puts messages in `?error=`, which
+remains a known gap.
+
 ## Decisions log
 
 | Decision | Why |
@@ -4696,6 +4727,10 @@ replies older than a week cannot be reopened from the page.
 | PRD 5 Q2: the dialog guards sign, co-sign, execute departure, group cancel, fee charge/waive, and departure/leave notices (2026-09-18) | These are the irreversible, money, and many-people actions. One mechanism is simpler than a lighter second one for cancel and waive. Frequent actions (alert ack, "Called them") are kept out, so staff do not learn to click through the dialog |
 | PRD 5 Q3+Q4: alert ack and "Called them" get an audited Reopen in their done list, not a dialog or an undo toast (2026-09-18) | Frequent actions stay one click. A Reopen with no timer still works for someone who notices the next day, and it needs no client state. It writes its own audit row, because an unaudited undo would be a hole in the record (hard rule 4) |
 | PRD 5 Q5: departure and leave notice selects open blank and `required` (2026-09-18) | A form that closes a person's books should not default to whoever sorts first. The browser refuses an empty submit, and the dialog then names the person |
+| PRD 4 Q1: the intake form keeps its values through `useActionState`, and the action returns `{ code, values }` instead of redirecting (2026-09-18) | Hard rule 3 keeps name, email and phone out of the URL, so the values have to come back in the response body. `NoteEditor` already uses this pattern. Next renders action state into a no-JS POST response, so the public form should not start needing JavaScript. An e2e with JavaScript off has to prove it |
+| PRD 4 Q2: every intake refusal keeps the typed values, not just `invalid` (2026-09-18) | With the values in the body, one return path is smaller than two. A person who is rate-limited or finds the form closed keeps their details for the phone call the page points them to |
+| PRD 4 Q3: group booking (ticket F2) uses the same `useActionState` form, not a review step (2026-09-18) | The conflict comes from the database at write time, so a review screen before it cannot prevent the loss. Using one pattern for both forms also takes this page's free-text `?error=` out of the URL |
+| PRD 4 Q4: email or phone is not browser-required; the either/or rule stays server-side (2026-09-18) | With the values kept, a refusal is one cheap round trip. `invalid` is thrown before the rate-limit slot is claimed, so it does not cost an attempt. A second copy of the rule in the client would drift |
 
 ## What this project deliberately is not
 

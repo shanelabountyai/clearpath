@@ -91,6 +91,34 @@ test.describe('a stranger enquires', () => {
   });
 });
 
+/**
+ * PRD 4: a refusal hands back what was typed, in the response body and never the
+ * URL. Run with JavaScript on and off, because the public form is not allowed to
+ * start needing it.
+ */
+for (const javaScriptEnabled of [true, false]) {
+  test.describe(`a refused enquiry keeps what was typed (JavaScript ${javaScriptEnabled ? 'on' : 'off'})`, () => {
+    test.use({ javaScriptEnabled });
+
+    test('names without a way to reach them come back filled in, with the reason', async ({ page }) => {
+      await page.goto('/enquire');
+      await page.getByLabel('First name').fill('Ada');
+      await page.getByLabel('Last name').fill(NAME);
+      await page.getByLabel('Someone in particular?').selectOption({ index: 1 });
+      const clinician = await page.getByLabel('Someone in particular?').inputValue();
+      await page.getByRole('button', { name: 'Send' }).click();
+
+      await expect(page.locator('main [role="alert"]')).toContainText(/either an email address or a phone number/i);
+      await expect(page.getByLabel('First name')).toHaveValue('Ada');
+      await expect(page.getByLabel('Last name')).toHaveValue(NAME);
+      await expect(page.getByLabel('Someone in particular?')).toHaveValue(clinician);
+      expect(page.url()).not.toContain('Ada');
+      expect(page.url()).not.toContain(NAME);
+      expect(submitted()).toBe(0);
+    });
+  });
+}
+
 test.describe('what the practice sees', () => {
   test('an enquiry nobody took, badged as such on the worklist', async ({ page }) => {
     await page.goto('/enquire');

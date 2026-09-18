@@ -26,7 +26,7 @@ const APPROVED = new Set([
   'date', 'from', 'to', 'cursor',
   // flags and outcome codes after a redirect
   'flagged', 'denied', 'booked', 'skipped', 'assigned', 'converted', 'recorded', 'sendFailed', 'sent',
-  'asked', 'confirmed', 'declined', 'error', 'e',
+  'asked', 'confirmed', 'declined', 'error',
 ]);
 
 function keysRead(src: string): string[] | 'unreadable' {

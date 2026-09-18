@@ -1,5 +1,6 @@
 'use server';
 
+import { randomUUID } from 'node:crypto';
 import { redirect } from 'next/navigation';
 import { Conflict } from '../../../src/errors';
 import { requireSession } from '../../../src/session';
@@ -8,7 +9,19 @@ import { queueToClient } from '../../../src/messaging/outbox';
 import { systemClock } from '@/src/clock';
 import type { AppointmentType } from '../../../src/scheduling/recurrence';
 
-export async function bookGroup(formData: FormData) {
+/**
+ * What front desk entered, handed back with a refusal so a conflict mid-call
+ * does not cost them the ticked attendees (PRD 4, Q3). In the response body,
+ * never the URL: the message is free text and the ticks are a list of clients.
+ */
+export type GroupFormValues = {
+  clinicianId: string; date: string; startMinute: string; type: string; modality: string;
+  topic: string; clientIds: string[];
+};
+/** `id` keys the form so a refusal remounts it with these values; see `EnquireState`. */
+export type BookGroupState = { id: string; error: string; values: GroupFormValues } | null;
+
+export async function bookGroup(_prev: BookGroupState, formData: FormData): Promise<BookGroupState> {
   const { actor } = await requireSession();
 
   const clinicianId = String(formData.get('clinicianId'));
@@ -19,10 +32,16 @@ export async function bookGroup(formData: FormData) {
   const topic = String(formData.get('topic') ?? '').trim() || null;
   const clientIds = formData.getAll('clientIds').map(String).filter(Boolean);
 
-  const back = (params: Record<string, string>) =>
-    redirect(`/book/group?${new URLSearchParams({ clinicianId, date, type, modality, ...params })}`);
+  const back = (error: string): BookGroupState => ({
+    id: randomUUID(),
+    error,
+    values: {
+      clinicianId, date, startMinute: String(startMinute), type, modality,
+      topic: topic ?? '', clientIds,
+    },
+  });
 
-  if (clientIds.length === 0) back({ error: 'Choose at least one attendee' });
+  if (clientIds.length === 0) return back('Choose at least one attendee');
 
   let groupId: string;
   try {
@@ -41,7 +60,7 @@ export async function bookGroup(formData: FormData) {
       });
     }
   } catch (e) {
-    if (e instanceof Conflict) back({ error: e.message });
+    if (e instanceof Conflict) return back(e.message);
     throw e;
   }
 
