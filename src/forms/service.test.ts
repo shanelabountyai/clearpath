@@ -150,6 +150,20 @@ describe('the tokenized link', () => {
     expect(await prisma.formSubmission.count()).toBe(0);
   });
 
+  /**
+   * The refusal used to carry a count and nothing else, so the form could only
+   * tell a client that *something* was unanswered. The keys are the question's
+   * name, never its answer — which is what makes them safe to send back.
+   */
+  it('names the questions it refused, by key', async () => {
+    const request = await issueScreener();
+    const { item_3: _omitted, ...missingOne } = zeros;
+    await expect(submitForm(request.token, missingOne)).rejects.toMatchObject({
+      code: 'invalid',
+      fields: ['item_3'],
+    });
+  });
+
   it('is opaque and unguessable', async () => {
     const request = await issueScreener();
     expect(request.token).toHaveLength(32);

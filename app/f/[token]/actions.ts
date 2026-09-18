@@ -20,15 +20,21 @@ export async function saveProgress(token: string, answers: Record<string, unknow
  * Handing one to the browser was a small wrong shape while there was one
  * language, and a disclosure-and-comprehension bug once there were two. The
  * caller looks the code up in `UI.errors`.
+ *
+ * `fields` travels with it so the form can say *which* question is unanswered
+ * instead of only that one is. Template keys, which the browser already holds —
+ * it rendered the questions — so this discloses nothing it did not send.
  */
 export async function submit(
   token: string,
   answers: Record<string, unknown>,
-): Promise<{ code: ClientErrorCode | null }> {
+): Promise<{ code: ClientErrorCode | null; fields?: string[] }> {
   try {
     await submitForm(token, answers);
   } catch (e) {
-    if (e instanceof Conflict) return { code: isClientErrorCode(e.code) ? e.code : 'unknown' };
+    if (e instanceof Conflict) {
+      return { code: isClientErrorCode(e.code) ? e.code : 'unknown', fields: e.fields };
+    }
     throw e;
   }
   redirect(`/f/${token}/done`);

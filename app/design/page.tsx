@@ -2,7 +2,7 @@ import { Logo, Wordmark } from '@/src/ui/logo';
 import {
   AppointmentChip, AuditRow, Badge, BreakGlassBar, BreakGlassDialog, CONFIRMATION_META,
   Button, Card, CoSignRow, EmptyState, Field, LockedPanel, PageHeader, STATUS_META,
-  ScreenerResult, SelectField, StatusChip, TextField, TierBanner, ageTone, money,
+  ScreenerResult, ScrollX, SelectField, StatusChip, TextField, TierBanner, ageTone, money,
   type Tier, type Tone,
 } from '@/src/ui/primitives';
 
@@ -265,7 +265,7 @@ export default function DesignSystemPage() {
         title="Audit row"
         note="Ids only — names are resolved by the caller and passed in, since the log itself never stores one. A break-glass or denied row tints the whole row rather than adding a third badge column."
       >
-        <div className="scroll-x rounded-[var(--radius-lg)] border" style={{ borderColor: 'var(--border)' }}>
+        <ScrollX label="Audit row specimen" className="rounded-[var(--radius-lg)] border" style={{ borderColor: 'var(--border)' }}>
           <table className="w-full min-w-[700px] border-collapse text-caption">
             <tbody>
               <AuditRow
@@ -282,7 +282,7 @@ export default function DesignSystemPage() {
               />
             </tbody>
           </table>
-        </div>
+        </ScrollX>
       </Section>
 
       <Section

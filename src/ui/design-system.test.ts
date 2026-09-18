@@ -115,3 +115,16 @@ it('text tokens clear AA against every surface they sit on', () => {
     expect(tier, `${label}: --tier-operational on its soft background is ${tier.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
   }
 });
+
+/**
+ * A div that scrolls but holds no focusable child cannot be scrolled from the
+ * keyboard, and the fix is a `tabindex` plus a name that CSS cannot supply.
+ * Eight call sites had the class and none had either, so the class itself is
+ * now private to the one component that gets it right.
+ */
+it('a scrolling box comes from ScrollX, never from the bare class', () => {
+  const offenders = sourceFiles().filter(
+    (p) => p !== 'src/ui/primitives.tsx' && /scroll-x/.test(readFileSync(p, 'utf8')),
+  );
+  expect(offenders).toEqual([]);
+});

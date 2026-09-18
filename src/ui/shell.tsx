@@ -1,8 +1,8 @@
-import Link from 'next/link';
 import { may } from '../auth/guard';
+import { NavList } from './nav-list';
 import type { Actor } from '../auth/permissions';
 
-interface NavItem {
+export interface NavItem {
   href: string;
   label: string;
   glyph: string;
@@ -80,20 +80,7 @@ export function navFor(actor: Actor): NavItem[] {
 }
 
 export function NavLinks({ actor }: { actor: Actor }) {
-  return (
-    <nav aria-label="Sections" className="flex flex-col gap-0.5">
-      {navFor(actor).map((item) => (
-        <Link
-          key={item.href}
-          href={item.href}
-          className="flex items-center gap-2.5 rounded-[var(--radius)] px-2.5 py-1.5 text-body text-muted transition-colors hover:bg-[var(--surface-inset)] hover:text-ink"
-        >
-          <span aria-hidden className="w-4 text-center text-body text-subtle">{item.glyph}</span>
-          {item.label}
-        </Link>
-      ))}
-    </nav>
-  );
+  return <NavList items={navFor(actor)} />;
 }
 
 export const ROLE_LABEL: Record<string, string> = {

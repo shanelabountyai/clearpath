@@ -27,6 +27,18 @@ export default async function StaffLayout({ children }: { children: React.ReactN
         </main>
       ) : (
         <div className="flex min-h-screen">
+            {/*
+              * First in the tab order, invisible until it has focus. The nav is
+              * fifteen links wide, and without this every keyboard user pays for
+              * all of them on every page.
+              */}
+            <a
+              href="#main"
+              className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-[var(--radius)] focus:border focus:px-3 focus:py-2 focus:text-body focus:font-medium focus:no-underline"
+              style={{ borderColor: 'var(--border-strong)', background: 'var(--surface-raised)', color: 'var(--text)' }}
+            >
+              Skip to main content
+            </a>
             <aside
               className="hidden w-56 shrink-0 flex-col justify-between border-r px-3 py-4 md:flex"
               style={{ borderColor: 'var(--border)', background: 'var(--surface-sunken)' }}
@@ -53,7 +65,7 @@ export default async function StaffLayout({ children }: { children: React.ReactN
                   Your last day is {dayLabel(leaving.lastDayOn)}. Notes you have not signed by then cannot be signed by anybody — see what is still open.
                 </Link>
               )}
-              <main className="mx-auto max-w-[1200px] px-5 py-6">{children}</main>
+              <main id="main" tabIndex={-1} className="mx-auto max-w-[1200px] px-5 py-6">{children}</main>
             </div>
           </div>
       )}

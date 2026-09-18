@@ -4240,6 +4240,49 @@ above, and the group-kill took the whole tree down in one shot.
 
 Loose thread 4, `NEXT.md`. `CLAUDE.md` → *Watching a test sweep*.
 
+## 51. Focus that was there and could not be seen
+
+**The problem.** The UX/accessibility review (2026-09-17) found two surfaces
+that worked with a mouse and quietly failed from a keyboard or screen reader.
+The first was the staff shell. It had no skip link past fifteen nav links and no
+`aria-current`, and it had eight horizontally scrolling tables that a keyboard
+could not scroll: a div with no focusable child never gets focus, so `/audit`
+could not be read without a mouse. The second was the clinical screener. Every
+answer option is a label around an `sr-only` radio, so the global focus ring was
+drawn on a clipped 1px box: the radio had focus but nobody could see it. Radio
+groups carried neither the required asterisk nor `aria-required`. A failed
+submit said "some questions still need an answer" without saying which one,
+although `validateSubmission` had already returned the exact field keys. Only a
+count made it into the `Conflict` message.
+
+**The design.** Each defect is fixed in the one place every caller goes through.
+`ScrollX` is a primitive with a required `label`, `role="region"` and
+`tabIndex={0}`. A design-system test fails if any other file uses the bare
+`scroll-x` class. It was checked against the old markup before being trusted,
+and it catches that markup. The focus ring is one CSS rule,
+`.option:has(:focus-visible)`, placed next to the global one it compensates for.
+`Conflict` has an optional `fields` list of template keys, and the service
+passes the validator's keys through it. The form lists the refused questions by
+the numbers shown on screen and marks each one `aria-invalid`, pointing at the
+banner. `aria-current` needs the pathname, which a server component cannot read,
+so `NavList` is the staff shell's only client component. Only href, label and
+glyph cross that boundary; the permission matrix that decides which links exist
+stays on the server. When several links match, the longest one wins, because
+`/book/group` is under `/book` and prefix matching alone marked both as current.
+
+**What it deliberately does not do.** It does not use native `required` on the
+screener inputs. The browser's own validation bubble would appear in the
+browser's language, not the client's, before the server's bilingual answer
+could. It does not send answers back with the refusal: `fields` holds keys only,
+the browser already has them because it rendered the questions, and the
+`Conflict` docstring says nothing in it may come from what was submitted. It
+does not add a new string in two languages; the question's own label, already
+in the client's language, names the question. None of the five P0s is touched,
+because each is waiting on a product decision in its own `prd-*.md`.
+
+P1 tickets B and C, `NEXT.md`. Not yet checked in a browser: the focus ring and
+the skip link are CSS that no unit test renders.
+
 ## Decisions log
 
 | Decision | Why |

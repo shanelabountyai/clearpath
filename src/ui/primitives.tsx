@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { CHARGEABLE } from '../scheduling/lifecycle';
 import { localDateOf, minutesToHHMM } from '../time';
 import type { DaySession } from '../scheduling/calendar';
@@ -212,6 +212,23 @@ export function Card({ children, className = '' }: { children: ReactNode; classN
       className={`rounded-[var(--radius-lg)] border p-4 ${className}`}
       style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)', boxShadow: 'var(--shadow-sm)' }}
     >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * A box whose contents are wider than it is. A div that scrolls but holds no
+ * focusable child is unreachable by keyboard — the wide table on `/audit` was
+ * simply unreadable without a mouse — so the box itself takes focus. A
+ * focusable thing has to say what it is, which is why the label is required
+ * rather than optional: every caller is forced to name its own table.
+ */
+export function ScrollX({ label, className = '', style, children }: {
+  label: string; className?: string; style?: CSSProperties; children: ReactNode;
+}) {
+  return (
+    <div role="region" aria-label={label} tabIndex={0} className={`scroll-x ${className}`.trim()} style={style}>
       {children}
     </div>
   );

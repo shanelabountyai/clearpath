@@ -1,7 +1,7 @@
 import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
 import { guarded } from '../../../src/auth/guard';
-import { Badge, Card, Field, PageHeader, money } from '../../../src/ui/primitives';
+import { Badge, Card, Field, PageHeader, ScrollX, money } from '../../../src/ui/primitives';
 import { ROLE_LABEL } from '../../../src/ui/shell';
 import { withDenial } from '@/src/ui/denied';
 import { previewProcessNotePurge } from '@/src/staff/departure';
@@ -50,7 +50,7 @@ async function PracticePage() {
         <div className="space-y-4">
           <Card>
             <h2 className="mb-3 font-semibold">People</h2>
-            <div className="scroll-x">
+            <ScrollX label="People">
               <table className="w-full min-w-[520px] border-collapse text-body">
                 <thead>
                   <tr className="text-left text-muted">
@@ -77,7 +77,7 @@ async function PracticePage() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </ScrollX>
           </Card>
 
           <Card>

@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { listClients } from '../../../src/clients/repository';
 import { requireSession } from '../../../src/session';
 import { ownCaseloadOnly } from '../../../src/auth/permissions';
-import { Badge, EmptyState, PageHeader, TierBanner, money } from '../../../src/ui/primitives';
+import { Badge, EmptyState, PageHeader, ScrollX, TierBanner, money } from '../../../src/ui/primitives';
 import { withDenial } from '@/src/ui/denied';
 import { dayLabel } from '../departures/ui';
 
@@ -43,7 +43,7 @@ async function ClientsPage({ searchParams }: { searchParams: Promise<{ q?: strin
       {clients.length === 0 ? (
         <EmptyState title="No clients match">Try a different name or code.</EmptyState>
       ) : (
-        <div className="scroll-x rounded-[var(--radius-lg)] border" style={{ borderColor: 'var(--border)' }}>
+        <ScrollX label="Clients" className="rounded-[var(--radius-lg)] border" style={{ borderColor: 'var(--border)' }}>
           <table className="w-full min-w-[720px] border-collapse text-body">
             <thead>
               <tr style={{ background: 'var(--surface-sunken)' }}>
@@ -84,7 +84,7 @@ async function ClientsPage({ searchParams }: { searchParams: Promise<{ q?: strin
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollX>
       )}
     </>
   );

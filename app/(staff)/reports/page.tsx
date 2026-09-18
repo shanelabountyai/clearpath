@@ -2,7 +2,7 @@ import { requireSession } from '../../../src/session';
 import { confirmationReport, utilizationReport, weeklyVolume } from '../../../src/reports/utilization';
 import { referralReport } from '../../../src/reports/intake';
 import { addDays, localDateOf } from '../../../src/time';
-import { Card, money, PageHeader } from '../../../src/ui/primitives';
+import { Card, money, PageHeader, ScrollX } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
 import { withDenial } from '@/src/ui/denied';
 import { abandonedNotesByDeparture } from '@/src/staff/departure';
@@ -76,7 +76,7 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
 
         <Card>
           <h2 className="mb-3 font-semibold">Sessions by clinician</h2>
-          <div className="scroll-x">
+          <ScrollX label="Sessions by clinician">
             <table className="w-full min-w-[380px] border-collapse text-body">
               <thead>
                 <tr className="text-left text-muted">
@@ -99,7 +99,7 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
                 ))}
               </tbody>
             </table>
-          </div>
+          </ScrollX>
         </Card>
 
         <Card className="lg:col-span-2">
@@ -110,7 +110,7 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
             Sessions nobody was asked about ({confirmations.totals.notRequired}) are excluded rather
             than counted as misses, and {confirmations.totals.pending} are still in flight.
           </p>
-          <div className="scroll-x">
+          <ScrollX label="Confirmations by clinician">
             <table className="w-full min-w-[520px] border-collapse text-body">
               <thead>
                 <tr className="text-left text-muted">
@@ -146,7 +146,7 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
                 </tr>
               </tbody>
             </table>
-          </div>
+          </ScrollX>
 
           {confirmations.declineReasons.length > 0 && (
             <p className="mt-3 text-caption text-muted">
@@ -160,7 +160,7 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
 
         <Card className="lg:col-span-2">
           <h2 className="mb-3 font-semibold">Completed sessions per week</h2>
-          <div className="scroll-x">
+          <ScrollX label="Completed sessions per week">
             <div className="flex min-w-[600px] items-end gap-1" style={{ height: 140 }}>
               {Object.entries(
                 weeks.reduce<Record<string, number>>((acc, w) => {
@@ -179,7 +179,7 @@ async function ReportsPage({ searchParams }: { searchParams: Promise<{ from?: st
                 </div>
               ))}
             </div>
-          </div>
+          </ScrollX>
         </Card>
       </div>
 

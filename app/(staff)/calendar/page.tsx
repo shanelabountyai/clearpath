@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { requireSession } from '../../../src/session';
 import { daySchedule, type DaySession } from '../../../src/scheduling/calendar';
 import { addDays, localDateOf, minutesToHHMM, WEEKDAYS, weekdayOf } from '../../../src/time';
-import { AppointmentChip, PageHeader, TierBanner } from '../../../src/ui/primitives';
+import { AppointmentChip, PageHeader, ScrollX, TierBanner } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
 import { withDenial } from '@/src/ui/denied';
 
@@ -69,7 +69,7 @@ async function CalendarPage({
         </p>
       )}
 
-      <div className="scroll-x rounded-[var(--radius-lg)] border" style={{ borderColor: 'var(--border)' }}>
+      <ScrollX label="Day schedule" className="rounded-[var(--radius-lg)] border" style={{ borderColor: 'var(--border)' }}>
         <div className="flex min-w-[860px]">
           {/* Time gutter */}
           <div className="w-14 shrink-0 border-r" style={{ borderColor: 'var(--border)' }}>
@@ -102,7 +102,7 @@ async function CalendarPage({
             hours={hours}
           />
         </div>
-      </div>
+      </ScrollX>
     </>
   );
 }

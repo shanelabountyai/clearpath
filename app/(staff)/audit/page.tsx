@@ -1,7 +1,7 @@
 import { queryAuditLog } from '../../../src/reports/audit';
 import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
-import { AuditRow, Card, EmptyState, PageHeader } from '../../../src/ui/primitives';
+import { AuditRow, Card, EmptyState, PageHeader, ScrollX } from '../../../src/ui/primitives';
 import { ROLE_LABEL } from '../../../src/ui/shell';
 import { withDenial } from '@/src/ui/denied';
 
@@ -94,7 +94,7 @@ async function AuditPage({
       {result.rows.length === 0 ? (
         <EmptyState title="No events match" />
       ) : (
-        <div className="scroll-x rounded-[var(--radius-lg)] border" style={{ borderColor: 'var(--border)' }}>
+        <ScrollX label="Audit events" className="rounded-[var(--radius-lg)] border" style={{ borderColor: 'var(--border)' }}>
           <table className="w-full min-w-[900px] border-collapse text-caption">
             <thead>
               <tr style={{ background: 'var(--surface-sunken)' }}>
@@ -115,7 +115,7 @@ async function AuditPage({
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollX>
       )}
 
       <p className="mt-3 text-caption text-subtle">

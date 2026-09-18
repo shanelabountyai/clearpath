@@ -56,6 +56,16 @@ body {
   border-radius: 3px;
 }
 
+/*
+ * A screener answer is a label wrapping an `sr-only` radio, so the rule above
+ * draws its ring on a clipped 1px box: focus was real but invisible, on every
+ * option of every question on the highest-stakes surface in the product.
+ */
+.option:has(:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 ::selection { background: var(--accent-soft); color: var(--text); }
 
 /* Wide content scrolls inside its own box; the page body never does. */

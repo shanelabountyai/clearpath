@@ -205,7 +205,13 @@ export async function submitForm(
 
   const schema = asSchema(request.template.schema);
   const errors = validateSubmission(schema, answers);
-  if (errors.length) throw new Conflict(`This form has ${errors.length} unanswered or invalid question(s)`, 'invalid');
+  if (errors.length) {
+    throw new Conflict(
+      `This form has ${errors.length} unanswered or invalid question(s)`,
+      'invalid',
+      errors.map((e) => e.field),
+    );
+  }
 
   const score = scoreSubmission(schema, asRules(request.template.scoring), answers);
   const signature = schema.fields.find((f) => f.type === 'signature');

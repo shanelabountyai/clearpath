@@ -26,7 +26,16 @@ export class NotFound extends Error {
 /** A business-rule refusal — double booking, late edit of a signed note. */
 export class Conflict extends Error {
   readonly status = 409;
-  constructor(message: string, readonly code?: string) {
+  constructor(
+    message: string,
+    readonly code?: string,
+    /**
+     * Which fields the refusal is about, as template keys. Keys, never values:
+     * `phq9_item_9` is a question's name and can be said out loud, the answer
+     * to it cannot. Nothing here may be derived from what was submitted.
+     */
+    readonly fields?: string[],
+  ) {
     super(message);
     this.name = 'Conflict';
   }
