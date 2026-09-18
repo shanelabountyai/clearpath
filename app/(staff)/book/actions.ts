@@ -60,7 +60,7 @@ export async function book(formData: FormData) {
       seriesId: series.id,
     });
   } catch (e) {
-    if (e instanceof Conflict) back({ error: e.message });
+    if (e instanceof Conflict) back({ error: e.code ?? 'conflict' });
     throw e;
   }
 }

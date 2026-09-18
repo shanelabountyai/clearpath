@@ -3,6 +3,7 @@ import { getAppointment } from '../../../../src/scheduling/calendar';
 import { TRANSITIONS, classifyCancellation, type Status } from '../../../../src/scheduling/lifecycle';
 import { prisma } from '../../../../src/db';
 import { Forbidden } from '../../../../src/errors';
+import { BOOKING_REFUSAL, Refusal } from '../../departures/ui';
 import { requireSession } from '../../../../src/session';
 import { may } from '../../../../src/auth/guard';
 import { localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../../src/time';
@@ -67,11 +68,7 @@ export default async function AppointmentPage({
         }
       />
 
-      {error && (
-        <p className="mb-4 rounded-[var(--radius)] border px-3 py-2 text-body" style={{ borderColor: 'var(--danger)', background: 'var(--danger-soft)' }}>
-          {error}
-        </p>
-      )}
+      <Refusal code={error} messages={BOOKING_REFUSAL} />
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-4">

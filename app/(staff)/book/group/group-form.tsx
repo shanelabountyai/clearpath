@@ -30,7 +30,7 @@ export function GroupForm({
   return (
     <>
       {state && (
-        <Card><Badge tone="danger">{state.error}</Badge></Card>
+        <Card key={state.id}><p role="alert"><Badge tone="danger">{state.error}</Badge></p></Card>
       )}
 
       <Card>

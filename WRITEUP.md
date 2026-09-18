@@ -4471,6 +4471,25 @@ claimed, so it costs no attempt. The honeypot is never echoed back. The
 individual booking page (`/book`) still puts messages in `?error=`, which
 remains a known gap.
 
+## 57. The review's remaining P1s
+
+**Problem.** Ticket D1: `/book`, an appointment's page and `/inquiries` render
+a failed action as a plain paragraph. After the redirect nothing is announced,
+so a screen-reader user never hears that the action failed. F4: the same three
+pages got that paragraph from `?error=<Conflict message>`. Today's messages
+name no one, but the mechanism would ship the first one that did.
+
+**Design.** Both findings have one fix. Each redirect carries the `Conflict`'s
+code, which is already how departures and leave work (`orBack`). The page turns
+the code into a sentence with the existing `Refusal`, which has `role="alert"`.
+`?sendFailed=` also carries a code now. A test in `no-phi-in-urls.test.ts`
+fails on any `.message` in a redirect, and it was checked against the old code.
+The group form's refusal travels in the response body, not a URL. It got
+`role="alert"` and a key, so a repeated refusal is announced again.
+
+**Not done.** The test matches the shapes the app uses. A message passed
+through a variable first would get past it.
+
 ## Decisions log
 
 | Decision | Why |

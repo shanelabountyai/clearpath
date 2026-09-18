@@ -43,7 +43,7 @@ export async function moveSession(formData: FormData) {
       startMinute: Number(formData.get('startMinute')),
     });
   } catch (e) {
-    if (e instanceof Conflict) redirect(`/appointments/${id}?error=${encodeURIComponent(e.message)}`);
+    if (e instanceof Conflict) redirect(`/appointments/${id}?error=${e.code ?? 'conflict'}`);
     throw e;
   }
   revalidatePath(`/appointments/${id}`);

@@ -6,6 +6,7 @@ import { clinicianCapacity, listInquiries, listReferrers, previewInquiryPurge, t
 import { possibleDuplicates } from '../../../src/clients/repository';
 import { Badge, Card, EmptyState, PageHeader, SelectField, TextField, TierBanner } from '../../../src/ui/primitives';
 import { withDenial } from '@/src/ui/denied';
+import { CONVERT_REFUSAL, Refusal } from '../departures/ui';
 import { addReferrer, assign, convert, discard, recordInquiry, setAccepting, toggleReferrer } from './actions';
 
 export const dynamic = 'force-dynamic';
@@ -143,11 +144,7 @@ async function InquiriesPage({
 
       <div className="mb-4"><TierBanner tier="operational" /></div>
 
-      {q.error && (
-        <p className="mb-4 rounded-[var(--radius)] border px-3 py-2 text-body" style={{ borderColor: 'var(--danger)', background: 'var(--danger-soft)' }}>
-          {q.error}
-        </p>
-      )}
+      <Refusal code={q.error} messages={CONVERT_REFUSAL} />
 
       {duplicates.length > 0 && (
         <div className="mb-4 rounded-[var(--radius-lg)] border px-4 py-3" style={{ borderColor: 'var(--warning)', background: 'var(--warning-soft)' }}>
@@ -177,7 +174,7 @@ async function InquiriesPage({
               what is still owed rather than disappearing into the conversion. */}
           <p className="mt-1 text-body">
             {q.sendFailed
-              ? `The intake packet was not sent: ${q.sendFailed} Nothing has gone out — send it from the client’s page once the template is fixed.`
+              ? `The intake packet was not sent: ${q.sendFailed === 'template_not_translated' ? 'that form has no translation in the client’s language yet.' : 'the form could not be issued.'} Nothing has gone out — send it from the client’s page once the template is fixed.`
               : q.sent
                 ? `Intake packet sent (${q.sent}).`
                 : 'No intake packet was sent — send one from the client’s page when you are ready.'}

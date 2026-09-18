@@ -12,9 +12,8 @@ import { auditCodeOrNothing } from './reports/audit-code';
  * decides it can never carry a name. It fails closed — a file that touches
  * `searchParams` in a shape this test cannot read is an offender too.
  *
- * ponytail: checks key names, not values. `?error=` is approved and today
- * carries booking-conflict *messages*; none names a client, but nothing here
- * would notice the first one that did (see prd-client-safe-search.md).
+ * Checks key names, not values. `?error=` and `?sendFailed=` carry a
+ * `Conflict`'s code, never its message; the test below holds that.
  */
 const APPROVED = new Set([
   // ids and codes
@@ -68,6 +67,35 @@ describe('hard rule 3: no free-text key in a URL', () => {
     expect(keysRead(`const q = await searchParams; q.topic;`)).toContain('topic');
     expect(keysRead(`const p = new URL(request.url).searchParams; p.get('name');`)).toContain('name');
     expect(keysRead(`const s = useSearchParams(); searchParams`)).toBe('unreadable');
+  });
+});
+
+/**
+ * A `Conflict` message is prose written by whoever wrote the throw, and the
+ * first one to name a client would ship to the URL unnoticed (review F4). A
+ * redirect carries the code; the page owns the sentence.
+ *
+ * ponytail: matches `.message` on the redirect's line or inside a `back({...})`
+ * object literal, which is every shape the app uses. A message laundered
+ * through a variable first would get past it.
+ */
+function messageInUrl(src: string): boolean {
+  return /redirect\([^\n]*\.message/.test(src) || /back\(\{[^}]*\.message/.test(src);
+}
+
+describe('hard rule 3: no error message in a URL', () => {
+  it('no redirect in app/ carries a Conflict message', () => {
+    const offenders = readdirSync('app', { recursive: true, encoding: 'utf8' })
+      .filter((f) => /\.tsx?$/.test(f) && messageInUrl(readFileSync(`app/${f}`, 'utf8')));
+    expect(offenders).toEqual([]);
+  });
+
+  it('catches the defect it was written for', () => {
+    expect(messageInUrl('redirect(`/appointments/${id}?error=${encodeURIComponent(e.message)}`);')).toBe(true);
+    expect(messageInUrl("back({ convert: id, error: e.message });")).toBe(true);
+    expect(messageInUrl("back({ error: e.code ?? 'conflict' });")).toBe(false);
+    // The group form's refusal travels in the response body, not a URL.
+    expect(messageInUrl('return back(e.message);')).toBe(false);
   });
 });
 

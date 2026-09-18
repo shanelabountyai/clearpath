@@ -9,6 +9,7 @@ import { Badge, Card, PageHeader, SelectField, TextField, TierBanner } from '../
 import { book } from './actions';
 import { systemClock } from '@/src/clock';
 import { withDenial } from '@/src/ui/denied';
+import { BOOKING_REFUSAL, Refusal } from '../departures/ui';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,11 +51,7 @@ async function BookPage({
       />
       <div className="mb-4"><TierBanner tier="operational" /></div>
 
-      {q.error && (
-        <p className="mb-4 rounded-[var(--radius)] border px-3 py-2 text-body" style={{ borderColor: 'var(--danger)', background: 'var(--danger-soft)' }}>
-          {q.error}
-        </p>
-      )}
+      <Refusal code={q.error} messages={BOOKING_REFUSAL} />
 
       {q.booked && (
         <div className="mb-4 rounded-[var(--radius-lg)] border px-4 py-3" style={{ borderColor: 'var(--success)', background: 'var(--success-soft)' }}>

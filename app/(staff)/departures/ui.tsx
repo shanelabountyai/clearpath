@@ -71,6 +71,17 @@ export const LEAVE_REFUSAL: Record<string, string> = {
     'The person chosen cannot cover this supervision: they are not a supervisor, or they are away, leaving or gone for some of it.',
 };
 
+/** A booking or a move refused; `/book` and an appointment's page share it. */
+export const BOOKING_REFUSAL: Record<string, string> = {
+  clinician_busy: 'That clinician is already booked at this time.',
+  no_room: 'No therapy room is free at this time.',
+  no_rooms: 'No therapy rooms are configured. A practice manager adds them before anything can be booked in person.',
+};
+
+export const CONVERT_REFUSAL: Record<string, string> = {
+  bad_transition: 'This enquiry has already been converted or closed, so it cannot become a client again.',
+};
+
 export function Refusal({ code, messages = REFUSAL }: { code?: string; messages?: Record<string, string> }) {
   if (!code) return null;
   return (

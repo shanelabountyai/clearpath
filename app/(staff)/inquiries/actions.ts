@@ -121,7 +121,7 @@ export async function convert(formData: FormData) {
     });
     clientId = client.id;
   } catch (e) {
-    if (e instanceof Conflict) back({ convert: id, error: e.message });
+    if (e instanceof Conflict) back({ convert: id, error: e.code ?? 'conflict' });
     throw e;
   }
 
@@ -131,7 +131,7 @@ export async function convert(formData: FormData) {
   try {
     await issueForm(actor, { clientId, templateKey });
   } catch (e) {
-    if (e instanceof Conflict) back({ converted: clientId, sendFailed: e.message });
+    if (e instanceof Conflict) back({ converted: clientId, sendFailed: e.code ?? 'conflict' });
     throw e;
   }
   back({ converted: clientId, sent: templateKey });
