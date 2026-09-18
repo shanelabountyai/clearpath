@@ -7,20 +7,19 @@ keyed on `id` so its selects refill too. The values travel in the response body,
 never a URL, and an e2e with JavaScript off proves the public form still works.
 WRITEUP §56. With that, all five P0s are built.
 
-**Next item: the remaining P1 tickets** from the review (a Claude Doc titled
-"Clearpath — UX & Accessibility Review"): D1–D3, E1–E2, F3, F4's `?error=`
-half, and G1. The audit-reason half of F4 was done in PRD 1. Read each ticket
-in the doc before assuming it needs no decision.
+**The review's P1 tickets are built** (2026-09-18): D1–D3, E1–E2, F3, F4's
+`?error=` half and G1. WRITEUP §57. No ticket needed a product decision.
+Refusals now carry a `Conflict` code in the URL, never its message. A guard in
+`no-phi-in-urls.test.ts` enforces that.
 
-Shane wants decisions **one at a time**: one question, options, the
-recommendation first. Record each answer in the PRD and the WRITEUP decisions
-log before asking the next.
+**Next item: PRD 6, `prd-accessibility-conformance.md`.** Do we commit to AA,
+and does a check join CI? The review says decide first and build last, and
+every other item is now built. Read the PRD, then ask one question at a time.
 
 **Known gaps:** e2e SQL that converts `startAt` to practice time disagrees with
 the app by the psql session's timezone (America/Chicago on this laptop). The
 cause is unknown, so check it before any spec picks a slot by SQL time.
-Individual booking's `?error=` still carries messages, not codes
-(`app/(staff)/book/actions.ts:34-35,63`). PRD 2 does not catch the browser's
+PRD 2 does not catch the browser's
 back button inside the app, and the amendment forms still lose their text on a
 failed save (§54). `screenshots.spec.ts` was edited for the dialog but only
 runs under `SHOTS=1`, so the edit is unverified.
@@ -44,6 +43,9 @@ been looked at in either theme:
   longer happen, so it would take a deliberate throw in a page.
 - **Confirm dialog** (PRD 5): sign a note, or record a leave, in both themes.
   Check the backdrop, that focus lands on Go back, and that Esc closes it.
+- **P1 markup** (§57): the booking time and repeat pills (✓, bold, a focus ring
+  when you Tab), the "Missing" lines on `/forms` for a blank translation, the
+  From/To labels on `/reports`, and the Older events link on `/audit`.
 - **Skip link**: on any staff page, press Tab once. "Skip to main content" should
   appear top-left, and Enter should land focus in `<main id="main">`.
 
@@ -79,7 +81,7 @@ join CI. Decide early, build last.
 
 ## Gate state at handoff
 
-`npm test` passed under the `set -m` job-control launch: 35 files, 3240 tests,
-EXIT=0. `tsc --noEmit` is clean. `enquire.spec.ts` and `scheduling.spec.ts`
+`npm test` passed under the `set -m` job-control launch: 35 files, 3242 tests,
+EXIT=0. drafts, scheduling and confirm specs: 13 passed on a production build. `tsc --noEmit` is clean. `enquire.spec.ts` and `scheduling.spec.ts`
 ran 20 passed on a production build. The full e2e sweep has not run since
 ticket C.

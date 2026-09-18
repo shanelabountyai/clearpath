@@ -13,6 +13,15 @@ import { BOOKING_REFUSAL, Refusal } from '../departures/ui';
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * A pill wrapping an `sr-only` radio. Chosen shows as a tick and weight as well
+ * as tint (review G1), and `option` draws the focus ring the clipped radio
+ * cannot. The border is a class, not inline style, or `has-checked` loses to it.
+ */
+const PILL =
+  'option group cursor-pointer rounded-[var(--radius)] border border-[var(--border)] py-1.5 text-body has-checked:border-[var(--accent)] has-checked:bg-[var(--accent-soft)] has-checked:font-semibold';
+const Tick = () => <span aria-hidden="true" className="hidden group-has-checked:inline">✓ </span>;
+
 async function BookPage({
   searchParams,
 }: {
@@ -125,13 +134,9 @@ async function BookPage({
                 </legend>
                 <div className="flex flex-wrap gap-1.5">
                   {slots.map((m, i) => (
-                    <label
-                      key={m}
-                      className="cursor-pointer rounded-[var(--radius)] border px-2.5 py-1.5 font-mono text-body has-checked:border-[var(--accent)] has-checked:bg-[var(--accent-soft)]"
-                      style={{ borderColor: 'var(--border)' }}
-                    >
+                    <label key={m} className={`${PILL} px-2.5 font-mono`}>
                       <input type="radio" name="startMinute" value={m} defaultChecked={i === 0} className="sr-only" />
-                      {minutesToHHMM(m)}
+                      <Tick />{minutesToHHMM(m)}
                     </label>
                   ))}
                 </div>
@@ -147,13 +152,9 @@ async function BookPage({
                     ['weekly', `Every ${WEEKDAYS[weekdayOf(date)]}`],
                     ['biweekly', `Every other ${WEEKDAYS[weekdayOf(date)]}`],
                   ].map(([value, label], i) => (
-                    <label
-                      key={value}
-                      className="cursor-pointer rounded-[var(--radius)] border px-3 py-1.5 text-body has-checked:border-[var(--accent)] has-checked:bg-[var(--accent-soft)]"
-                      style={{ borderColor: 'var(--border)' }}
-                    >
+                    <label key={value} className={`${PILL} px-3`}>
                       <input type="radio" name="recurrence" value={value} defaultChecked={i === 0} className="sr-only" />
-                      {label}
+                      <Tick />{label}
                     </label>
                   ))}
                 </div>

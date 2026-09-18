@@ -4499,8 +4499,26 @@ D3: a blank translation now has a visible "Missing" line, linked with
 `aria-describedby`, plus a count per language above the list from
 `missingLanguages`. That is the same function `issueForm` uses to refuse.
 
+E1: the report's two dates have visible From and To labels. E2: each calendar
+column is a `role="group"` named by its room heading, so entering a column's
+appointments says which room they are in. The appointment links themselves do
+not repeat the room.
+
+F3: the audit query already returned `nextCursor`, and nothing rendered it. The
+page now says how many of how many events it shows, and links to Older events
+and back to Newest, keeping the filters. The export link drops the cursor,
+because an export is always the whole filtered log.
+
+G1: the booking time and repeat pickers show the chosen option with a ✓ and
+bold text as well as tint. Two more defects were found along the way. Inline
+`borderColor` beat the `has-checked` border class, so the chosen border never
+appeared. And the `sr-only` radio had the screener's invisible focus ring
+(ticket C). The pills now use a border class, and they reuse `.option`.
+
 **Not done.** The test matches the shapes the app uses. A message passed
-through a variable first would get past it.
+through a variable first would get past it. The paging only moves forward from
+Newest: there is no "previous page", because the cursor points one way. Going
+back a single page needs a second cursor, so add it if auditors ask.
 
 ## Decisions log
 

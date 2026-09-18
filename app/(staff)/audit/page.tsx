@@ -37,6 +37,13 @@ async function AuditPage({
   ]);
   const userName = new Map(users.map((u) => [u.id, u.name]));
   const clientCode = new Map(clients.map((c) => [c.id, c.code]));
+  // The filters as a query string, cursor excluded: the export is always the
+  // whole filtered log, and paging sets its own cursor.
+  const filters = (extra: Record<string, string> = {}) =>
+    new URLSearchParams([
+      ...(Object.entries(q).filter(([k, v]) => v && k !== 'cursor') as [string, string][]),
+      ...Object.entries(extra),
+    ]).toString();
 
   return (
     <>
@@ -45,7 +52,7 @@ async function AuditPage({
         subtitle={`${result.total} events${q.clientId ? ' for this client' : ''}`}
         actions={
           <a
-            href={`/audit/export?${new URLSearchParams(Object.entries(q).filter(([, v]) => v) as [string, string][]).toString()}`}
+            href={`/audit/export?${filters()}`}
             className="rounded-[var(--radius)] border px-3 py-1.5 text-caption font-medium"
             style={{ borderColor: 'var(--border-strong)' }}
           >
@@ -120,6 +127,19 @@ async function AuditPage({
             </tbody>
           </table>
         </ScrollX>
+      )}
+
+      {/* Review F3: the newest 120 were the whole page, with nothing saying so. */}
+      {result.rows.length > 0 && (
+        <nav aria-label="Audit log pages" className="mt-3 flex flex-wrap items-center gap-3 text-caption">
+          <span className="text-muted">
+            {result.rows.length} of {result.total} events on this page, newest first.
+          </span>
+          {q.cursor && <a href={`/audit?${filters()}`} className="text-accent underline">Newest</a>}
+          {result.nextCursor && (
+            <a href={`/audit?${filters({ cursor: result.nextCursor })}`} className="text-accent underline">Older events</a>
+          )}
+        </nav>
       )}
 
       <p className="mt-3 text-caption text-subtle">
