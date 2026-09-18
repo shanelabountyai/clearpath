@@ -77,6 +77,22 @@ it('every component in the vocabulary has a specimen in the gallery', () => {
 });
 
 /**
+ * PRD 6, Q4: the gallery gains focus-visible and error specimens, and this
+ * test is what makes them stick — the component-has-a-specimen check above
+ * only ever asked for a picture of the component, never of its states.
+ * Disabled is deliberately not required here: nothing in the product uses
+ * it yet, so it would be a state nobody sees (see the PRD's Q4 decision).
+ */
+it('the gallery has specimens for the focus-visible and error states', () => {
+  const gallery = readFileSync('app/design/page.tsx', 'utf8');
+  // The screener's ring: a label wrapping an sr-only radio, so the ring
+  // draws on the label (globals.css `.option:has(:focus-visible)`).
+  expect(gallery, 'no focus-visible specimen using the .option class').toMatch(/\boption\b/);
+  // TextField's invalid state: aria-invalid plus a hint, not colour alone.
+  expect(gallery, 'no error/invalid specimen (TextField invalid + hint)').toMatch(/<TextField[^>]*\binvalid\b[^>]*\bhint=/);
+});
+
+/**
  * Contrast drifts silently: nothing renders wrong, it just stops being readable.
  * Both pairs below shipped failing AA - `--text-subtle` at 3.52:1 in light mode
  * carried every field label, timestamp and piece of legal small print in the

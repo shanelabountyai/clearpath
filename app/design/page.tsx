@@ -218,6 +218,28 @@ export default function DesignSystemPage() {
       </Section>
 
       <Section
+        title="Error state"
+        note="A danger border alone is not the error: aria-invalid and the reason in aria-describedby carry it for anyone not reading colour. The screener and the forms admin page each hand-rolled this before TextField carried it."
+      >
+        <form className="grid gap-3 sm:grid-cols-2">
+          <TextField name="specimen-invalid" label="Email" invalid hint="This field is required." />
+        </form>
+      </Section>
+
+      <Section
+        title="Focus-visible"
+        note="A screener answer is a label wrapping an sr-only radio — a ring on the radio itself would land on a clipped 1px box, invisible. The .option class (globals.css) draws it on the label instead. Tab to the option below."
+      >
+        <label
+          className="option flex w-fit cursor-pointer items-center gap-2 rounded-[var(--radius)] border px-3 py-2 text-lead"
+          style={{ borderColor: 'var(--border)' }}
+        >
+          <input type="radio" name="specimen-focus" className="sr-only" defaultChecked />
+          Tab here to see the ring
+        </label>
+      </Section>
+
+      <Section
         title="Screener result"
         note="A submission's score, why it flagged, and its signature — each conditional on that fact existing. §5b."
       >

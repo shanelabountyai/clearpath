@@ -282,19 +282,27 @@ const FIELD_CONTROL_STYLE = { borderColor: 'var(--border)', background: 'var(--s
  * same page collect the same one — a duplicated DOM id makes `htmlFor`
  * ambiguous, and a screen reader then announces the wrong label for the
  * wrong box.
+ *
+ * `invalid`/`hint` are the same triple FormRunner and the forms admin page
+ * each hand-rolled separately: a danger border, `aria-invalid`, and the
+ * reason in `aria-describedby` rather than colour alone.
  */
 export function TextField({
-  name, label, type = 'text', required = false, min, defaultValue, id = name,
+  name, label, type = 'text', required = false, min, defaultValue, id = name, invalid = false, hint,
 }: {
   name: string; label: string; type?: string; required?: boolean; min?: string; defaultValue?: string; id?: string;
+  invalid?: boolean; hint?: string;
 }) {
+  const hintId = hint ? `${id}-hint` : undefined;
   return (
     <div>
       <label htmlFor={id} className={FIELD_LABEL}>{label}</label>
       <input
         id={id} name={name} type={type} required={required} min={min} defaultValue={defaultValue}
-        className={FIELD_CONTROL} style={FIELD_CONTROL_STYLE}
+        aria-invalid={invalid || undefined} aria-describedby={hintId}
+        className={FIELD_CONTROL} style={{ ...FIELD_CONTROL_STYLE, borderColor: invalid ? 'var(--danger)' : FIELD_CONTROL_STYLE.borderColor }}
       />
+      {hint && <p id={hintId} className="mt-1 text-caption" style={{ color: 'var(--danger)' }}>{hint}</p>}
     </div>
   );
 }
