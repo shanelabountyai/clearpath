@@ -1,7 +1,7 @@
 # PRD: Client-Safe Search — finding a person without naming them in the URL
 
 **Sample business:** "Stillwater Counseling" (as in the parent PRD)
-**Status:** v0.1 — **stub, 2026-09-17.** Raised by the UX/accessibility review. Open questions below are unanswered; this is not yet a buildable spec. Feature PRD, child of `prd-clearpath-counseling-ops.md`
+**Status:** v0.3 — **decided and built, 2026-09-18.** All four open questions answered (see Decisions). Raised by the UX/accessibility review. Feature PRD, child of `prd-clearpath-counseling-ops.md`
 **Learning objective:** what hard rule 3 costs when the thing it forbids is also the most natural way to build a search box — and why the two hard rules with build-time tests held while this one drifted
 
 ---
@@ -53,6 +53,29 @@ messages name no client. The mechanism is a standing hazard the first time one d
    tests (`permissions.test.ts`, `notes/service.test.ts`) and did not drift. Rule 3
    has none and did. What would the test assert — that no `searchParams` type in
    `app/` declares a free-text field? That is crude but would have caught this.
+
+## Decisions
+
+- **2026-09-18, Q1: name search stays.** Shane's call. A front-desk lookup
+  starts with a caller saying their name. Code-only search would push staff
+  to scan the whole list by eye on a screen the public can see, which exposes
+  more than the defect it fixes. The term has to leave the URL; Q2 decides how.
+- **2026-09-18, Q2: filter in the browser.** Shane's call. `/clients` already
+  sends every row the actor may read, with no pagination, so a client component
+  filters the rendered table. The term never reaches the network, the server
+  log, browser history or a referrer, and no endpoint is added. A filtered list
+  is no longer bookmarkable. **Ceiling:** if the list is ever paginated, search
+  has to move to the server, and it goes in a POST body, never a URL.
+- **2026-09-18, Q3: the audit reason filter accepts codes only, still by GET.**
+  Shane's call. The server drops a `?reason=` that fails `AUDIT_CODE`, the same
+  test `AuditRow` applies before it links a reason. Auditors keep filtered views
+  they can share, and the CSV link, and free text is never reflected back.
+- **2026-09-18, Q4: hard rule 3 gets a build-time test that allowlists URL
+  keys.** Shane's call. A test reads every `searchParams` type in `app/` and
+  fails on any key not in an approved list. It fails closed: a new free-text
+  key breaks the build until someone approves the name. **Known gap:** it checks
+  key names, not values. The booking `?error=` messages are an approved key
+  carrying free text, and they stay a standing hazard outside this PRD.
 
 ## Not in scope
 

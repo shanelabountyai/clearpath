@@ -190,7 +190,7 @@ const OWN_CASELOAD = (actor: Actor) => ({ clinicianId: actor.id, treatingSupervi
  * and one audit row per client on a page of forty would bury the individual
  * record opens that actually matter.
  */
-export async function listClients(actor: Actor, opts: { search?: string; clock?: Clock } = {}) {
+export async function listClients(actor: Actor, opts: { clock?: Clock } = {}) {
   const clock = opts.clock ?? systemClock;
   const scope = await caseloadWhere(actor, clock);
 
@@ -198,18 +198,7 @@ export async function listClients(actor: Actor, opts: { search?: string; clock?:
     { actor, action: 'read', resource: 'client', target: OWN_CASELOAD(actor) },
     (tx) =>
       tx.client.findMany({
-        where: {
-          ...scope,
-          ...(opts.search
-            ? {
-                OR: [
-                  { firstName: { contains: opts.search, mode: 'insensitive' as const } },
-                  { lastName: { contains: opts.search, mode: 'insensitive' as const } },
-                  { code: { contains: opts.search, mode: 'insensitive' as const } },
-                ],
-              }
-            : {}),
-        },
+        where: scope,
         select: { ...DEMOGRAPHICS, treatingClinician: { select: { id: true, name: true } } },
         orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
       }),

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { CSSProperties, ReactNode } from 'react';
-import { CHARGEABLE } from '../scheduling/lifecycle';
+import { CHARGEABLE } from '../scheduling/states';
+import { AUDIT_CODE } from '../reports/audit-code';
 import { localDateOf, minutesToHHMM } from '../time';
 import type { DaySession } from '../scheduling/calendar';
 
@@ -416,7 +417,6 @@ export function CoSignRow({
 }
 
 /** `leave:<id>`, `departure:decided_transfer`: a namespace and an identifier, nothing a person typed. */
-const AUDIT_CODE = /^[a-z_]+:[\w-]+$/;
 
 /**
  * One row of the audit log. Names are resolved by the caller and passed in —

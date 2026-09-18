@@ -1,4 +1,5 @@
 import { queryAuditLog } from '../../../src/reports/audit';
+import { auditCodeOrNothing } from '../../../src/reports/audit-code';
 import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
 import { AuditRow, Card, EmptyState, PageHeader, ScrollX } from '../../../src/ui/primitives';
@@ -13,7 +14,10 @@ async function AuditPage({
   searchParams: Promise<{ clientId?: string; actorId?: string; resource?: string; flagged?: string; denied?: string; reason?: string; cursor?: string }>;
 }) {
   const { actor } = await requireSession();
-  const q = await searchParams;
+  // PRD 1 Q3: a reason is a code or nothing, before anything reads q, so free
+  // text is never reflected into the page, its links or the CSV export link.
+  const raw = await searchParams;
+  const q = { ...raw, reason: auditCodeOrNothing(raw.reason) };
 
   const result = await queryAuditLog(actor, {
     clientId: q.clientId || undefined,
@@ -21,7 +25,7 @@ async function AuditPage({
     resource: q.resource || undefined,
     flaggedOnly: q.flagged === '1',
     deniedOnly: q.denied === '1',
-    reason: q.reason || undefined,
+    reason: q.reason,
     cursor: q.cursor,
     limit: 120,
   });

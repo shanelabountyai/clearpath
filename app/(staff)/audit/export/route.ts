@@ -1,4 +1,5 @@
 import { queryAuditLog, toCsv } from '../../../../src/reports/audit';
+import { auditCodeOrNothing } from '../../../../src/reports/audit-code';
 import { requireSession } from '../../../../src/session';
 import { systemClock } from '@/src/clock';
 
@@ -15,7 +16,7 @@ export async function GET(request: Request) {
     resource: p.get('resource') || undefined,
     flaggedOnly: p.get('flagged') === '1',
     deniedOnly: p.get('denied') === '1',
-    reason: p.get('reason') || undefined,
+    reason: auditCodeOrNothing(p.get('reason')),
     limit: 1000,
   });
 

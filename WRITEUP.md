@@ -4316,6 +4316,53 @@ on the client-facing `/f` and `/enquire` routes. A client reads in their own
 language, and a boundary cannot know which one without the record that failed
 to load. That needs its own small decision, not an English page.
 
+## 53. The search box that wrote a name into the URL
+
+**The problem.** `/clients` searched by GET, so typing a client's name produced
+`/clients?q=Jane+Doe`. That put the name in browser history, the server log,
+every referrer, and the URL bar of a front-desk screen the public stands in
+front of. It broke hard rule 3 in the most visible place the product has. The
+audit page had the same defect in a different form: a free-text `?reason=`
+filter, reflected into the page and the CSV link. `AuditRow` already refused to
+link a non-code reason, so the filter reopened a door the row had closed. Rules
+1 and 2 have source-grepping tests and never drifted. Rule 3 had none, and it
+drifted.
+
+**The design.** Four decisions, all Shane's (see the PRD):
+
+- **Name search stays, and runs in the browser.** The page already sends every
+  row the actor may read, with no pagination. `ClientSearch`, a client
+  component, filters the pre-rendered rows by `matchesSearch`: every word, in
+  any field, in any case. The term never reaches a request, a log or history.
+  The server search it replaced is deleted, along with the `search` option on
+  `listClients`.
+- **The audit reason is a code or nothing.** `auditCodeOrNothing` cleans `q`
+  once, before anything reads it, so the query, the input, the pagination and
+  the CSV link all see the cleaned value. The export route applies the same
+  check.
+- **Rule 3 gets its test.** `no-phi-in-urls.test.ts` collects every query-string
+  key that any file in `app/` reads, whether through a typed `searchParams`,
+  destructuring, property access on the awaited object or
+  `URL.searchParams.get`, and fails on any key not on an allowlist. It fails
+  closed: a `searchParams` it cannot read, or any `useSearchParams`, is itself
+  an offender. Against the old code it named `?q=` and also `?topic=`, a dead
+  read on `/book/group` that no redirect ever wrote. That read is deleted.
+
+**A side effect worth naming.** `primitives.tsx` was never importable from a
+client component: it reached `CHARGEABLE` through `scheduling/lifecycle.ts`,
+which imports the database. The first production build with a client component
+that imports primitives failed with `Can't resolve 'net'`. The pure half of the
+state machine (`Status`, `TRANSITIONS`, `canTransition`, `CHARGEABLE`) now lives
+in `scheduling/states.ts`, which `lifecycle.ts` re-exports, so every existing
+import still works. Transitions still run through `lifecycle.ts` (hard rule 8).
+
+**What it deliberately does not do.** The test checks key names, not values.
+`?error=` is an approved key that today carries booking-conflict *messages*
+rather than codes. None of them names a client, but nothing would notice the
+first one that did. A filtered client list is no longer bookmarkable. Nothing
+here survives pagination: once `/clients` pages, search has to move to the
+server, sent as a POST body.
+
 ## Decisions log
 
 | Decision | Why |
@@ -4563,6 +4610,10 @@ to load. That needs its own small decision, not an English page.
 | "While you were away" merges its four reads into one array and sorts by date, in the page only | The data layer still audits each kind through its own cell — merging there would blur which read a row came from. The page has no such constraint, and grouping by kind instead of by when things happened was never the intent |
 | PRD 3: every screener completion shows the same safety footer (crisis line, 911), flagged or not (2026-09-18) | A flagged-only message either tells the client they were flagged or hints at it, before a clinician has seen the answers. A footer shown to everyone discloses nothing, keeps `needsReview` inside the submission transaction, and closes the P0 gap at the lowest cost. The wording still comes from a clinician |
 | PRD 3 Q5: the footer reuses `enquireUrgent` in both languages, pending a clinician's review (2026-09-18) | Copy already live in English and Spanish means nothing clinical is invented and no language gets it first. The clinician's wording, if different, is one edit in `src/strings.ts` |
+| PRD 1 Q1: client search keeps name search, and the term leaves the URL (2026-09-18) | Front-desk lookups start from a name a caller gives. With code-only search, staff would scan the full list on a public-facing screen, which exposes more than the URL did |
+| PRD 1 Q2: client search filters the already-rendered list in the browser (2026-09-18) | The page already ships every row the actor may read, so a client-side filter exposes nothing new, and the term never reaches a network request, a log, history or a referrer. A filtered view stops being bookmarkable; pagination would force a server search, sent as a POST body |
+| PRD 1 Q3: the audit reason filter is validated against `AUDIT_CODE` and stays a GET parameter (2026-09-18) | An auditor's filtered view is worth sharing, and a reason is a code by design. The row already refuses to link a non-code reason, so the filter applies the same test instead of reopening that door |
+| PRD 1 Q4: hard rule 3 gets a test that fails on any `searchParams` key not in an allowlist (2026-09-18) | Rules 1 and 2 have grep tests and did not drift; rule 3 had none and did. The allowlist fails closed, so a new key needs a deliberate approval. It sees names, not values, so `?error=` stays a known gap |
 
 ## What this project deliberately is not
 

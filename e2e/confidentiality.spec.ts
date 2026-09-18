@@ -101,6 +101,20 @@ test.describe('the access story', () => {
     await expect(page.getByRole('heading', { name: 'Forms' })).toBeVisible();
   });
 
+  test('a client search never puts the name in the URL (PRD 1)', async ({ page }) => {
+    await actAs(page, USERS.frontDesk);
+    await page.goto('/clients');
+    const before = page.url();
+
+    await page.getByLabel('Search clients').fill('client 006');
+    await page.keyboard.press('Enter');
+
+    const rows = page.getByRole('region', { name: 'Clients' }).locator('tbody tr');
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText('TC-006');
+    expect(page.url()).toBe(before);
+  });
+
   test('an auditor cannot open a client record', async ({ page }) => {
     await actAs(page, USERS.auditor);
     await page.goto(`/clients/${clientId('TC-006')}`);

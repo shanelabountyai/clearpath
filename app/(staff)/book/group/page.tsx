@@ -95,7 +95,7 @@ async function BookGroupPage({
               <label className="block text-micro font-medium uppercase tracking-wide text-subtle">
                 Topic (appears on the calendar)
                 <input
-                  name="topic" defaultValue={q.topic ?? ''} placeholder="Tuesday skills group"
+                  name="topic" placeholder="Tuesday skills group"
                   className={field} style={style}
                 />
               </label>

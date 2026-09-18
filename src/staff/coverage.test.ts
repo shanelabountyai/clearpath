@@ -100,8 +100,8 @@ describe('which leave and which coverer (clientTarget)', () => {
 });
 
 describe('the caseload list (caseloadWhere)', () => {
-  const ids = async (who: { id: string; role: Role }, clock: Clock, search?: string) =>
-    (await listClients(actor(who), { clock, search })).map((c) => c.id).sort();
+  const ids = async (who: { id: string; role: Role }, clock: Clock) =>
+    (await listClients(actor(who), { clock })).map((c) => c.id).sort();
 
   it('lists what each person covers today, and nothing either side of the window', async () => {
     const p = await onLeave();
@@ -121,11 +121,6 @@ describe('the caseload list (caseloadWhere)', () => {
     expect((await marks(p.desk)).every(([, until]) => until === null)).toBe(true);
     // Sam reads these rows as Nour's supervisor, not as the one covering them.
     expect((await marks(p.sam)).every(([, until]) => until === null)).toBe(true);
-  });
-
-  it('keeps the scope when a search brings its own OR', async () => {
-    const p = await onLeave();
-    expect(await ids(p.dev, DAY_TWO, 'Test')).toEqual([p.mine.id]);
   });
 });
 
