@@ -3,8 +3,8 @@ import type { AlertKind } from '../../../src/generated/prisma/enums';
 import { myAlerts } from '../../../src/forms/service';
 import { requireSession } from '../../../src/session';
 import { localDateOf } from '../../../src/time';
-import { Badge, Card, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
-import { acknowledge } from './actions';
+import { Badge, Button, Card, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
+import { acknowledge, reopen } from './actions';
 import { withDenial } from '@/src/ui/denied';
 
 export const dynamic = 'force-dynamic';
@@ -115,8 +115,12 @@ async function AlertsPage() {
           </summary>
           <ul className="mt-2 space-y-1 text-body text-muted">
             {done.map((a) => (
-              <li key={a.id}>
-                {localDateOf(a.createdAt)} · {a.client.code} · {a.reasons.join(', ')}
+              <li key={a.id} className="flex flex-wrap items-center gap-2">
+                <span>{localDateOf(a.createdAt)} · {a.client.code} · {a.reasons.join(', ')}</span>
+                <form action={reopen}>
+                  <input type="hidden" name="alertId" value={a.id} />
+                  <Button variant="quiet" className="px-2 py-0.5 text-caption">Reopen</Button>
+                </form>
               </li>
             ))}
           </ul>

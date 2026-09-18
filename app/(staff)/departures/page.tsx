@@ -5,10 +5,11 @@ import { systemClock } from '@/src/clock';
 import { requireSession } from '@/src/session';
 import { listDepartures, maySupervise } from '@/src/staff/departure';
 import { localDateOf } from '@/src/time';
-import { Badge, Button, Card, EmptyState, PageHeader, SelectField, TextField, TierBanner } from '@/src/ui/primitives';
+import { Badge, Card, EmptyState, PageHeader, SelectField, TextField, TierBanner } from '@/src/ui/primitives';
 import { withDenial } from '@/src/ui/denied';
 import { recordNotice } from './actions';
 import { Refusal, STATUS_TONE, dayLabel } from './ui';
+import { ConfirmButton } from '@/src/ui/confirm-button';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,14 +62,21 @@ async function DeparturesPage({ searchParams }: { searchParams: Promise<{ error?
             <form action={recordNotice} className="space-y-3">
               {/* Not `userId` as the id: the dev switcher in the sidebar already owns it, and
                   a duplicate id points this label at the wrong select. */}
-              <SelectField id="leaver" name="userId" label="Who is leaving" options={clinicians.map((c) => ({ value: c.id, label: c.name }))} />
+              <SelectField id="leaver" name="userId" label="Who is leaving" placeholder="Choose a clinician…" options={clinicians.map((c) => ({ value: c.id, label: c.name }))} />
               <TextField name="lastDayOn" label="Last day" type="date" required min={localDateOf(systemClock.now())} />
               <SelectField name="receivingSupervisorId" label="Their associates go to"
                 options={[
                   { value: '', label: 'Nobody — they supervise nobody' },
                   ...clinicians.filter((c) => maySupervise(c)).map((c) => ({ value: c.id, label: c.name })),
                 ]} />
-              <Button>Record notice</Button>
+              <ConfirmButton
+                title="Record this notice?"
+                subject={{ field: 'userId', label: 'Who is leaving' }}
+                consequence="Their books close straight away, so nobody new is offered to them. Nothing else moves until somebody executes the plan."
+                confirmLabel="Record notice"
+              >
+                Record notice
+              </ConfirmButton>
             </form>
           </Card>
         )}

@@ -8,6 +8,7 @@ import { Badge, Button, Card, EmptyState, Field, PageHeader, SelectField, TierBa
 import { withDenial } from '@/src/ui/denied';
 import { chooseSupervisor, decide, execute, withdraw } from '../actions';
 import { Refusal, STATUS_TONE, dayLabel, plural } from '../ui';
+import { ConfirmButton } from '@/src/ui/confirm-button';
 
 export const dynamic = 'force-dynamic';
 
@@ -238,7 +239,14 @@ async function DeparturePlanPage({ params, searchParams }: {
                   If a single moved session lands on an hour its new clinician already holds,
                   none of it happens.
                 </p>
-                <Button variant="danger">Execute departure</Button>
+                <ConfirmButton
+                  variant="danger"
+                  title="Execute this departure?"
+                  consequence="Every decision in this plan takes effect in one transaction. Unsigned notes are marked abandoned, private notes become unreachable, and the account closes. None of this can be undone."
+                  confirmLabel="Execute departure"
+                >
+                  Execute departure
+                </ConfirmButton>
               </form>
             )}
             {canDecide && (

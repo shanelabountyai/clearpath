@@ -3,10 +3,10 @@ import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
 import { continuityQueue, staleInquiries, unconfirmedSoon, vacationImpact, waitlistOpenings } from '../../../src/scheduling/worklists';
 import { openRescheduleRequests } from '../../../src/portal/service';
-import { openInboundReplies } from '../../../src/messaging/inbound';
-import { dismissReturnSummary, handleRescheduleRequest, markInboundHandled } from './actions';
+import { openInboundReplies, recentlyHandledInboundReplies } from '../../../src/messaging/inbound';
+import { dismissReturnSummary, handleRescheduleRequest, markInboundHandled, reopenInboundHandled } from './actions';
 import { localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
-import { Badge, Card, CONFIRMATION_META, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
+import { Badge, Button, Card, CONFIRMATION_META, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
 import { withDenial } from '@/src/ui/denied';
 import { may } from '@/src/auth/guard';
@@ -43,6 +43,7 @@ async function WorkListsPage() {
   const openings = await waitlistOpenings(actor).catch(() => []);
   const rescheduleAsks = await openRescheduleRequests(actor).catch(() => []);
   const wroteBack = await openInboundReplies(actor).catch(() => []);
+  const calledBack = await recentlyHandledInboundReplies(actor).catch(() => []);
   // Asked rather than caught: a clinician's `self` cell would refuse this read on
   // every visit, and a denial on the record per page load buries the real ones.
   const leaving = may({ actor, action: 'read', resource: 'departure' }) ? await departureWorklist(actor) : [];
@@ -307,6 +308,27 @@ async function WorkListsPage() {
                 ))}
               </ul>
             </Card>
+          )}
+          {calledBack.length > 0 && (
+            <details className="mt-3">
+              <summary className="cursor-pointer text-body text-muted">
+                {calledBack.length} called in the last week
+              </summary>
+              <ul className="mt-2 space-y-1 text-body text-muted">
+                {calledBack.map((r) => (
+                  <li key={r.id} className="flex flex-wrap items-center gap-2">
+                    <span>
+                      <span className="font-mono">{r.client.code}</span> · wrote {localDateOf(r.receivedAt)}
+                      {r.handledBy && <> · called by {r.handledBy.name}</>}
+                    </span>
+                    <form action={reopenInboundHandled}>
+                      <input type="hidden" name="replyId" value={r.id} />
+                      <Button variant="quiet" className="px-2 py-0.5 text-caption">Reopen</Button>
+                    </form>
+                  </li>
+                ))}
+              </ul>
+            </details>
           )}
         </section>
 

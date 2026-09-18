@@ -1,4 +1,4 @@
-import { test as base, type Page } from '@playwright/test';
+import { test as base, type Locator, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 
 /**
@@ -35,3 +35,12 @@ export async function actAs(page: Page, name: string) {
 
 export const test = base;
 export { expect } from '@playwright/test';
+
+/**
+ * PRD 5: a guarded button only opens a dialog, and the button inside it
+ * submits. Both carry the same name, so the second is looked for in the dialog.
+ */
+export async function confirmClick(scope: Page | Locator, name: string) {
+  await scope.getByRole('button', { name, exact: true }).click();
+  await scope.getByRole('dialog').getByRole('button', { name, exact: true }).click();
+}

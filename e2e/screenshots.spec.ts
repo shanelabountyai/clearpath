@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { actAs, clientId, expect, sql, test, USERS } from './fixtures';
+import { actAs, clientId, expect, sql, test, USERS, confirmClick } from './fixtures';
 import { ES_TOKEN } from './portal-fixture';
 
 /**
@@ -61,7 +61,7 @@ test.describe('README screenshots', () => {
     await page.screenshot({ path: `${shot}/client-record-clinician.png`, fullPage: true });
 
     await page.goto(`/notes/${draft}`);
-    await page.getByRole('button', { name: 'Sign' }).click();
+    await confirmClick(page, 'Sign');
     await expect(page.getByText('Pending co-signature')).toBeVisible();
 
     // 2. It lands in the supervisor's queue — including the note just signed.
@@ -76,7 +76,7 @@ test.describe('README screenshots', () => {
     await page.screenshot({ path: `${shot}/cosign-queue.png` });
 
     // 3. The supervisor co-signs it.
-    await row.getByRole('button', { name: 'Co-sign' }).click();
+    await confirmClick(row, 'Co-sign');
     await expect(page).toHaveURL(/\/cosign/);
     await expect(row).toHaveCount(0);
     await page.goto(`/notes/${draft}`);

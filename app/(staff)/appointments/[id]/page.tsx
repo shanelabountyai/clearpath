@@ -10,8 +10,8 @@ import { Badge, Card, CONFIRMATION_META, Field, PageHeader, STATUS_META, StatusC
 import { BreakGlassPrompt } from '../../break-glass';
 import { advanceStatus, cancelSession, moveSession, startProgressNote, waiveSessionFee } from '../actions';
 import { systemClock } from '@/src/clock';
-import { Button } from '@/src/ui/primitives';
 import { clientTarget } from '@/src/clients/repository';
+import { ConfirmButton } from '@/src/ui/confirm-button';
 
 export const dynamic = 'force-dynamic';
 
@@ -167,9 +167,16 @@ export default async function AppointmentPage({
                     style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
                   />
                 </div>
-                <Button variant="danger">
+                <ConfirmButton
+                  variant="danger"
+                  title="Cancel this session?"
+                  consequence={wouldBeLate
+                    ? `This is a late cancellation, so the policy fee of ${money(settings?.lateCancelFeeCents ?? 0)} is charged. The server decides from its own clock when you confirm.`
+                    : 'No fee applies. The slot is released.'}
+                  confirmLabel="Cancel session"
+                >
                   Cancel session
-                </Button>
+                </ConfirmButton>
               </form>
             </Card>
           )}
@@ -202,7 +209,14 @@ export default async function AppointmentPage({
                     <option value="goodwill">Goodwill</option>
                   </select>
                 </div>
-                <Button variant="quiet">Waive {money(appt.chargeFeeCents)}</Button>
+                <ConfirmButton
+                  variant="quiet"
+                  title={`Waive ${money(appt.chargeFeeCents)}?`}
+                  consequence="The charge goes to zero, and your name and the reason are recorded. The fee cannot be put back from here."
+                  confirmLabel="Waive fee"
+                >
+                  Waive {money(appt.chargeFeeCents)}
+                </ConfirmButton>
               </form>
             </Card>
           )}

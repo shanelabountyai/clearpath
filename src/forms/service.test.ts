@@ -5,7 +5,7 @@ import { actor, makeClient, makeUser, resetDb, settings } from '../test/harness'
 import { fixedClock, DAY } from '../clock';
 import { consentToTreat, wellbeingCheckIn } from './fixtures';
 import {
-  acknowledgeAlert, formStatus, getSubmission, issueForm, listSubmissions,
+  acknowledgeAlert, formStatus, reopenAlert, getSubmission, issueForm, listSubmissions,
   myAlerts, openForm, publishTemplate, saveDraft, submitForm,
 } from './service';
 
@@ -238,6 +238,21 @@ describe('risk alerts', () => {
     const done = await acknowledgeAlert(actor(therapist), alertRow.id);
     expect(done.acknowledgedAt).not.toBeNull();
     expect(await myAlerts(actor(therapist))).toHaveLength(0);
+  });
+
+  it('can be reopened by the recipient, as its own coded audit event (PRD 5)', async () => {
+    const request = await issueScreener();
+    await submitForm(request.token, flagged);
+    const alertRow = await prisma.alert.findFirstOrThrow();
+    await acknowledgeAlert(actor(therapist), alertRow.id);
+
+    await expect(reopenAlert(actor(other), alertRow.id)).rejects.toBeInstanceOf(Forbidden);
+    await reopenAlert(actor(therapist), alertRow.id);
+    expect(await myAlerts(actor(therapist))).toHaveLength(1);
+    const rows = await prisma.auditEvent.findMany({ where: { resource: 'alert', reason: 'alert:reopened' } });
+    expect(rows.map((r) => [r.actorId, r.allowed])).toEqual(
+      expect.arrayContaining([[therapist.id, true], [other.id, false]]),
+    );
   });
 
   it('appear in the audit stream as an event, without the response content', async () => {

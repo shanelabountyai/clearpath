@@ -6,7 +6,7 @@ import { requireSession } from '../../../../src/session';
 import { minutesToHHMM, utcToZoned } from '../../../../src/time';
 import { Card, PageHeader, StatusChip, TierBanner } from '../../../../src/ui/primitives';
 import { cancelGroup } from '../actions';
-import { Button } from '@/src/ui/primitives';
+import { ConfirmButton } from '@/src/ui/confirm-button';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,7 +37,14 @@ export default async function GroupSessionPage({ params }: { params: Promise<{ i
           live.length > 0 ? (
             <form action={cancelGroup}>
               <input type="hidden" name="groupId" value={group.id} />
-              <Button variant="danger">Cancel the session</Button>
+              <ConfirmButton
+                variant="danger"
+                title={`Cancel this session for all ${live.length} attending?`}
+                consequence="Every attendee's appointment is cancelled at once, not just one person's."
+                confirmLabel="Cancel the session"
+              >
+                Cancel the session
+              </ConfirmButton>
             </form>
           ) : undefined
         }

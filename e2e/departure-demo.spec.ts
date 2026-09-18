@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { actAs, clientId, expect, sql, test, USERS, userId } from './fixtures';
+import { actAs, clientId, expect, sql, test, USERS, userId, confirmClick } from './fixtures';
 
 /**
  * The seeded departure, executed (departure PRD, Success Metrics → Lagging).
@@ -31,7 +31,7 @@ test.describe('a seeded departure, from the clash to the purge', () => {
     await openPlan(page);
     await expect(page.locator('li', { hasText: 'already holds' })).toContainText('Kai Oyelaran');
 
-    await page.getByRole('button', { name: 'Execute departure' }).click();
+    await confirmClick(page, 'Execute departure');
     await expect(refusal(page, 'Nothing moved — not one client')).toBeVisible();
 
     // Eleven transfers were written before the clash. None of them survived it.
@@ -48,7 +48,7 @@ test.describe('a seeded departure, from the clash to the purge', () => {
     await row.getByRole('button', { name: 'Change' }).click();
     await expect(page.getByText('Nothing in the way')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Execute departure' }).click();
+    await confirmClick(page, 'Execute departure');
     await expect(page.getByRole('heading', { name: 'Executed' })).toBeVisible();
 
     const m = leaver();

@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { actAs, expect, sql, test, USERS, userId } from './fixtures';
+import { actAs, expect, sql, test, USERS, userId, confirmClick } from './fixtures';
 
 /**
  * The plan screen, against the production build (departure PRD, Phase 4).
@@ -36,7 +36,7 @@ test.describe('a clinician leaving', () => {
     await page.goto('/departures');
     await page.getByLabel('Who is leaving').selectOption(userId(LEAVER));
     await page.getByLabel('Last day').fill(lastDay);
-    await page.getByRole('button', { name: 'Record notice' }).click();
+    await confirmClick(page, 'Record notice');
 
     await expect(page.getByRole('heading', { name: `${LEAVER} is leaving` })).toBeVisible();
     await expect(page.getByText('12 clients with no decision')).toBeVisible();
@@ -53,7 +53,7 @@ test.describe('a clinician leaving', () => {
     await expect(page.getByText('11 clients with no decision')).toBeVisible();
 
     // Thirty days out and not ready either: the date answers first (D-30).
-    await page.getByRole('button', { name: 'Execute departure' }).click();
+    await confirmClick(page, 'Execute departure');
     await expect(refusal(page, 'executes on its last day, not before')).toBeVisible();
   });
 

@@ -387,3 +387,20 @@ export async function acknowledgeAlert(actor: Actor, alertId: string, opts: { cl
       }),
   );
 }
+
+/**
+ * Undo a mis-clicked acknowledgement (PRD 5, Q3). Its own audit row, coded, so
+ * the record shows the alert went back in the queue and who put it there.
+ */
+export async function reopenAlert(actor: Actor, alertId: string) {
+  const alert = await prisma.alert.findUnique({ where: { id: alertId } });
+  if (!alert) throw new NotFound('Alert');
+
+  return guarded(
+    {
+      actor, action: 'update', resource: 'alert', resourceId: alertId, clientId: alert.clientId,
+      target: { recipientId: alert.recipientId }, reason: 'alert:reopened',
+    },
+    (tx) => tx.alert.update({ where: { id: alertId }, data: { acknowledgedAt: null } }),
+  );
+}

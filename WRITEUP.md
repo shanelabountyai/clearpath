@@ -4400,6 +4400,46 @@ clinician did not choose. The browser's back button inside the app is not
 caught, because that needs a history guard entry. Amendment and later-thought
 forms are unchanged: they are short, and they fail the old way.
 
+## 55. The click that could not be taken back
+
+**The problem.** Signing a note, co-signing one, executing a departure,
+cancelling a group session, cancelling with a late fee, waiving a fee, and
+recording a departure or leave notice all ran on the first click. The review
+called this architectural, because the staff app had no client component and so
+had nowhere to put a confirm step. Two more actions had no way back: an
+acknowledged alert, and a "Called them" on a reply whose message is not stored
+anywhere else. And the departure and leave forms opened with whoever sorted
+first already selected.
+
+**The design.** Decided with Shane in PRD 5. By the time it was decided,
+`NavList` and `NoteEditor` existed, so the architecture question was already
+answered. What remained was one component:
+
+- `ConfirmButton` (`src/ui/confirm-button.tsx`) renders a `type="button"`
+  trigger and a native `<dialog>` inside the caller's own form. The trigger
+  validates the form, then opens the dialog. Only the button inside the dialog
+  submits, so the same server action gets the same fields, and the server still
+  makes every permission decision. Go back is first in the dialog, so focus
+  lands on the harmless choice. Esc also closes it.
+- `subject` points at the select that names who is affected, and the dialog
+  repeats the choice back ("Who is leaving: …") before anything is recorded.
+- `Button` moved to `src/ui/button.tsx`. `primitives` re-exports it, so the
+  client component and `primitives` do not import each other.
+- The select defaults are gone. `SelectField` takes a `placeholder`, which adds
+  a blank first option and makes the select `required`.
+- Frequent actions got no dialog, because staff learn to click through a dialog
+  they see all day. Alert acknowledgement and "Called them" each stay one
+  click, and each has an audited **Reopen**. For alerts it is in the existing
+  "N acknowledged" list. For replies it is in a new "called in the last week"
+  list. Each reopen writes a coded audit row (`alert:reopened` and
+  `reply:reopened`) in the same transaction.
+
+**What it deliberately does not do.** Nothing is made reversible in the data
+model: a signed note stays frozen. Without JavaScript the guarded buttons do
+nothing, which is failing closed. The late-fee wording in the cancel dialog is
+a preview, and the server decides from its own clock when you confirm. Handled
+replies older than a week cannot be reopened from the page.
+
 ## Decisions log
 
 | Decision | Why |
@@ -4652,6 +4692,10 @@ forms are unchanged: they are short, and they fail the old way.
 | PRD 1 Q3: the audit reason filter is validated against `AUDIT_CODE` and stays a GET parameter (2026-09-18) | An auditor's filtered view is worth sharing, and a reason is a code by design. The row already refuses to link a non-code reason, so the filter applies the same test instead of reopening that door |
 | PRD 1 Q4: hard rule 3 gets a test that fails on any `searchParams` key not in an allowlist (2026-09-18) | Rules 1 and 2 have grep tests and did not drift; rule 3 had none and did. The allowlist fails closed, so a new key needs a deliberate approval. It sees names, not values, so `?error=` stays a known gap |
 | PRD 2 Q1+Q2: the app never saves note text the clinician did not choose to save; unsaved text stays on the page (2026-09-18) | An explicit save already creates a record, and that stays the clinician's choice. Autosave to the server adds records nobody chose to write, and browser storage leaves clinical text on a possibly shared machine outside access control. A failed save keeps the text in the box, and leaving with unsaved changes asks first. A crashed browser still loses the text |
+| PRD 5 Q1: confirmation is a native `<dialog>` opened by one client `ConfirmButton` (2026-09-18) | The staff app has client components now, so this is one reusable component rather than an architecture change. A dialog can state the consequence, including counts; `window.confirm` cannot, and people click through it. A server review screen needs route state per action and a page load. The step needs JavaScript and fails closed without it |
+| PRD 5 Q2: the dialog guards sign, co-sign, execute departure, group cancel, fee charge/waive, and departure/leave notices (2026-09-18) | These are the irreversible, money, and many-people actions. One mechanism is simpler than a lighter second one for cancel and waive. Frequent actions (alert ack, "Called them") are kept out, so staff do not learn to click through the dialog |
+| PRD 5 Q3+Q4: alert ack and "Called them" get an audited Reopen in their done list, not a dialog or an undo toast (2026-09-18) | Frequent actions stay one click. A Reopen with no timer still works for someone who notices the next day, and it needs no client state. It writes its own audit row, because an unaudited undo would be a hole in the record (hard rule 4) |
+| PRD 5 Q5: departure and leave notice selects open blank and `required` (2026-09-18) | A form that closes a person's books should not default to whoever sorts first. The browser refuses an empty submit, and the dialog then names the person |
 
 ## What this project deliberately is not
 

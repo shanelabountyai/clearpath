@@ -1,7 +1,7 @@
 # PRD: Confirmation and Undo — the click that cannot be taken back
 
 **Sample business:** "Stillwater Counseling" (as in the parent PRD)
-**Status:** v0.1 — **stub, 2026-09-17.** Raised by the UX/accessibility review. Open questions below are unanswered; this is not yet a buildable spec. **Architectural — decide before more staff pages are built on the current pattern.** Feature PRD, child of `prd-clearpath-counseling-ops.md`
+**Status:** v0.3 — **decided and built, 2026-09-18** (see Decisions; WRITEUP §55). Raised by the UX/accessibility review. Feature PRD, child of `prd-clearpath-counseling-ops.md`
 **Learning objective:** that an all-server-components app has no place to put a confirmation step, so "add a confirm dialog" is an architecture decision wearing a UI costume
 
 ---
@@ -56,6 +56,43 @@ shared desks at a busy reception.
 5. **Do the defaulting selects change?** A select that defaults to the
    alphabetically-first clinician, on a form that closes that person's books, is
    a mis-click waiting to happen regardless of what confirmation is added.
+
+## Decisions
+
+- **2026-09-18, Q1: a native `<dialog>` behind one client `ConfirmButton`.**
+  Shane's call. The PRD's premise has changed since it was written: `NavList`
+  and `NoteEditor` are staff client components now, so a confirm step costs one
+  component, not an architecture. Clicking the button opens a native `<dialog>`
+  that states the consequence. A second, explicit click submits the same server
+  action, and the server still makes every permission decision. Esc or Go back
+  does nothing. Not `window.confirm`, because its plain text cannot show a
+  consequence such as a count of clients, and people learn to click through it.
+  Not a server review screen, because that needs route state for every action
+  and costs a page load.
+  **Ceiling:** the confirm step needs JavaScript. Without it, the button does
+  nothing rather than submitting unconfirmed.
+- **2026-09-18, Q2: the dialog guards every irreversible, money, or
+  many-people action.** Shane's call. That means sign, co-sign, execute
+  departure, cancel a group session, cancel with fee, waive fee, and record a
+  departure or leave notice. The PRD suggested something lighter for cancel and
+  waive. One mechanism is simpler than two, and moving money is not
+  low-stakes. Alert acknowledgement and "Called them" are left to Q3: both are
+  frequent, and a dialog on a frequent action teaches people to click through
+  the dialogs that matter.
+- **2026-09-18, Q3: an audited Reopen, not a dialog and not an undo toast.**
+  Shane's call. Acknowledged alerts already stay listed under "N
+  acknowledged". That list, and a matching list of handled worklist replies,
+  gets a Reopen button. Reopen clears the timestamp, and the item goes back in
+  the queue. The first click stays one click. Nothing depends on a timer, so
+  someone who notices the mistake the next day can still fix it.
+- **2026-09-18, Q4: yes, Reopen is its own audited event.** Follows from Q3 and
+  hard rule 4, so it was not asked. The audit row records who reopened what,
+  by id, in the same transaction as the reopen.
+- **2026-09-18, Q5: yes, the selects stop defaulting.** Default taken, not
+  asked. The departure and leave notice selects open on a blank "Choose a
+  clinician…" option and are `required`, so the browser refuses a submit that
+  names nobody. The dialog from Q2 then names the person before anything is
+  recorded.
 
 ## Not in scope
 

@@ -1,17 +1,24 @@
 # Next
 
-**PRD 2 (note draft protection) is decided and built** (2026-09-18). Nothing is
-saved that the clinician did not choose to save. `NoteEditor` keeps the text on
-the page through any failed save, and it asks before leaving with unsaved
-changes. Close note now saves before closing: it used to drop the unsaved
-edits. WRITEUP §54. PRD 1 and PRD 3 were built earlier the same day. PRD 3's
-clinician wording is still pending, in `src/strings.ts`.
+**PRD 5 (action confirmation) is decided and built** (2026-09-18). All five
+questions were answered, and the answers are recorded in the PRD and the WRITEUP
+decisions log. `ConfirmButton` (`src/ui/confirm-button.tsx`) now guards sign,
+co-sign, execute departure, group cancel, cancel session, waive fee, and
+record notice/leave. Its native `<dialog>` states the consequence first.
+Acknowledged alerts and handled replies get an audited Reopen instead of a
+dialog. The departure and leave selects open blank and are `required`. WRITEUP
+§55. PRD 1, 2 and 3 were built earlier the same day.
 
-**Next item: PRD 5, action confirmation.** Read `prd-action-confirmation.md`.
-`src/ui/note-editor.tsx` is now the second staff client component and a
-working example of the pattern: a server action returns a code, and the client
-keeps its state. Tickets D, E, F2 to F4 and G are P1s that were not in the "Now"
-group. Read each one in the doc before assuming it needs no decision.
+**Next item: PRD 4, recoverable forms** (`prd-recoverable-forms.md`). It is the
+last unbuilt P0: the intake form loses everything on a failed submit. Ticket
+F2 (group booking discards the form on a conflict) is the same defect, so decide
+them together. `NoteEditor` is the working pattern: the server action returns a
+code, and the client keeps its state.
+
+After that, the remaining P1 tickets from the review (a Claude Doc titled
+"Clearpath — UX & Accessibility Review"): D1–D3, E1–E2, F3, F4's `?error=`
+half, and G1. The audit-reason half of F4 was done in PRD 1. Read each ticket
+in the doc before assuming it needs no decision.
 
 Shane wants decisions **one at a time**: one question, options, the
 recommendation first. Record each answer in the PRD and the WRITEUP decisions
@@ -20,11 +27,12 @@ log before asking the next.
 **Known gaps:** booking's `?error=` still carries messages, not codes
 (`app/(staff)/book/actions.ts:34-35,63`). PRD 2 does not catch the browser's
 back button inside the app, and the amendment forms still lose their text on a
-failed save (§54).
+failed save (§54). `screenshots.spec.ts` was edited for the dialog but only
+runs under `SHOTS=1`, so the edit is unverified.
 
-**e2e:** only `confidentiality.spec.ts` and the new `drafts.spec.ts` ran
-(7/7). The full sweep has not run since ticket C. Let CI run it, or run it once
-before trusting the rest.
+**e2e:** the seven specs PRD 5 touched ran 20 passed, 1 skipped (shots). The
+full sweep has not run since ticket C. Let CI run it, or run it once before
+trusting the rest.
 
 ## Before anything else: thirty seconds in a browser
 
@@ -39,6 +47,8 @@ been looked at in either theme:
   edges should be visibly darker than before without looking heavy.
 - **Error boundary**: harder to trigger by hand. The review's F1 case can no
   longer happen, so it would take a deliberate throw in a page.
+- **Confirm dialog** (PRD 5): sign a note, or record a leave, in both themes.
+  Check the backdrop, that focus lands on Go back, and that Esc closes it.
 - **Skip link**: on any staff page, press Tab once. "Skip to main content" should
   appear top-left, and Enter should land focus in `<main id="main">`.
 
@@ -57,7 +67,7 @@ been looked at in either theme:
 
 ## The five P0s
 
-Each one was blocked on a product decision, so each has a stub. 1, 2 and 3 are built:
+Each one was blocked on a product decision, so each has a stub. 1, 2, 3 and 5 are built:
 
 1. ~~**Client name in the URL**~~ — built 2026-09-18. → `prd-client-safe-search.md`
 2. ~~**A progress note can vanish**~~ — built 2026-09-18. → `prd-note-draft-protection.md`
@@ -65,7 +75,7 @@ Each one was blocked on a product decision, so each has a stub. 1, 2 and 3 are b
    copy exists, but only on the enquiry form. → `prd-client-risk-response.md`
 4. **Intake form deletes everything on a failed submit** — full-page redirect,
    `app/enquire/actions.ts:56`. → `prd-recoverable-forms.md`
-5. **Sign / execute departure fire on one unconfirmed click.** Until 2026-09-18
+5. ~~**Sign / execute departure fire on one unconfirmed click.**~~ — built 2026-09-18. Until 2026-09-18
    the staff app had no client component. `src/ui/nav-list.tsx` is now the
    first, and it is the pattern for adding one: the server decides
    permissions and passes plain props across. → `prd-action-confirmation.md`
@@ -75,6 +85,6 @@ join CI. Decide early, build last.
 
 ## Gate state at handoff
 
-`npm test` passed under the `set -m` job-control launch: 35 files, 3238 tests,
-EXIT=0. `tsc --noEmit` is clean. The e2e production build passed, and
-`drafts.spec.ts` plus `confidentiality.spec.ts` ran 7/7.
+`npm test` passed under the `set -m` job-control launch: 35 files, 3240 tests,
+EXIT=0. `tsc --noEmit` is clean. The e2e production build passed, and the seven
+touched specs ran 20 passed and 1 skipped.

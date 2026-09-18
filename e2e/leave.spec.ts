@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { actAs, expect, sql, test, USERS, userId } from './fixtures';
+import { actAs, expect, sql, test, USERS, userId, confirmClick } from './fixtures';
 
 /**
  * The leave plan screen, against the production build (leave PRD, Phase 4).
@@ -40,7 +40,7 @@ test.describe('a clinician away, and who covers', () => {
     await page.getByLabel('First day away').fill(day(7));
     await page.getByLabel('Last day away').fill(day(14));
     await page.getByLabel('Who covers').selectOption(userId(COVERER));
-    await page.getByRole('button', { name: 'Record leave' }).click();
+    await confirmClick(page, 'Record leave');
 
     await expect(heading(page)).toBeVisible();
     await expect(page.getByText('Everybody covering is here for the rest of it')).toBeVisible();

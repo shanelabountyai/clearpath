@@ -6,6 +6,7 @@ import { localDateOf } from '../../../../src/time';
 import { Badge, Card, PageHeader, TierBanner } from '../../../../src/ui/primitives';
 import { BreakGlassPrompt } from '../../break-glass';
 import { NoteEditor } from '../../../../src/ui/note-editor';
+import { ConfirmButton } from '../../../../src/ui/confirm-button';
 import { amendNote, coSignNote, saveProgressNoteText } from '../actions';
 
 export const dynamic = 'force-dynamic';
@@ -63,13 +64,14 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
                 >
                   Save draft
                 </button>
-                <button
+                <ConfirmButton
                   name="intent" value="sign"
-                  className="rounded-[var(--radius)] px-3 py-1.5 text-body font-medium"
-                  style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}
+                  title="Sign this note?"
+                  consequence="Signing saves the text as it is now and freezes it. It is a legal record from this moment. Corrections after that append as amendments."
+                  confirmLabel="Sign"
                 >
                   Sign
-                </button>
+                </ConfirmButton>
                 <span className="text-caption text-subtle">
                   Signing freezes the text. Corrections after that append as amendments.
                 </span>
@@ -145,12 +147,14 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
             {canCoSign && note.status === 'signed' && (
               <form action={coSignNote} className="mt-3">
                 <input type="hidden" name="noteId" value={note.id} />
-                <button
-                  className="w-full rounded-[var(--radius)] px-3 py-2 text-body font-medium"
-                  style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}
+                <ConfirmButton
+                  className="w-full py-2"
+                  title="Co-sign this note?"
+                  consequence="Your countersignature completes the record, and it cannot be withdrawn."
+                  confirmLabel="Co-sign"
                 >
                   Co-sign this note
-                </button>
+                </ConfirmButton>
               </form>
             )}
           </Card>

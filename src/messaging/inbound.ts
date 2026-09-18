@@ -1,6 +1,6 @@
 import { guarded } from '../auth/guard';
 import type { Actor } from '../auth/permissions';
-import { systemClock, type Clock } from '../clock';
+import { DAY, systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
 import { NotFound } from '../errors';
 import { alertRecipient } from '../staff/coverage';
@@ -298,5 +298,40 @@ export async function resolveInboundReply(
         where: { id: replyId },
         data: { handledById: actor.id, handledAt: (opts.clock ?? systemClock).now() },
       }),
+  );
+}
+
+/**
+ * The last week's "Called them" clicks, so a mis-click can be taken back
+ * (PRD 5, Q3). A week covers "I noticed the next day"; older ones are done.
+ */
+export async function recentlyHandledInboundReplies(actor: Actor, opts: { clock?: Clock } = {}) {
+  const since = new Date((opts.clock ?? systemClock).now().getTime() - 7 * DAY);
+  return guarded(
+    { actor, action: 'read', resource: 'appointment' },
+    (tx) =>
+      tx.inboundReply.findMany({
+        where: { classification: 'unparsed', handledAt: { gte: since } },
+        select: {
+          id: true, receivedAt: true, handledAt: true,
+          client: { select: { code: true } },
+          handledBy: { select: { name: true } },
+        },
+        orderBy: { handledAt: 'desc' },
+      }),
+  );
+}
+
+/** Puts a handled reply back on the worklist. Its own coded audit row. */
+export async function reopenInboundReply(actor: Actor, replyId: string) {
+  const reply = await prisma.inboundReply.findUnique({ where: { id: replyId }, select: { clientId: true } });
+  if (!reply) throw new NotFound('InboundReply');
+
+  return guarded(
+    {
+      actor, action: 'update', resource: 'appointment', resourceId: replyId, clientId: reply.clientId,
+      reason: 'reply:reopened',
+    },
+    (tx) => tx.inboundReply.update({ where: { id: replyId }, data: { handledById: null, handledAt: null } }),
   );
 }

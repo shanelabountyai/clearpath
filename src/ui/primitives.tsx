@@ -4,6 +4,8 @@ import { CHARGEABLE } from '../scheduling/states';
 import { AUDIT_CODE } from '../reports/audit-code';
 import { localDateOf, minutesToHHMM } from '../time';
 import type { DaySession } from '../scheduling/calendar';
+import { Button, type ButtonVariant } from './button';
+import { ConfirmButton } from './confirm-button';
 
 /**
  * The visual vocabulary. Two rules run through all of it:
@@ -298,14 +300,17 @@ export function TextField({
 }
 
 export function SelectField({
-  name, label, defaultValue = '', options, id = name,
+  name, label, defaultValue = '', options, id = name, placeholder,
 }: {
   name: string; label: string; defaultValue?: string; options: { value: string; label: string }[]; id?: string;
+  /** A blank first option, and the select becomes required: nobody is chosen by default. */
+  placeholder?: string;
 }) {
   return (
     <div>
       <label htmlFor={id} className={FIELD_LABEL}>{label}</label>
-      <select id={id} name={name} defaultValue={defaultValue} className={FIELD_CONTROL} style={FIELD_CONTROL_STYLE}>
+      <select id={id} name={name} defaultValue={defaultValue} required={!!placeholder} className={FIELD_CONTROL} style={FIELD_CONTROL_STYLE}>
+        {placeholder && <option value="">{placeholder}</option>}
         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
     </div>
@@ -404,12 +409,14 @@ export function CoSignRow({
         <form action={action}>
           <input type="hidden" name="noteId" value={note.id} />
           <input type="hidden" name="returnTo" value="queue" />
-          <button
-            className="rounded-[var(--radius)] px-3 py-1.5 text-caption font-medium"
-            style={{ background: 'var(--accent)', color: 'var(--accent-contrast)' }}
+          <ConfirmButton
+            className="text-caption"
+            title={`Co-sign ${note.author.name}'s note for ${note.client.code}?`}
+            consequence="Your countersignature completes the record, and it cannot be withdrawn. Open the note first if you have not read it."
+            confirmLabel="Co-sign"
           >
             Co-sign
-          </button>
+          </ConfirmButton>
         </form>
       </div>
     </li>
@@ -463,36 +470,7 @@ export const money = (cents: number | null | undefined) =>
     ? '—'
     : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
 
-type ButtonVariant = 'solid' | 'quiet' | 'danger' | 'private';
-
-const BUTTON_FILL: Record<ButtonVariant, { background: string; color: string; borderColor: string }> = {
-  solid: { background: 'var(--accent)', color: 'var(--accent-contrast)', borderColor: 'var(--accent)' },
-  quiet: { background: 'transparent', color: 'var(--text)', borderColor: 'var(--border-strong)' },
-  // Chargeable or irreversible. Red is spoken for, and this is what spends it.
-  danger: { background: 'var(--danger)', color: 'var(--on-solid)', borderColor: 'var(--danger)' },
-  // Author-only actions carry the private tier's colour, so the one place a
-  // clinician writes something nobody else will read looks like nowhere else.
-  private: { background: 'var(--tier-private)', color: 'var(--on-solid)', borderColor: 'var(--tier-private)' },
-};
-
-/**
- * `--on-solid` rather than white: in dark mode the danger and private fills are
- * light, and white text on them fails contrast. A solid button is the one place
- * the foreground cannot be inherited.
- */
-export function Button({
-  variant = 'solid',
-  className = '',
-  ...props
-}: { variant?: ButtonVariant } & React.ComponentPropsWithoutRef<'button'>) {
-  return (
-    <button
-      {...props}
-      className={`rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium whitespace-nowrap ${className}`}
-      style={{ ...BUTTON_FILL[variant], ...props.style }}
-    />
-  );
-}
+export { Button, type ButtonVariant };
 
 /**
  * One session in a day column. A calendar chip is not a badge: it has to say

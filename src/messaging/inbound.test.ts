@@ -4,7 +4,7 @@ import { fixedClock, HOUR } from '../clock';
 import { prisma } from '../db';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { bookAppointment } from '../scheduling/booking';
-import { PHRASES_BY_LANGUAGE, classifyInbound, openInboundReplies, receiveInbound, resolveInboundReply } from './inbound';
+import { PHRASES_BY_LANGUAGE, classifyInbound, openInboundReplies, receiveInbound, recentlyHandledInboundReplies, reopenInboundReply, resolveInboundReply } from './inbound';
 import { LANGUAGES } from './outbox';
 
 /** 2026-09-01 15:00 America/New_York, as everywhere else in this suite. */
@@ -294,6 +294,20 @@ describe('an unparsed reply — one alert, one auto-reply, and nothing to read',
     expect(await openInboundReplies(actor(desk))).toEqual([]);
     expect((await prisma.inboundReply.findUniqueOrThrow({ where: { id: row!.id } })).handledById)
       .toBe(desk.id);
+  });
+
+  it('puts a mis-clicked "Called them" back on the list, audited (PRD 5)', async () => {
+    await reachableClient();
+    await receiveInbound({ from: '555-0142', body: DISCLOSURE }, { clock });
+    const [row] = await openInboundReplies(actor(desk));
+    await resolveInboundReply(actor(desk), row!.id, { clock });
+
+    const [handled] = await recentlyHandledInboundReplies(actor(desk), { clock });
+    expect(handled).toMatchObject({ id: row!.id, handledBy: { name: desk.name } });
+    await reopenInboundReply(actor(desk), row!.id);
+    expect((await openInboundReplies(actor(desk))).map((r) => r.id)).toEqual([row!.id]);
+    expect(await recentlyHandledInboundReplies(actor(desk), { clock })).toEqual([]);
+    expect(await prisma.auditEvent.count({ where: { reason: 'reply:reopened', actorId: desk.id } })).toBe(1);
   });
 });
 

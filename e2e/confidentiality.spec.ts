@@ -1,4 +1,4 @@
-import { actAs, clientId, expect, sql, test, USERS } from './fixtures';
+import { actAs, clientId, expect, sql, test, USERS, confirmClick } from './fixtures';
 
 /**
  * The 60-second demo, as a test.
@@ -24,7 +24,7 @@ test.describe('the access story', () => {
     expect(draft, 'the seed leaves the demo client one draft note').toBeTruthy();
     await actAs(page, USERS.associate);
     await page.goto(`/notes/${draft}`);
-    await page.getByRole('button', { name: 'Sign' }).click();
+    await confirmClick(page, 'Sign');
     await expect(page.getByText('Pending co-signature')).toBeVisible();
 
     // 2. That note — not merely a note — is waiting in their supervisor's queue.
@@ -37,7 +37,7 @@ test.describe('the access story', () => {
     await expect(row.getByText(/waiting/)).toBeVisible();
 
     // 3. The supervisor co-signs it, and it leaves the queue.
-    await row.getByRole('button', { name: 'Co-sign' }).click();
+    await confirmClick(row, 'Co-sign');
     await expect(page).toHaveURL(/\/cosign/);
     await expect(page.locator('li').filter({ has: page.locator(`a[href="/notes/${draft}"]`) })).toHaveCount(0);
 
