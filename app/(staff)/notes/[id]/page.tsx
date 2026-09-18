@@ -55,6 +55,9 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="space-y-4">
           <Card>
+            {/* Mounted in both branches, so signing changes its text and is
+                announced; the editor that could have said so is gone (D2). */}
+            <p role="status" className="sr-only">{note.status === 'draft' ? '' : 'This note is signed.'}</p>
             {note.status === 'draft' && isAuthor ? (
               <NoteEditor noteId={note.id} saved={note.content} rows={16} action={saveProgressNoteText}>
                 <button

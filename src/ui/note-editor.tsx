@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState, useEffect, useState } from 'react';
+import { useActionState, useEffect, useRef, useState } from 'react';
 import { SAVE_FAILURE_TEXT, type NoteSaveState } from '../notes/save-failure';
 
 /**
@@ -32,6 +32,14 @@ export function NoteEditor({
   const [text, setText] = useState(saved);
   const [state, dispatch, pending] = useActionState(action, null);
   const dirty = text !== saved;
+  // A successful save returns null, the same as no save yet, so success is
+  // read off the end of a save that came back without a failure (review D2).
+  const [justSaved, setJustSaved] = useState(false);
+  const wasPending = useRef(false);
+  useEffect(() => {
+    if (wasPending.current && !pending && !state) setJustSaved(true);
+    wasPending.current = pending;
+  }, [pending, state]);
 
   useEffect(() => {
     if (!dirty) return;
@@ -63,7 +71,7 @@ export function NoteEditor({
       <label htmlFor="content" className="sr-only">Note</label>
       <textarea
         id="content" name="content" rows={rows} value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => { setText(e.target.value); setJustSaved(false); }}
         aria-describedby={state ? 'save-failure' : undefined}
         className="w-full rounded-[var(--radius)] border p-4 font-serif text-subhead leading-reading"
         style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
@@ -80,6 +88,7 @@ export function NoteEditor({
       <fieldset disabled={pending} className="mt-3 flex min-w-0 flex-wrap items-center gap-2">
         {children}
         {dirty && !pending && <span className="text-caption text-muted">Unsaved changes</span>}
+        <span role="status" className="text-caption text-muted">{justSaved && !dirty ? 'Saved' : ''}</span>
       </fieldset>
     </form>
   );

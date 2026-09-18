@@ -4487,6 +4487,18 @@ fails on any `.message` in a redirect, and it was checked against the old code.
 The group form's refusal travels in the response body, not a URL. It got
 `role="alert"` and a key, so a repeated refusal is announced again.
 
+D2: saving a draft said nothing when it worked. The editor now has a
+`role="status"` that says "Saved" once a save comes back without a failure. A
+successful save and "no save yet" both return `null`, so success is read from
+the end of a pending save. Signing or closing replaces the editor, which takes
+any message inside it away too. The page therefore keeps a visually hidden
+status outside the branch, and its text changes when the note does. A fresh
+load of a signed note announces nothing, because nothing changed.
+
+D3: a blank translation now has a visible "Missing" line, linked with
+`aria-describedby`, plus a count per language above the list from
+`missingLanguages`. That is the same function `issueForm` uses to refuse.
+
 **Not done.** The test matches the shapes the app uses. A message passed
 through a variable first would get past it.
 

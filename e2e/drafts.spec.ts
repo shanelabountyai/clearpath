@@ -30,5 +30,7 @@ test('a save with nobody signed in keeps the text, and the retry lands it', asyn
   // The failure holds until the action returns, so its going is the save landing.
   await expect(page.locator('#save-failure')).toHaveCount(0);
   await expect(page.getByText('Unsaved changes')).toHaveCount(0);
+  // Review D2: the success is said, not only the failure.
+  await expect(page.getByRole('status').filter({ hasText: 'Saved' })).toBeVisible();
   expect(sql(`select content from "ProcessNote" where id = '${note}'`)).toBe(text);
 });

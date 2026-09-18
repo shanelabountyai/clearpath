@@ -1,13 +1,15 @@
 import Link from 'next/link';
 import { prisma } from '../../../src/db';
 import { requireSession } from '../../../src/session';
-import type { TemplateSchema } from '../../../src/forms/schema';
+import { missingLanguages, type TemplateSchema } from '../../../src/forms/schema';
 import type { ScoringRules } from '../../../src/forms/scoring';
 import { LANGUAGES } from '../../../src/strings';
 import { Badge, Card, PageHeader } from '../../../src/ui/primitives';
 import { publishRevision } from './actions';
 
 export const dynamic = 'force-dynamic';
+
+const languageName = (l: string) => new Intl.DisplayNames(['en'], { type: 'language' }).of(l) ?? l;
 
 export default async function FormsPage({ searchParams }: { searchParams: Promise<{ template?: string }> }) {
   await requireSession();
@@ -100,25 +102,42 @@ export default async function FormsPage({ searchParams }: { searchParams: Promis
                   field here is a form that will not go out rather than one that
                   goes out half-readable.
                 */}
+                {LANGUAGES.map((l) => {
+                  const n = missingLanguages(schema)[l].length;
+                  return n > 0 && (
+                    <p key={l} className="mb-2 rounded-[var(--radius)] border px-3 py-2 text-body" style={{ borderColor: 'var(--danger)', background: 'var(--danger-soft)' }}>
+                      {n} question{n === 1 ? ' has' : 's have'} no {languageName(l)} text. This form cannot be sent to a
+                      client who reads {languageName(l)} until {n === 1 ? 'it is' : 'they are'} filled in.
+                    </p>
+                  );
+                })}
                 <ul className="divide-y" style={{ borderColor: 'var(--border)' }}>
                   {schema.fields.map((f) => (
                     <li key={f.key} className="flex flex-wrap items-center gap-3 py-2">
                       <span className="w-40 shrink-0 font-mono text-micro text-subtle">{f.key}</span>
                       <div className="flex min-w-[220px] flex-1 flex-col gap-1">
-                        {LANGUAGES.map((l) => (
-                          <label key={l} className="flex items-center gap-2">
-                            <span className="w-6 font-mono text-micro text-subtle uppercase">{l}</span>
-                            <input
-                              name={`label:${f.key}:${l}`} defaultValue={f.label?.[l] ?? ''}
-                              aria-invalid={!f.label?.[l]?.trim() || undefined}
-                              className="w-full rounded-[var(--radius)] border px-2 py-1 text-body"
-                              style={{
-                                borderColor: f.label?.[l]?.trim() ? 'var(--border)' : 'var(--danger)',
-                                background: 'var(--surface)',
-                              }}
-                            />
-                          </label>
-                        ))}
+                        {LANGUAGES.map((l) => {
+                          const blank = !f.label?.[l]?.trim();
+                          const hint = `missing-${f.key}-${l}`;
+                          return (
+                            <label key={l} className="flex flex-wrap items-center gap-x-2">
+                              <span className="w-6 font-mono text-micro text-subtle uppercase">{l}</span>
+                              <input
+                                name={`label:${f.key}:${l}`} defaultValue={f.label?.[l] ?? ''}
+                                aria-label={`${f.key}, ${languageName(l)}`}
+                                aria-invalid={blank || undefined}
+                                aria-describedby={blank ? hint : undefined}
+                                className="min-w-0 flex-1 rounded-[var(--radius)] border px-2 py-1 text-body"
+                                style={{ borderColor: blank ? 'var(--danger)' : 'var(--border)', background: 'var(--surface)' }}
+                              />
+                              {blank && (
+                                <span id={hint} className="w-full pl-8 text-caption" style={{ color: 'var(--danger)' }}>
+                                  Missing. The form cannot be sent in {languageName(l)}.
+                                </span>
+                              )}
+                            </label>
+                          );
+                        })}
                       </div>
                       <span className="w-24 text-caption text-subtle">{f.type}</span>
                       <label className="flex items-center gap-1 text-caption">

@@ -50,6 +50,8 @@ export default async function ProcessNotePage({ params }: { params: Promise<{ id
 
       <div className="mx-auto max-w-3xl space-y-4">
         <Card>
+          {/* See the progress note page: announces closing (review D2). */}
+          <p role="status" className="sr-only">{note.closedAt ? 'This note is closed.' : ''}</p>
           {note.closedAt ? (
             <article className="font-serif text-subhead leading-reading whitespace-pre-wrap">{note.content}</article>
           ) : (
