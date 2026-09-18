@@ -66,6 +66,17 @@ body {
   outline-offset: 2px;
 }
 
+/*
+ * Every text control gets an edge you can see. About thirty inputs set
+ * `borderColor: var(--border)` inline, at 1.19:1, and inline style beats any
+ * stylesheet rule without `!important`. One rule here is better than thirty
+ * edits that the next input would miss. An invalid field keeps its danger
+ * border.
+ */
+:where(input:not([type='hidden'], [type='radio'], [type='checkbox']), select, textarea):not([aria-invalid='true']) {
+  border-color: var(--border-control) !important;
+}
+
 ::selection { background: var(--accent-soft); color: var(--text); }
 
 /* Wide content scrolls inside its own box; the page body never does. */

@@ -111,6 +111,11 @@ it('text tokens clear AA against every surface they sit on', () => {
       const r = ratio(value(css, '--text-subtle'), value(css, surface));
       expect(r, `${label}: --text-subtle on ${surface} is ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
     }
+    // A control's edge is a UI boundary, not text: 3:1 is the bar (1.4.11).
+    for (const surface of surfaces) {
+      const r = ratio(value(css, '--border-control'), value(css, surface));
+      expect(r, `${label}: --border-control on ${surface} is ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
+    }
     const tier = ratio(value(css, '--tier-operational'), value(css, '--tier-operational-soft'));
     expect(tier, `${label}: --tier-operational on its soft background is ${tier.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
   }
@@ -127,4 +132,16 @@ it('a scrolling box comes from ScrollX, never from the bare class', () => {
     (p) => p !== 'src/ui/primitives.tsx' && /scroll-x/.test(readFileSync(p, 'utf8')),
   );
   expect(offenders).toEqual([]);
+});
+
+/**
+ * An error boundary is the one component whose input is whatever went wrong.
+ * A message thrown in a client component reaches the browser verbatim, so a
+ * boundary that renders or logs it can put anything on screen (hard rule 3).
+ */
+it('the staff shell has an error boundary, and no boundary shows the error message', () => {
+  const boundaries = sourceFiles().filter((p) => /(^|\/)(global-)?error\.tsx$/.test(p));
+  expect(boundaries).toContain('app/(staff)/error.tsx');
+  const leaks = boundaries.filter((p) => /error\.message|console\.(error|log)\(\s*error/.test(readFileSync(p, 'utf8')));
+  expect(leaks).toEqual([]);
 });

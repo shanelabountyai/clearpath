@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import type { AlertKind } from '../../../src/generated/prisma/enums';
 import { myAlerts } from '../../../src/forms/service';
 import { requireSession } from '../../../src/session';
 import { localDateOf } from '../../../src/time';
@@ -25,7 +26,11 @@ const REASON_TEXT: Record<string, string> = {
 };
 
 /** The chip each kind wears. A third kind is a badge, not another ternary. */
-const KIND_BADGE: Record<string, { tone: 'danger' | 'warning' | 'info'; glyph: string; label: string }> = {
+// Keyed by the enum, not by string. With `string` a new alert kind compiled
+// cleanly and then threw inside the render (three `!`s on a three-key lookup),
+// which took down the one page that holds self-harm flags. Now it is a type
+// error in this file instead.
+const KIND_BADGE: Record<AlertKind, { tone: 'danger' | 'warning' | 'info'; glyph: string; label: string }> = {
   screener_critical_item: { tone: 'danger', glyph: '◆', label: 'Critical item' },
   screener_threshold: { tone: 'warning', glyph: '▲', label: 'Threshold' },
   inbound_unparsed: { tone: 'info', glyph: '✉', label: 'Client wrote in' },
@@ -64,8 +69,8 @@ async function AlertsPage() {
                         {a.client.lastName}, {a.client.firstName}
                       </Link>
                       <span className="font-mono text-caption text-subtle">{a.client.code}</span>
-                      <Badge tone={KIND_BADGE[a.kind]!.tone} glyph={KIND_BADGE[a.kind]!.glyph}>
-                        {KIND_BADGE[a.kind]!.label}
+                      <Badge tone={KIND_BADGE[a.kind].tone} glyph={KIND_BADGE[a.kind].glyph}>
+                        {KIND_BADGE[a.kind].label}
                       </Badge>
                     </div>
                     <ul className="mt-1.5 space-y-0.5 text-body text-muted">

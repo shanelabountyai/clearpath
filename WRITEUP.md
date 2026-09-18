@@ -4283,6 +4283,39 @@ because each is waiting on a product decision in its own `prd-*.md`.
 P1 tickets B and C, `NEXT.md`. Not yet checked in a browser: the focus ring and
 the skip link are CSS that no unit test renders.
 
+## 52. An edge you can find and a crash that keeps the menu
+
+**The problem.** This closes the review's "Now, no decisions needed" group.
+Ticket A's second finding had not landed: form control borders measured
+1.19:1 against their background, and even `--border-strong` reached only
+1.57:1, against a 3:1 minimum for a UI boundary (WCAG 1.4.11). About thirty
+inputs set `borderColor: var(--border)` inline. Separately, the app had no
+error boundary. F1 showed what that cost: the alert badge lookup was typed
+`Record<string, …>` and read through three `!`s. An unrecognised kind would
+compile, then throw during render, and the clinician would get the
+framework's crash page in place of their self-harm-flag queue.
+
+**The design.** A new token, `--border-control`, is `#908571` in light
+and `#696e78` in dark. It is the old strong border's hue made darker or
+lighter until it clears 3.16:1 on every surface. One `globals.css` rule
+applies it to every text control with `!important`, because only that beats an
+inline style. The alternative was thirty edits that the thirty-first input
+would miss. An `aria-invalid` field keeps its danger border. The contrast test
+checks the token at 3:1 and fails on the old value. The alert map is now keyed
+by Prisma's `AlertKind`, so a new kind is a type error in that file rather than
+a runtime throw. `app/(staff)/error.tsx` sits inside the staff layout, so a
+failing page keeps the navigation. It uses Next 16's `retry` and shows only
+the digest. A test fails if any error boundary renders or logs the error's
+message.
+
+**What it deliberately does not do.** It does not touch the thirty inline
+styles; the rule makes them harmless and deleting them is churn. It adds no
+`global-error.tsx`. A crash in the root layout still gets Next's default page,
+because the root layout holds almost nothing that can throw. It adds no boundary
+on the client-facing `/f` and `/enquire` routes. A client reads in their own
+language, and a boundary cannot know which one without the record that failed
+to load. That needs its own small decision, not an English page.
+
 ## Decisions log
 
 | Decision | Why |

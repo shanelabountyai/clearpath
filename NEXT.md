@@ -1,20 +1,34 @@
 # Next
 
-**Pick up the remaining P1 tickets from the UX/accessibility review.** B and C
-landed 2026-09-18 (WRITEUP §51). The full grouping of the other tickets is in the
-Claude Doc "Clearpath — UX & Accessibility Review", 2026-09-17. Read it there;
-this file does not repeat it. Before building from a `prd-*.md` stub, read the
-stub: its open questions have not been answered.
+**The review's no-decision work is finished** (WRITEUP sections 51 and 52).
+Everything left in it waits on a person. The next item is the first of those
+decisions: **PRD 3, client-facing risk response.** The review ranks it first
+because it needs a clinician's view, and that takes calendar time rather than
+engineering time. Read `prd-client-risk-response.md`.
+
+Shane wants decisions **one at a time**: one question, options, the
+recommendation first. Ask the most blocking question in the PRD, wait for the
+answer, record it in the PRD and the WRITEUP decisions log, then ask the next.
+Do not batch them.
+
+Remaining order from the review: PRD 3, then PRD 1 (search by name or by
+code?), PRD 2 (draft protection), PRD 5 (confirmation). Tickets D, E, F2 to F4
+and G are P1s that were not in the "Now" group. Read each one in the doc before
+assuming it needs no decision.
 
 ## Before anything else: thirty seconds in a browser
 
-Three changes are CSS or markup that no unit test renders. None of them has
+Five changes are CSS or markup that no unit test renders. None of them has
 been looked at in either theme:
 
 - **Contrast tokens** (commit 23593ea): check `/clients` in light and dark.
 - **Screener focus ring** (`.option:has(:focus-visible)`): open a form link at
   `/f/<token>` and press Tab through a scale question. Each option should show
   the accent ring.
+- **Input borders** (`--border-control`): any staff form, both themes. The
+  edges should be visibly darker than before without looking heavy.
+- **Error boundary**: harder to trigger by hand. The review's F1 case can no
+  longer happen, so it would take a deliberate throw in a page.
 - **Skip link**: on any staff page, press Tab once. "Skip to main content" should
   appear top-left, and Enter should land focus in `<main id="main">`.
 
@@ -51,12 +65,6 @@ All five are blocked on a product decision, which is why all five have a stub:
 Plus `prd-accessibility-conformance.md` — do we commit to AA, and does a check
 join CI. Decide early, build last.
 
-## Suggested next item
-
-The next P1 ticket in the doc's grouping that needs no product decision. If
-none is left, move to `prd-accessibility-conformance.md`: it is the P0-adjacent
-decision cheapest to make early, and B and C now give it concrete evidence.
-
 ## Open question waiting on a person
 
 Left as a comment in the doc: does the risk-response PRD go with a general
@@ -66,6 +74,6 @@ cheaper; it is the recommendation but not the decision.
 
 ## Gate state at handoff
 
-`npm test` passed under the `set -m` job-control launch: 33 files, 3232 tests
-(3227 before plus 5 new), EXIT=0. `tsc --noEmit` is clean. The EXIT=137 oddity
-from 2026-09-17 did not recur.
+`npm test` passed under the `set -m` job-control launch: 33 files, 3233 tests,
+EXIT=0. `tsc --noEmit` is clean. `build:e2e` production build passed, and both
+new CSS rules were confirmed in the shipped stylesheet.
