@@ -92,7 +92,40 @@ function ratio(fg: string, bg: string) {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-it('text tokens clear AA against every surface they sit on', () => {
+/**
+ * PRD 6, Q2: every text token against every surface token, derived from
+ * theme.css so a new token is covered the day it lands — not a hand-kept
+ * list of the pairs someone remembered to check, which is how both rows in
+ * the PRD's failure table shipped.
+ *
+ * Four groups, each matching how the token is actually used in src/ and app/:
+ *  A. --text / --text-muted / --text-subtle (prose) on the four --surface*
+ *     tokens. 4.5:1 — none of this is "large text".
+ *  B. --border-control and every --status-* token against the same surfaces.
+ *     Both are only ever a border or an aria-hidden decorative glyph
+ *     (AppointmentChip's status icon, primitives.tsx) — never prose — so
+ *     they clear the 3:1 non-text bar (1.4.11), not 4.5:1.
+ *  C. Every semantic color that has a `-soft` companion (accent, success,
+ *     warning, danger, info, the three tiers), read as text on that
+ *     companion. This is the TONE map in primitives.tsx and the tier badge.
+ *  D. --on-solid against each of those same semantic colors used as a solid
+ *     fill (Button's danger/private variants, the enquiry form's accent
+ *     button) — the exact pairing --on-solid's own comment in theme.css
+ *     describes.
+ *
+ * Documented exceptions:
+ *  - --text-subtle never sits on --surface-inset in the app (only
+ *    --text-muted does, TONE.neutral in primitives.tsx) and the pair is
+ *    below 4.5:1. Left undarkened rather than tuned for a pairing nothing
+ *    renders.
+ *  - --status-scheduled and --status-cancelled are deliberately muted —
+ *    "cancelled sessions stay visible but recede" (AppointmentChip,
+ *    primitives.tsx) — and both fall under 3:1 on some surfaces. Neither is
+ *    ever the only way to read the status: the chip's label text is always
+ *    --text, and statusVar only colors a border and an aria-hidden glyph
+ *    (WCAG 1.4.11 exempts decorative/inactive graphics from the 3:1 bar).
+ */
+it('text and UI-boundary tokens clear their contrast bar on every surface they sit on', () => {
   const theme = readFileSync('app/theme.css', 'utf8');
   const split = theme.indexOf('@media');
   const value = (css: string, name: string) => {
@@ -100,24 +133,50 @@ it('text tokens clear AA against every surface they sit on', () => {
     if (!m?.[1]) throw new Error(`${name} not found`);
     return m[1];
   };
-  const surfaces = ['--surface', '--surface-raised', '--surface-sunken'];
-  // `--text-subtle` is the smallest type in the product, so it is never "large
-  // text": 4.5:1 is the bar, not 3:1.
+  const names = (css: string, re: RegExp) => [...css.matchAll(re)].flatMap((m) => (m[1] ? [m[1]] : []));
+  const NEVER_RENDERS = new Set(['--text-subtle on --surface-inset']);
+  const DELIBERATELY_MUTED = new Set(['--status-scheduled', '--status-cancelled']);
+
   for (const [label, css] of [
     ['light', theme.slice(0, split)],
     ['dark', theme.slice(split)],
   ] as const) {
-    for (const surface of surfaces) {
-      const r = ratio(value(css, '--text-subtle'), value(css, surface));
-      expect(r, `${label}: --text-subtle on ${surface} is ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+    const textTokens = names(css, /^\s*(--text(?:-[a-z]+)?):/gm);
+    const surfaces = names(css, /^\s*(--surface(?:-[a-z]+)?):/gm);
+    const statusTokens = names(css, /^\s*(--status-[a-z-]+):/gm);
+    const softTokens = names(css, /^\s*(--[a-z-]+-soft):/gm);
+    expect(surfaces, 'surfaces should be derived, not hand-kept').toEqual([
+      '--surface', '--surface-raised', '--surface-sunken', '--surface-inset',
+    ]);
+
+    // A: prose text on every surface.
+    for (const text of textTokens) {
+      for (const surface of surfaces) {
+        if (NEVER_RENDERS.has(`${text} on ${surface}`)) continue;
+        const r = ratio(value(css, text), value(css, surface));
+        expect(r, `${label}: ${text} on ${surface} is ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+      }
     }
-    // A control's edge is a UI boundary, not text: 3:1 is the bar (1.4.11).
-    for (const surface of surfaces) {
-      const r = ratio(value(css, '--border-control'), value(css, surface));
-      expect(r, `${label}: --border-control on ${surface} is ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
+
+    // B: borders and decorative status glyphs on every surface.
+    for (const boundary of ['--border-control', ...statusTokens]) {
+      if (DELIBERATELY_MUTED.has(boundary)) continue;
+      for (const surface of surfaces) {
+        const r = ratio(value(css, boundary), value(css, surface));
+        expect(r, `${label}: ${boundary} on ${surface} is ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
+      }
     }
-    const tier = ratio(value(css, '--tier-operational'), value(css, '--tier-operational-soft'));
-    expect(tier, `${label}: --tier-operational on its soft background is ${tier.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+
+    // C + D: a semantic color as text on its own soft fill, and --on-solid
+    // as text on that same color used as a solid fill.
+    expect(softTokens.length, 'no -soft tokens found — regex drifted from theme.css').toBeGreaterThan(0);
+    for (const soft of softTokens) {
+      const base = soft.slice(0, -'-soft'.length);
+      const r = ratio(value(css, base), value(css, soft));
+      expect(r, `${label}: ${base} on ${soft} is ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+      const onSolid = ratio(value(css, '--on-solid'), value(css, base));
+      expect(onSolid, `${label}: --on-solid on ${base} is ${onSolid.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+    }
   }
 });
 

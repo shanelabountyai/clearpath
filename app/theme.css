@@ -30,8 +30,12 @@
   --border: #e0dcd5;
   --border-strong: #c6c0b6;
   /* A control's edge is how you find it: WCAG 1.4.11 wants 3:1, which
-     neither border above reaches (1.19 and 1.57 at their worst). */
-  --border-control: #908571;
+     neither border above reaches (1.19 and 1.57 at their worst). Darkened
+     again 2026-09-18 (design-system.test.ts): #908571 cleared the three
+     surfaces the old test checked but missed --surface-inset at 2.92:1 —
+     the global `border-color: var(--border-control)` rule in globals.css
+     reaches every text input regardless of what surface it sits on. */
+  --border-control: #8b8069;
 
   --text: #22201d;
   --text-muted: #5f5a53;
