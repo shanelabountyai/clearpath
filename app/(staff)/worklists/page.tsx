@@ -538,7 +538,10 @@ async function WorkListsPage() {
                     </div>
                     <p className="mt-1 text-caption text-subtle">
                       {o.freed ? 'Was ' : 'Held by '}
-                      <Link href={`/appointments/${o.id}`} className="text-accent hover:underline">
+                      {/* Inline in running prose, unlike this file's other links, which are
+                          each a whole cell or line on their own: axe (PRD 6, Q3) flagged the
+                          hover-only underline as color being the only cue against text-subtle. */}
+                      <Link href={`/appointments/${o.id}`} className="text-accent underline">
                         {o.client.lastName}, {o.client.firstName}
                       </Link>{' '}
                       <span className="font-mono">{o.client.code}</span>

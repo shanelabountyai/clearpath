@@ -1,0 +1,97 @@
+name: CI
+
+# PRD 6, Q3: this is what makes "CI owns the full sweep" (CLAUDE.md) true.
+# Until this file, the repo had no CI at all — every gate ran on Shane's
+# laptop, on his say-so. There is no lint step: the repo has no ESLint
+# config or `lint` script, so a fake one would only paper over that rather
+# than run anything. Add one deliberately, in its own change, if that's
+# ever wanted — it is not part of this PRD's scope.
+#
+# Synthetic data only (see README's Scope Honesty banner) — this Postgres
+# service is thrown away when the job ends and never sees a real client.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    env:
+      # An ephemeral, single-job Postgres — not the "never a remote database"
+      # rule from CLAUDE.md, which is about laptop dev pointing at a cloud
+      # database. This one is local to the runner and gone when it exits.
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Prisma's `migrate deploy` expects the database to already exist —
+      # unlike a laptop, this Postgres starts with only its default db.
+      - name: Create the test and e2e databases
+        run: |
+          psql -c "create database clearpath_test"
+          psql -c "create database clearpath_e2e"
+
+      # Committed .env files hold no secret (see .gitignore); these are
+      # written fresh each run, the same names .env.example documents.
+      - name: Write .env.test and .env.e2e
+        run: |
+          cat > .env.test <<'EOF'
+          DATABASE_URL=postgresql://postgres:postgres@localhost:5432/clearpath_test?connection_limit=10&pool_timeout=20
+          SHADOW_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/clearpath_test_shadow
+          EOF
+          cat > .env.e2e <<'EOF'
+          DATABASE_URL=postgresql://postgres:postgres@localhost:5432/clearpath_e2e?connection_limit=10&pool_timeout=20
+          SHADOW_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/clearpath_e2e_shadow
+          PGDATABASE=clearpath_e2e
+          CLEARPATH_BASE_URL=http://localhost:3700
+          CLEARPATH_THROTTLE_SECRET=ci-only-not-a-real-secret
+          EOF
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run db:migrate:test && npm test
+
+      - name: Install Playwright's browser
+        run: npx playwright install --with-deps chromium
+
+      # Migrates, seeds, builds for production, serves, and runs every spec —
+      # including e2e/accessibility.spec.ts (PRD 6, Q3's axe check).
+      - name: e2e, against a production build
+        run: npm run test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

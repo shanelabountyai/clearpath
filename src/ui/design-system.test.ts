@@ -115,12 +115,20 @@ function ratio(fg: string, bg: string) {
  * the PRD's failure table shipped.
  *
  * Four groups, each matching how the token is actually used in src/ and app/:
- *  A. --text / --text-muted / --text-subtle (prose) on the four --surface*
- *     tokens. 4.5:1 — none of this is "large text".
- *  B. --border-control and every --status-* token against the same surfaces.
- *     Both are only ever a border or an aria-hidden decorative glyph
- *     (AppointmentChip's status icon, primitives.tsx) — never prose — so
- *     they clear the 3:1 non-text bar (1.4.11), not 4.5:1.
+ *  A. --text / --text-muted / --text-subtle (prose) on every --surface* AND
+ *     every `-soft` tinted background. 4.5:1 — none of this is "large text".
+ *     The `-soft` half of this was missing until the PRD 6 axe sweep caught
+ *     `--text-subtle` at 4.24–4.43:1 on three different `-soft` backgrounds
+ *     in the running app (forms admin's template list on --surface-inset,
+ *     the calendar's "No room needed" caption on --accent-soft) — these are
+ *     free-floating utility classes with no idea what container they land
+ *     in, so "every surface" has to mean every background, not just the
+ *     four neutral ones.
+ *  B. --border-control and every --status-* token against the same surfaces
+ *     (not the `-soft` set — neither ever sits on one). Both are only ever a
+ *     border or an aria-hidden decorative glyph (AppointmentChip's status
+ *     icon, primitives.tsx) — never prose — so they clear the 3:1 non-text
+ *     bar (1.4.11), not 4.5:1.
  *  C. Every semantic color that has a `-soft` companion (accent, success,
  *     warning, danger, info, the three tiers), read as text on that
  *     companion. This is the TONE map in primitives.tsx and the tier badge.
@@ -129,17 +137,13 @@ function ratio(fg: string, bg: string) {
  *     button) — the exact pairing --on-solid's own comment in theme.css
  *     describes.
  *
- * Documented exceptions:
- *  - --text-subtle never sits on --surface-inset in the app (only
- *    --text-muted does, TONE.neutral in primitives.tsx) and the pair is
- *    below 4.5:1. Left undarkened rather than tuned for a pairing nothing
- *    renders.
- *  - --status-scheduled and --status-cancelled are deliberately muted —
- *    "cancelled sessions stay visible but recede" (AppointmentChip,
- *    primitives.tsx) — and both fall under 3:1 on some surfaces. Neither is
- *    ever the only way to read the status: the chip's label text is always
- *    --text, and statusVar only colors a border and an aria-hidden glyph
- *    (WCAG 1.4.11 exempts decorative/inactive graphics from the 3:1 bar).
+ * Documented exception: --status-scheduled and --status-cancelled are
+ * deliberately muted — "cancelled sessions stay visible but recede"
+ * (AppointmentChip, primitives.tsx) — and both fall under 3:1 on some
+ * surfaces. Neither is ever the only way to read the status: the chip's
+ * label text is always --text, and statusVar only colors a border and an
+ * aria-hidden glyph (WCAG 1.4.11 exempts decorative/inactive graphics from
+ * the 3:1 bar).
  */
 it('text and UI-boundary tokens clear their contrast bar on every surface they sit on', () => {
   const theme = readFileSync('app/theme.css', 'utf8');
@@ -150,7 +154,6 @@ it('text and UI-boundary tokens clear their contrast bar on every surface they s
     return m[1];
   };
   const names = (css: string, re: RegExp) => [...css.matchAll(re)].flatMap((m) => (m[1] ? [m[1]] : []));
-  const NEVER_RENDERS = new Set(['--text-subtle on --surface-inset']);
   const DELIBERATELY_MUTED = new Set(['--status-scheduled', '--status-cancelled']);
 
   for (const [label, css] of [
@@ -165,12 +168,11 @@ it('text and UI-boundary tokens clear their contrast bar on every surface they s
       '--surface', '--surface-raised', '--surface-sunken', '--surface-inset',
     ]);
 
-    // A: prose text on every surface.
+    // A: prose text on every surface and every tinted background.
     for (const text of textTokens) {
-      for (const surface of surfaces) {
-        if (NEVER_RENDERS.has(`${text} on ${surface}`)) continue;
-        const r = ratio(value(css, text), value(css, surface));
-        expect(r, `${label}: ${text} on ${surface} is ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+      for (const bg of [...surfaces, ...softTokens]) {
+        const r = ratio(value(css, text), value(css, bg));
+        expect(r, `${label}: ${text} on ${bg} is ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
       }
     }
 

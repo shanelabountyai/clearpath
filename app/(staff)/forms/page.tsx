@@ -163,7 +163,7 @@ export default async function FormsPage({ searchParams }: { searchParams: Promis
                         />
                       ))}
                     </div>
-                    <select name="newFieldType" className="rounded-[var(--radius)] border px-2 py-1 text-body" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
+                    <select name="newFieldType" aria-label="Question type" className="rounded-[var(--radius)] border px-2 py-1 text-body" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
                       {['short_text', 'long_text', 'boolean', 'date'].map((t) => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </div>

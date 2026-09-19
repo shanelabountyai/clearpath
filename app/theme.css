@@ -39,7 +39,12 @@
 
   --text: #22201d;
   --text-muted: #5f5a53;
-  --text-subtle: #706b63;
+  /* Darkened again 2026-09-18 (the PRD 6 axe sweep): #706b63 cleared every
+     --surface* but not the `-soft` tinted backgrounds it also sits on in the
+     product (forms admin's template list on --surface-inset, the calendar's
+     "No room needed" caption on --accent-soft) - both real, both under
+     4.5:1. design-system.test.ts now checks every -soft token too. */
+  --text-subtle: #69655d;
 
   --accent: #2f5d50;
   --accent-hover: #24493f;
@@ -145,7 +150,7 @@
 
     --text: #ece9e4;
     --text-muted: #a8a49d;
-    --text-subtle: #8b8882;
+    --text-subtle: #928f8a;
 
     --accent: #7fb5a3;
     --accent-hover: #99c6b7;
