@@ -3,10 +3,16 @@
 **Portfolio artifacts (2026-09-21):** `docs/DEMO.md` added — a live-verified
 demo script (repo, root). The exec-brief write-up for a non-engineering
 reader is published at https://claude.ai/artifact/CK3xxxExfd2gCiG6YM7aMn
-("Clearpath in Brief"). LinkedIn drafts from this project's write-up are
-still outstanding — see the global CLAUDE.md's "definition of done" for what
-that needs. Live deployment: https://clinic.labintelligence.co. Repo (private):
-https://github.com/shanelabountyai/clearpath.
+("Clearpath in Brief"). LinkedIn drafts are done: the Lab Intelligence
+Ledger (https://claude.ai/artifact/Ai5xKScgT2sWtqXRQ1ZA8i) carries 16
+Clearpath posts (3 already posted), including 5 mined straight from the
+exec-brief's "Five decisions" section — the no-text-box reschedule button,
+the no-show fee's four checks, the screener's universal crisis footer, the
+departing-clinician alert bug (the hardest-bug pick), and client-side
+search — each tagged to a pillar and slotted with no adjacent-pillar
+repeat. All three definition-of-done extras (DEMO, exec-brief, LinkedIn)
+are now complete. Live deployment: https://clinic.labintelligence.co. Repo
+(private): https://github.com/shanelabountyai/clearpath.
 
 **PRD 6 (accessibility conformance) is built through Q4** (2026-09-19).
 Q1 (AA target) and Q5 (Shane's VoiceOver pass) were always his; Q2–Q4 are done:
