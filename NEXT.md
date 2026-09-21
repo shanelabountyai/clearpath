@@ -1,5 +1,13 @@
 # Next
 
+**Portfolio artifacts (2026-09-21):** `docs/DEMO.md` added — a live-verified
+demo script (repo, root). The exec-brief write-up for a non-engineering
+reader is published at https://claude.ai/artifact/CK3xxxExfd2gCiG6YM7aMn
+("Clearpath in Brief"). LinkedIn drafts from this project's write-up are
+still outstanding — see the global CLAUDE.md's "definition of done" for what
+that needs. Live deployment: https://clinic.labintelligence.co. Repo (private):
+https://github.com/shanelabountyai/clearpath.
+
 **PRD 6 (accessibility conformance) is built through Q4** (2026-09-19).
 Q1 (AA target) and Q5 (Shane's VoiceOver pass) were always his; Q2–Q4 are done:
 
