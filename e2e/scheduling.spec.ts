@@ -1,4 +1,4 @@
-import { actAs, expect, test, USERS } from './fixtures';
+import { actAs, expect, sql, test, USERS } from './fixtures';
 import { addDays, localDateOf, weekdayOf } from '../src/time';
 
 /**
@@ -33,6 +33,10 @@ test.describe('the calendar', () => {
   });
 
   test('the work lists surface an absence and its displaced clients', async ({ page }) => {
+    // The seed dates the leave from its own fixed day, so it slid into the past
+    // as the calendar moved on and the list stopped showing it. Re-date it from
+    // the database's today, as a sweep started on any day would want.
+    sql(`update "AvailabilityOverride" set "fromDate" = current_date + 14, "toDate" = current_date + 18 where reason = 'Annual leave'`);
     await actAs(page, USERS.frontDesk);
     await page.goto('/worklists');
     await expect(page.getByRole('heading', { name: 'Reschedules from clinician absence' })).toBeVisible();
