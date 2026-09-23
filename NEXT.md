@@ -45,7 +45,7 @@ axe on a page a hand grep missed), a worklists link inside prose with no
 non-color cue (now permanently underlined, not hover-only), and an unlabeled
 `<select>` on forms admin (now has `aria-label`).
 
-**Next item: Q5 — Shane does one VoiceOver pass (Safari, macOS) on the
+**Q5 SKIPPED by Shane (2026-09-23) — PRD 6 closed without it; recorded in WRITEUP decisions.** Original ask: Shane does one VoiceOver pass (Safari, macOS) on the
 intake form, the screener, and the enquiry form.** Findings go in WRITEUP;
 any defect gets fixed or ticketed. That's the last piece of PRD 6.
 
@@ -78,7 +78,7 @@ Source: `~/Projects/saas foundation/audit/clinic.md` (full scorecard K1–K14 an
 
 ### Status (2026-09-23)
 
-**SEC-01, SEC-02, SEC-03 are fixed** (banner instead of a nightly reseed for SEC-02; identity cookie left unsigned for SEC-03 — reasons in WRITEUP's decisions table). **Before the next production deploy set `DEMO_ACCESS_PASSWORD` and `CLEARPATH_SESSION_SECRET` in Vercel** — with the first unset the live site answers 503 to everything but the crons, and with the second unset break-glass throws. Both names are in `.env.example` (OPS-04 done for the password). Then verify live: `curl -I https://clinic.labintelligence.co/` gives 401 with `WWW-Authenticate`, and `/api/cron/reminders` without a bearer gives 401 with no `WWW-Authenticate`. Also fixed in passing: `scheduling.spec.ts`'s absence test had rotted (the seed dates the leave from a fixed 2026-09-01), now re-dated from the database's today. **SEC-05 and SEC-06 fixed 2026-09-23; SEC-04 deliberately closed as accepted plaintext (WRITEUP decisions table).** OPS-03 is covered by SEC-02's banner decision; OPS-05 done. Only the Vercel env vars above and Q5 (VoiceOver) remain.
+**SEC-01, SEC-02, SEC-03 are fixed** (banner instead of a nightly reseed for SEC-02; identity cookie left unsigned for SEC-03 — reasons in WRITEUP's decisions table). **Before the next production deploy set `DEMO_ACCESS_PASSWORD` and `CLEARPATH_SESSION_SECRET` in Vercel** — with the first unset the live site answers 503 to everything but the crons, and with the second unset break-glass throws. Both names are in `.env.example` (OPS-04 done for the password). Then verify live: `curl -I https://clinic.labintelligence.co/` gives 401 with `WWW-Authenticate`, and `/api/cron/reminders` without a bearer gives 401 with no `WWW-Authenticate`. Also fixed in passing: `scheduling.spec.ts`'s absence test had rotted (the seed dates the leave from a fixed 2026-09-01), now re-dated from the database's today. **SEC-05 and SEC-06 fixed 2026-09-23; SEC-04 deliberately closed as accepted plaintext (WRITEUP decisions table).** OPS-03 is covered by SEC-02's banner decision; OPS-05 done. Vercel env vars set and live gate verified 2026-09-23 (401 + WWW-Authenticate on `/`, cron 401 without). Q5 skipped. Nothing remains.
 
 ### Gaps
 

@@ -137,7 +137,7 @@ and SMS gets forwarded."
   the compliance, and it must never hold real client data.
 - **Accessibility conformance (PRD 6) is Q1–Q4 of 5 done.** Contrast, axe-core
   CI, and focus/error states are built and green; the one remaining item is
-  a manual VoiceOver pass on three forms (Q5) — not yet run as of this demo.
+  a manual VoiceOver pass on three forms (Q5) — skipped by decision (see WRITEUP).
 - **A few known gaps**, from `NEXT.md`: the browser back button isn't caught
   inside the app (PRD 2); an amendment form loses typed text on a failed
   save (§54).
