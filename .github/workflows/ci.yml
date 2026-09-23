@@ -71,6 +71,8 @@ jobs:
           PGDATABASE=clearpath_e2e
           CLEARPATH_BASE_URL=http://localhost:3700
           CLEARPATH_THROTTLE_SECRET=ci-only-not-a-real-secret
+          DEMO_ACCESS_PASSWORD=ci-only-not-a-real-password
+          CLEARPATH_SESSION_SECRET=ci-only-not-a-real-secret
           EOF
 
       - name: Typecheck

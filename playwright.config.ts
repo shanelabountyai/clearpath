@@ -17,6 +17,11 @@ export default defineConfig({
   reporter: process.env.CI ? 'list' : [['list']],
   use: {
     baseURL: `http://localhost:${PORT}`,
+    // The demo gate is on in the production build the sweep runs against.
+    // Playwright sends these only in answer to a Basic challenge.
+    httpCredentials: process.env.DEMO_ACCESS_PASSWORD
+      ? { username: 'demo', password: process.env.DEMO_ACCESS_PASSWORD }
+      : undefined,
     trace: 'retain-on-failure',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
