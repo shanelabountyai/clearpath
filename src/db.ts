@@ -1,5 +1,6 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from './generated/prisma/client';
+import { isLocalDatabaseUrl } from './db-guard';
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error('DATABASE_URL is not set');
@@ -10,7 +11,7 @@ if (!connectionString) throw new Error('DATABASE_URL is not set');
 // what `npm run db:seed` writes — and it has to say so out loud, because the
 // case worth catching is the silent one: a laptop run that reached a cloud
 // branch by accident. Same knob as prisma.config.ts, set in the same two places.
-if (!process.env.CLEARPATH_ALLOW_CLOUD_DB && /neon\.tech|rds\.amazonaws|supabase\.co|\.azure\./.test(connectionString)) {
+if (!process.env.CLEARPATH_ALLOW_CLOUD_DB && !isLocalDatabaseUrl(connectionString)) {
   throw new Error('Clearpath is local-Postgres only. Refusing a remote database.');
 }
 
