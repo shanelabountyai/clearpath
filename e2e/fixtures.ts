@@ -20,8 +20,17 @@ export const USERS = {
  * that one is truncated between tests, and a sweep that shares it is decided by
  * whichever suite ran last.
  */
+/**
+ * `PGTZ` pins the psql session to the practice's timezone. Without it a
+ * `timestamptz` cast to a date (`to_char`, `::date`, `current_date`) uses the
+ * laptop's zone, and disagrees with the app by whatever that offset is
+ * (src/time.ts PRACTICE_TZ).
+ */
 const query = (sql: string) =>
-  execFileSync('psql', [process.env.PGDATABASE ?? 'clearpath_e2e', '-tAc', sql], { encoding: 'utf8' }).trim();
+  execFileSync('psql', [process.env.PGDATABASE ?? 'clearpath_e2e', '-tAc', sql], {
+    encoding: 'utf8',
+    env: { ...process.env, PGTZ: 'America/New_York' },
+  }).trim();
 
 export const userId = (name: string) => query(`select id from "User" where name = '${name}'`);
 export const clientId = (code: string) => query(`select id from "Client" where code = '${code}'`);

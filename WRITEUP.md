@@ -4396,9 +4396,16 @@ clinician's choice. The fix keeps the text on the page instead:
 
 **What it deliberately does not do.** A closed tab, a crashed browser or a dead
 laptop still loses unsaved text. That is the price of creating no record the
-clinician did not choose. The browser's back button inside the app is not
-caught, because that needs a history guard entry. Amendment and later-thought
-forms are unchanged: they are short, and they fail the old way.
+clinician did not choose. A leftover guard history entry means the next Back
+after a save is one no-op step on the same URL.
+
+**Follow-up.** The back button is now caught: `useLeaveGuard`
+(`src/ui/leave-guard.ts`) pushes a sentinel history entry while there is
+unsaved text and asks on `popstate`, and `NoteEditor` uses it in place of its own
+listeners. The amendment and later-thought forms became `AmendForm`
+(`src/ui/amend-form.tsx`), on the same `keepingText` path, so a failed save keeps
+the text and leaving asks first. A clean save clears the box, since there is no
+server copy to compare with.
 
 ## 55. The click that could not be taken back
 

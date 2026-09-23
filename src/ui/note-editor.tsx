@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState, useEffect, useRef, useState } from 'react';
+import { useLeaveGuard } from './leave-guard';
 import { SAVE_FAILURE_TEXT, type NoteSaveState } from '../notes/save-failure';
 
 /**
@@ -41,29 +42,7 @@ export function NoteEditor({
     wasPending.current = pending;
   }, [pending, state]);
 
-  useEffect(() => {
-    if (!dirty) return;
-    const unload = (e: BeforeUnloadEvent) => e.preventDefault();
-    // In-app links never fire beforeunload, and the menu is the likeliest way
-    // out. Capture on the document runs before React's own listener, so a
-    // cancelled click never reaches Next's router.
-    // ponytail: the browser's back button inside the app is not caught; that
-    // needs a history guard entry, add it if back-navigation loses a note.
-    const click = (e: MouseEvent) => {
-      const link = (e.target as Element | null)?.closest?.('a[href]');
-      if (!link || link.getAttribute('target') === '_blank') return;
-      if (!window.confirm('This note has changes that are not saved. Leave anyway?')) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-    };
-    window.addEventListener('beforeunload', unload);
-    document.addEventListener('click', click, true);
-    return () => {
-      window.removeEventListener('beforeunload', unload);
-      document.removeEventListener('click', click, true);
-    };
-  }, [dirty]);
+  useLeaveGuard(dirty, 'This note has changes that are not saved. Leave anyway?');
 
   return (
     <form action={dispatch}>

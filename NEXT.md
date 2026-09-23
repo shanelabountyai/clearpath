@@ -49,7 +49,13 @@ non-color cue (now permanently underlined, not hover-only), and an unlabeled
 intake form, the screener, and the enquiry form.** Findings go in WRITEUP;
 any defect gets fixed or ticketed. That's the last piece of PRD 6.
 
-**Known gaps, unchanged since the last handoff:** e2e SQL that converts
+**Closed 2026-09-23:** the psql timezone mismatch (`PGTZ=America/New_York` in
+`e2e/fixtures.ts`), the back button, and the amendment forms (§54 follow-up).
+**Open:** `enquire.spec.ts` "JavaScript off" refusal fails on the baseline too
+(the alert never renders; the server log shows `Invalid Server Actions
+request`). Not caused by this work; diagnose separately.
+
+**Known gaps, as of the previous handoff (first three now closed):** e2e SQL that converts
 `startAt` to practice time disagrees with the app by the psql session's
 timezone (America/Chicago on this laptop) — check before any spec picks a
 slot by SQL time. PRD 2 does not catch the browser's back button inside the

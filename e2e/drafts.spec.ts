@@ -34,3 +34,40 @@ test('a save with nobody signed in keeps the text, and the retry lands it', asyn
   await expect(page.getByRole('status').filter({ hasText: 'Saved' })).toBeVisible();
   expect(sql(`select content from "ProcessNote" where id = '${note}'`)).toBe(text);
 });
+
+/** §54: the amendment form keeps its text through a failed save too. */
+test('an amendment with nobody signed in keeps the text', async ({ page }) => {
+  // A progress note, not a process note: departure-demo purges the only closed process note.
+  const note = sql(`select id from "ProgressNote" where status <> 'draft' order by id limit 1`);
+  const author = sql(`select "authorId" from "ProgressNote" where id = '${note}'`);
+  expect(note, 'the seed leaves a signed progress note to amend').toBeTruthy();
+  const text = `Amendment protection check ${Date.now()}`;
+
+  await page.context().addCookies([{ name: 'clearpath_user', value: author, url: 'http://localhost:3700' }]);
+  await page.goto(`/notes/${note}`);
+  await page.getByLabel('Amendment').fill(text);
+  await page.context().clearCookies();
+  await page.getByRole('button', { name: 'Add amendment' }).click();
+  await expect(page.locator('#amend-failure')).toContainText('nobody is signed in');
+  await expect(page.getByLabel('Amendment')).toHaveValue(text);
+});
+
+/** The browser's back button asks before it drops unsaved text; cancelling stays put. */
+test('back asks before leaving a note with unsaved text', async ({ page }) => {
+  const note = sql(
+    `select id from "ProcessNote" where "authorId" = '${userId(USERS.associate)}' and "closedAt" is null limit 1`,
+  );
+  await actAs(page, USERS.associate);
+  await page.goto('/calendar');
+  await page.goto(`/process-notes/${note}`);
+  await page.getByLabel('Note').fill(`Back check ${Date.now()}`);
+
+  page.once('dialog', (d) => d.dismiss());
+  await page.goBack();
+  await expect(page).toHaveURL(new RegExp(`/process-notes/${note}$`));
+  await expect(page.getByText('Unsaved changes')).toBeVisible();
+
+  page.once('dialog', (d) => d.accept());
+  await page.goBack();
+  await expect(page).toHaveURL(/\/calendar/);
+});

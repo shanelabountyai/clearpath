@@ -5,6 +5,7 @@ import { requireSession } from '../../../../src/session';
 import { localDateOf } from '../../../../src/time';
 import { Badge, Card, LockedPanel, PageHeader, TierBanner } from '../../../../src/ui/primitives';
 import { NoteEditor } from '../../../../src/ui/note-editor';
+import { AmendForm } from '../../../../src/ui/amend-form';
 import { amendMyProcessNote, saveProcessNoteText } from '../../notes/actions';
 import { Button } from '@/src/ui/primitives';
 
@@ -83,18 +84,10 @@ export default async function ProcessNotePage({ params }: { params: Promise<{ id
 
         {note.closedAt && (
           <Card>
-            <form action={amendMyProcessNote}>
-              <input type="hidden" name="noteId" value={note.id} />
-              <label htmlFor="amend" className="block font-semibold">Add a later thought</label>
-              <textarea
-                id="amend" name="content" rows={3} required
-                className="mt-2 w-full rounded-[var(--radius)] border p-2.5 font-serif text-lead"
-                style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
-              />
-              <button className="mt-2 rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium" style={{ borderColor: 'var(--border-strong)' }}>
-                Append
-              </button>
-            </form>
+            <AmendForm
+              noteId={note.id} action={amendMyProcessNote} label="Add a later thought" labelClassName="block font-semibold" submit="Append"
+              textareaClassName="mt-2 w-full rounded-[var(--radius)] border p-2.5 font-serif text-lead"
+            />
           </Card>
         )}
       </div>

@@ -7,6 +7,7 @@ import { Badge, Card, PageHeader, TierBanner } from '../../../../src/ui/primitiv
 import { BreakGlassPrompt } from '../../break-glass';
 import { NoteEditor } from '../../../../src/ui/note-editor';
 import { ConfirmButton } from '../../../../src/ui/confirm-button';
+import { AmendForm } from '../../../../src/ui/amend-form';
 import { amendNote, coSignNote, saveProgressNoteText } from '../actions';
 
 export const dynamic = 'force-dynamic';
@@ -108,18 +109,10 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
               <p className="mt-1 text-body text-muted">
                 The signed text stays exactly as signed. An amendment appends beneath it.
               </p>
-              <form action={amendNote} className="mt-2">
-                <input type="hidden" name="noteId" value={note.id} />
-                <label htmlFor="amend" className="sr-only">Amendment</label>
-                <textarea
-                  id="amend" name="content" rows={3} required
-                  className="w-full rounded-[var(--radius)] border p-2.5 font-serif text-lead"
-                  style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
-                />
-                <button className="mt-2 rounded-[var(--radius)] border px-3 py-1.5 text-body font-medium" style={{ borderColor: 'var(--border-strong)' }}>
-                  Add amendment
-                </button>
-              </form>
+              <AmendForm
+                noteId={note.id} action={amendNote} label="Amendment" labelClassName="sr-only" submit="Add amendment"
+                textareaClassName="w-full rounded-[var(--radius)] border p-2.5 font-serif text-lead"
+              />
             </Card>
           )}
         </div>

@@ -51,12 +51,11 @@ export async function coSignNote(formData: FormData) {
   if (formData.get('returnTo') === 'queue') redirect('/cosign');
 }
 
-export async function amendNote(formData: FormData) {
-  const { actor } = await requireSession();
-  const id = String(formData.get('noteId'));
-  const content = String(formData.get('content') ?? '').trim();
-  if (content) await amendProgressNote(actor, id, content);
-  revalidatePath(`/notes/${id}`);
+export async function amendNote(_: NoteSaveState, formData: FormData) {
+  return keepingText(formData, async (actor, id, content) => {
+    if (content.trim()) await amendProgressNote(actor, id, content.trim());
+    revalidatePath(`/notes/${id}`);
+  });
 }
 
 /**
@@ -71,10 +70,9 @@ export async function saveProcessNoteText(_: NoteSaveState, formData: FormData) 
   });
 }
 
-export async function amendMyProcessNote(formData: FormData) {
-  const { actor } = await requireSession();
-  const id = String(formData.get('noteId'));
-  const content = String(formData.get('content') ?? '').trim();
-  if (content) await amendProcessNote(actor, id, content);
-  revalidatePath(`/process-notes/${id}`);
+export async function amendMyProcessNote(_: NoteSaveState, formData: FormData) {
+  return keepingText(formData, async (actor, id, content) => {
+    if (content.trim()) await amendProcessNote(actor, id, content.trim());
+    revalidatePath(`/process-notes/${id}`);
+  });
 }
