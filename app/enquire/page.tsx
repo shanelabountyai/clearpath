@@ -65,7 +65,14 @@ export default async function EnquirePage({
   return (
     <Shell practice={practice} language={language}>
       <h1 className="text-xl font-semibold">{ui.enquireHeading}</h1>
-      <p className="mt-2 text-subhead leading-relaxed text-muted">{ui.enquireIntro}</p>
+      <p
+        role="note"
+        className="mt-3 rounded-[var(--radius)] border px-3 py-3 text-body font-semibold leading-relaxed"
+        style={{ borderColor: 'var(--border)' }}
+      >
+        {ui.enquireDemoNotice}
+      </p>
+      <p className="mt-3 text-subhead leading-relaxed text-muted">{ui.enquireIntro}</p>
 
       {/*
         Above the fields, not below them and not in a footnote. It is the only

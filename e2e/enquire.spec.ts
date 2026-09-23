@@ -58,6 +58,13 @@ test.describe('a stranger enquires', () => {
     await expect(page.getByText(/do not write anything about your health/i)).toBeVisible();
   });
 
+  test('says it is a demo, in both languages, before anything is typed', async ({ page }) => {
+    await page.goto('/enquire');
+    await expect(page.getByRole('note').filter({ hasText: /demo with invented people/i })).toBeVisible();
+    await page.goto('/enquire?lang=es');
+    await expect(page.getByRole('note').filter({ hasText: /demostración con personas inventadas/i })).toBeVisible();
+  });
+
   test('reads the form in Spanish without a record to say so', async ({ page }) => {
     await page.goto('/enquire?lang=es');
     await expect(page.getByRole('heading', { name: 'Pregúntenos por una cita' })).toBeVisible();

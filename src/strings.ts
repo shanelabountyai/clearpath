@@ -129,6 +129,12 @@ interface Strings {
    * explains why to somebody who came here to write one.
    */
   enquireNoDetail: string;
+  /**
+   * SEC-02: this is a public demo on a database anyone past the gate can read.
+   * Printed above the notice about health details, because it is the sentence
+   * that stops a real person's name and number arriving here at all.
+   */
+  enquireDemoNotice: string;
   enquireFirstName: string;
   enquireLastName: string;
   enquireEmail: string;
@@ -216,6 +222,8 @@ export const UI: Record<Language, Strings> = {
     enquireHeading: 'Ask us about an appointment',
     enquireIntro:
       'Leave your name and how to reach you, and someone will call you back. We are usually able to answer within two working days.',
+    enquireDemoNotice:
+      'This is a demo with invented people. Do not enter real details — anything you type here can be seen by other visitors.',
     enquireNoDetail:
       'Please do not write anything about your health here. This form is only so we know how to reach you — we will ask everything else when we speak, in private.',
     enquireFirstName: 'First name',
@@ -314,6 +322,8 @@ export const UI: Record<Language, Strings> = {
     enquireHeading: 'Pregúntenos por una cita',
     enquireIntro:
       'Déjenos su nombre y cómo comunicarnos con usted, y le devolveremos la llamada. Solemos responder dentro de dos días hábiles.',
+    enquireDemoNotice:
+      'Esto es una demostración con personas inventadas. No escriba datos reales — cualquier cosa que escriba aquí puede ser vista por otros visitantes.',
     enquireNoDetail:
       'Por favor no escriba nada sobre su salud aquí. Este formulario es solo para saber cómo comunicarnos con usted — lo demás se lo preguntaremos cuando hablemos, en privado.',
     enquireFirstName: 'Nombre',
