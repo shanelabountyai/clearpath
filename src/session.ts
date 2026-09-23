@@ -2,6 +2,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { requiresSecondFactor, type Actor } from './auth/permissions';
 import { prisma } from './db';
+import { verifyBreakGlass } from './break-glass-cookie';
 
 /**
  * The dev-mode user switcher.
@@ -38,13 +39,18 @@ export async function currentSession(): Promise<Session | null> {
   const id = jar.get(USER_COOKIE)?.value;
   if (!id) return null;
 
-  const user = await prisma.user.findUnique({
-    where: { id },
-    select: { id: true, name: true, role: true, supervisorId: true, active: true },
+  // The picker's own rule, not just its own list: a hand-set cookie naming a
+  // client-role user or a deactivated one is nobody (SEC-03).
+  const user = await prisma.user.findFirst({
+    where: { id, ...SWITCHABLE },
+    select: { id: true, name: true, role: true, supervisorId: true },
   });
-  if (!user || !user.active) return null;
+  if (!user) return null;
 
-  const reason = jar.get(BREAK_GLASS_COOKIE)?.value;
+  // A break-glass cookie only counts if `startBreakGlass` signed it for this
+  // user; a hand-set one has no audit row behind it.
+  const rawReason = jar.get(BREAK_GLASS_COOKIE)?.value;
+  const reason = rawReason ? verifyBreakGlass(user.id, rawReason) : null;
   return {
     user,
     secondFactor: { required: requiresSecondFactor(user.role), satisfied: false },
@@ -64,9 +70,14 @@ export async function requireSession(): Promise<Session> {
   return session;
 }
 
+const SWITCHABLE = { active: true, role: { not: 'client' } } as const;
+
+export const isSwitchable = async (id: string) =>
+  id !== '' && (await prisma.user.count({ where: { id, ...SWITCHABLE } })) === 1;
+
 export const switchableUsers = () =>
   prisma.user.findMany({
-    where: { active: true, role: { not: 'client' } },
+    where: SWITCHABLE,
     select: {
       id: true, name: true, role: true, supervisor: { select: { name: true } },
       // P0-9's second notice effect: somebody leaving is marked, with the day.

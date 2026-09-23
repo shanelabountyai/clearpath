@@ -2,12 +2,15 @@
 
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
-import { BREAK_GLASS_COOKIE, USER_COOKIE, requireSession } from '../src/session';
+import { BREAK_GLASS_COOKIE, USER_COOKIE, isSwitchable, requireSession } from '../src/session';
+import { signBreakGlass } from '../src/break-glass-cookie';
 import { auditEvent } from '../src/auth/guard';
 
 /** Dev-mode identity switch. The seam where real authentication would go. */
 export async function switchUser(formData: FormData) {
   const id = String(formData.get('userId') ?? '');
+  // Only who the picker offers — not a client, not a deactivated user (SEC-03).
+  if (!(await isSwitchable(id))) return;
   const jar = await cookies();
   jar.set(USER_COOKIE, id, { httpOnly: true, sameSite: 'lax', path: '/' });
   // Switching identity always drops break-glass. Carrying an emergency
@@ -29,7 +32,7 @@ export async function startBreakGlass(formData: FormData) {
 
   const { actor } = await requireSession();
   const jar = await cookies();
-  jar.set(BREAK_GLASS_COOKIE, reason, { httpOnly: true, sameSite: 'lax', path: '/' });
+  jar.set(BREAK_GLASS_COOKIE, signBreakGlass(actor.id, reason), { httpOnly: true, sameSite: 'lax', path: '/' });
 
   await auditEvent({ ...actor, breakGlass: { reason } }, 'read', 'client', { rule: 'breakGlass' });
   revalidatePath('/', 'layout');
