@@ -30,7 +30,7 @@ export default defineConfig({
     // yesterday's code.
     command: dev ? 'npm run dev:e2e' : 'npm run e2e:server',
     port: PORT,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     // A cold production build exceeds the 120s default on its own.
     timeout: 300_000,
     stdout: 'pipe',
