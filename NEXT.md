@@ -1,5 +1,7 @@
 # Next
 
+**PROJECT CLOSED (2026-09-23).** No open items. Nothing to pick up; the history below is kept for reference.
+
 **Portfolio artifacts (2026-09-21):** `docs/DEMO.md` added — a live-verified
 demo script (repo, root). The exec-brief write-up for a non-engineering
 reader is published at https://claude.ai/artifact/CK3xxxExfd2gCiG6YM7aMn
