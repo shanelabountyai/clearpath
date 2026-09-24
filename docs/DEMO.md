@@ -138,8 +138,6 @@ and SMS gets forwarded."
 - **Accessibility conformance (PRD 6) is Q1–Q4 of 5 done.** Contrast, axe-core
   CI, and focus/error states are built and green; the one remaining item is
   a manual VoiceOver pass on three forms (Q5) — skipped by decision (see WRITEUP).
-- **One known gap**, from `NEXT.md`: the no-JavaScript enquiry refusal e2e
-  spec fails (it fails on the commit before too; cause not yet diagnosed).
 
 ---
 

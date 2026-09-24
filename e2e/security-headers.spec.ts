@@ -8,7 +8,7 @@ test.describe('security headers', () => {
       expect(h['x-frame-options']).toBe('DENY');
       expect(h['content-security-policy']).toContain("frame-ancestors 'none'");
       expect(h['x-content-type-options']).toBe('nosniff');
-      expect(h['referrer-policy']).toBe('no-referrer');
+      expect(h['referrer-policy']).toBe('same-origin');
       expect(h['x-powered-by']).toBeUndefined();
     });
   }

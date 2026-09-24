@@ -15,7 +15,10 @@ const config: NextConfig = {
           { key: 'X-Frame-Options', value: 'DENY' },
           { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
-          { key: 'Referrer-Policy', value: 'no-referrer' },
+          // same-origin, not no-referrer: no-referrer makes the browser send
+          // `Origin: null` on a same-origin form POST, and Next then refuses the
+          // Server Action, which breaks the no-JavaScript enquiry form.
+          { key: 'Referrer-Policy', value: 'same-origin' },
         ],
       },
       { source: '/f/:path*', headers: [{ key: 'Cache-Control', value: 'no-store' }] },

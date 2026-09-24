@@ -51,9 +51,9 @@ any defect gets fixed or ticketed. That's the last piece of PRD 6.
 
 **Closed 2026-09-23:** the psql timezone mismatch (`PGTZ=America/New_York` in
 `e2e/fixtures.ts`), the back button, and the amendment forms (§54 follow-up).
-**Open:** `enquire.spec.ts` "JavaScript off" refusal fails on the baseline too
-(the alert never renders; the server log shows `Invalid Server Actions
-request`). Not caused by this work; diagnose separately.
+**Also fixed:** the no-JS enquiry refusal — SEC-05's `Referrer-Policy: no-referrer`
+made browsers send `Origin: null` on same-origin form POSTs, so Next refused the
+Server Action (a real bug for public no-JS users). Now `same-origin`.
 
 **Known gaps, as of the previous handoff (first three now closed):** e2e SQL that converts
 `startAt` to practice time disagrees with the app by the psql session's
