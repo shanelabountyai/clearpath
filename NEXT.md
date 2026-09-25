@@ -2,6 +2,48 @@
 
 **PROJECT CLOSED (2026-09-23).** No open items. Nothing to pick up; the history below is kept for reference.
 
+**Cleanup landed 2026-09-25 (a2e07eb) — K11 and OPS-04, no new features.**
+
+- **K11**: `src/env.ts` is a zod schema over every variable the running app
+  reads, parsed once by `instrumentation.ts` before the server takes a
+  request. Blanks pass as unset (a `.env` copied from `.env.example` seeds
+  exactly those, and every consumer tests truthiness), so the only things it
+  rejects are wrong in every environment: a non-postgres or unparseable
+  `DATABASE_URL`, a secret with surrounding whitespace, a `CLEARPATH_BASE_URL`
+  that is neither a host nor an http(s) URL, a bad `NODE_ENV` or `PORT`.
+  The lazy production throws in `clientUrl`, `throttleSecret` and
+  `signBreakGlass` are untouched and still the only check for those three —
+  "is this production" is not decidable at boot, because `db:seed:prod` is a
+  local `tsx` run with no `NODE_ENV` at all.
+  Node runtime only, behind a dynamic import: the edge runtime's `process.env`
+  holds only build-time inlined values, so validating `DATABASE_URL` there
+  would fail a correctly-configured deployment. Verified zod lands in one node
+  chunk and not in `middleware.js`.
+  Verified against a real bad boot (`DEMO_ACCESS_PASSWORD="hunter2 "`, prod
+  build): Next names the variable in the log and answers 500 to every route
+  including `/api/cron/*`; the good env boots and 401s at the demo gate as
+  before. `src/env.test.ts` also greps `src/`, `app/`, `proxy.ts` and
+  `instrumentation.ts` for a `process.env` read the schema does not own —
+  same shape as the `permissions.test.ts` and `notes/service.test.ts` greps —
+  and the grep was confirmed to fail on a planted variable.
+- **OPS-04**: already satisfied — `DEMO_ACCESS_PASSWORD`,
+  `CLEARPATH_SESSION_SECRET` and the `/api/cron/nonresponse` mention were all
+  present. Added only a closing note naming the three variables the schema
+  owns that the file deliberately does not set (`CLEARPATH_ALLOW_CLOUD_DB`,
+  `PORT`, `VERCEL_PROJECT_PRODUCTION_URL`).
+- **Gate**: typecheck clean, unit sweep 40 files / 3293 tests passed, 0 failed,
+  0 skipped (`EXIT=0`), production build `EXIT=0`. No lint step — the repo
+  still has no ESLint config or `lint` script, unchanged from the PRD 6 note
+  below.
+- **Deployed.** The push auto-deployed to production (the ignoreCommand sees
+  real code, so it builds). This is the one change that can take the live site
+  down by being *correct*: the schema now runs against Vercel's environment at
+  boot, and a production secret stored with a trailing newline would 500 every
+  route. Verified after the deploy went Ready — clinic.labintelligence.co
+  still answers 401 at the demo gate, not 500, so production's variables are
+  clean. If a future variable is added in the Vercel dashboard, paste it
+  without a trailing newline or the next boot will refuse it by name.
+
 **Portfolio artifacts (2026-09-21):** `docs/DEMO.md` added — a live-verified
 demo script (repo, root). The exec-brief write-up for a non-engineering
 reader is published at https://claude.ai/artifact/CK3xxxExfd2gCiG6YM7aMn
