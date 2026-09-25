@@ -39,10 +39,12 @@
   real code, so it builds). This is the one change that can take the live site
   down by being *correct*: the schema now runs against Vercel's environment at
   boot, and a production secret stored with a trailing newline would 500 every
-  route. Verified after the deploy went Ready — clinic.labintelligence.co
-  still answers 401 at the demo gate, not 500, so production's variables are
-  clean. If a future variable is added in the Vercel dashboard, paste it
-  without a trailing newline or the next boot will refuse it by name.
+  route. Verified after the deploy went Ready (38s) —
+  clinic.labintelligence.co still answers 401 at the demo gate, and all three
+  `/api/cron/*` paths answer 401 from `cronAuthorized` rather than 500, so
+  production's variables are clean under the new schema. If a future
+  variable is added in the Vercel dashboard, paste it without a trailing
+  newline or the next boot will refuse it by name.
 
 **Portfolio artifacts (2026-09-21):** `docs/DEMO.md` added — a live-verified
 demo script (repo, root). The exec-brief write-up for a non-engineering
