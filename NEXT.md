@@ -46,7 +46,7 @@
   variable is added in the Vercel dashboard, paste it without a trailing
   newline or the next boot will refuse it by name.
 
-**K4 authorization fixes landed 2026-09-26 (SHA below) — SEC-07..SEC-11, from the saas-foundation K4 sweep (`~/Projects/saas foundation/audit/K4-SWEEP-2026-09-26.md`, section clinic).**
+**K4 authorization fixes landed 2026-09-26 (8c060a5) — SEC-07..SEC-11, from the saas-foundation K4 sweep (`~/Projects/saas foundation/audit/K4-SWEEP-2026-09-26.md`, section clinic).**
 
 - **SEC-07 (HIGH, K4-C1)**: a clinician could book any client with themselves
   (`appointment.create: 'always'`) and `createProgressNote` then took
