@@ -37,6 +37,13 @@ test.describe('the calendar', () => {
     // as the calendar moved on and the list stopped showing it. Re-date it from
     // the database's today, as a sweep started on any day would want.
     sql(`update "AvailabilityOverride" set "fromDate" = current_date + 14, "toDate" = current_date + 18 where reason = 'Annual leave'`);
+    // The seed's sessions end about five weeks after its fixed day too, so move that
+    // clinician's last one into the window; an absence displacing nobody is not listed.
+    sql(`update "Appointment" set "startAt" = "startAt" + ((current_date + 15) - "startAt"::date) * interval '1 day',
+           "endAt" = "endAt" + ((current_date + 15) - "startAt"::date) * interval '1 day'
+         where id = (select id from "Appointment" where status in ('scheduled', 'confirmed')
+           and "clinicianId" = (select "userId" from "AvailabilityOverride" where reason = 'Annual leave' limit 1)
+           order by "startAt" desc limit 1)`);
     await actAs(page, USERS.frontDesk);
     await page.goto('/worklists');
     await expect(page.getByRole('heading', { name: 'Reschedules from clinician absence' })).toBeVisible();
