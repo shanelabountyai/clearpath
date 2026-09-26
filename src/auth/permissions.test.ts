@@ -133,7 +133,7 @@ const ALLOWED: Record<Role, Set<string>> = {
 const UNCONDITIONAL: Record<Role, Set<string>> = {
   front_desk: ALLOWED.front_desk,
   therapist: spec({
-    appointment: 'read create update',
+    // No `appointment`: a session booked with you or a client you carry (K4-C1).
     form_template: 'read',
     form_request: 'read create',
     inquiry: 'read create',
@@ -144,7 +144,6 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
     referrer: 'read create',
   }),
   associate: spec({
-    appointment: 'read create update',
     form_template: 'read',
     form_request: 'read create',
     inquiry: 'read create',
@@ -152,7 +151,6 @@ const UNCONDITIONAL: Record<Role, Set<string>> = {
     referrer: 'read create',
   }),
   supervisor: spec({
-    appointment: 'read create update',
     form_template: 'read',
     form_request: 'read create',
     inquiry: 'read create',
@@ -198,7 +196,7 @@ const coveredBy = (id: string): Pick<Target, 'coverage' | 'authorSupervisorCover
 const insider = (role: Role): [Actor, Target] => [
   { id: ME, role, breakGlass: { reason: 'client in crisis' } },
   {
-    authorId: ME, authorSupervisorId: ME, clinicianId: ME, recipientId: ME,
+    authorId: ME, authorSupervisorId: ME, clinicianId: ME, sessionClinicianId: ME, recipientId: ME,
     treatingSupervisorId: ME, ownerClientId: ME, subjectUserId: ME, ...coveredBy(ME),
   },
 ];
@@ -206,7 +204,7 @@ const insider = (role: Role): [Actor, Target] => [
 const oversight = (role: Role): [Actor, Target] => [
   { id: ME, role },
   {
-    authorId: OTHER, authorSupervisorId: ME, clinicianId: OTHER, recipientId: OTHER,
+    authorId: OTHER, authorSupervisorId: ME, clinicianId: OTHER, sessionClinicianId: OTHER, recipientId: OTHER,
     treatingSupervisorId: ME, ownerClientId: OTHER, subjectUserId: OTHER, ...coveredBy(OTHER),
   },
 ];
@@ -214,7 +212,7 @@ const oversight = (role: Role): [Actor, Target] => [
 const stranger = (role: Role): [Actor, Target] => [
   { id: ME, role },
   {
-    authorId: OTHER, authorSupervisorId: OTHER, clinicianId: OTHER, recipientId: OTHER,
+    authorId: OTHER, authorSupervisorId: OTHER, clinicianId: OTHER, sessionClinicianId: OTHER, recipientId: OTHER,
     treatingSupervisorId: OTHER, ownerClientId: OTHER, subjectUserId: OTHER, ...coveredBy(OTHER),
   },
 ];
@@ -1173,5 +1171,17 @@ describe('the inquiry stage', () => {
         expect(can(actor, 'discard', resource, target).allowed, `${role}/${resource}`).toBe(false);
       }
     }
+  });
+});
+
+describe('appointments: the session reaches the row, never the booking (K4-C1)', () => {
+  const booked: Target = { clinicianId: OTHER, sessionClinicianId: ME };
+  it.each(['therapist', 'associate', 'supervisor'] as const)('%s', (role) => {
+    const me = { id: ME, role };
+    expect(can(me, 'read', 'appointment', booked).allowed).toBe(true);
+    expect(can(me, 'update', 'appointment', booked).allowed).toBe(true);
+    // Naming yourself as the clinician proves nothing about the client.
+    expect(can(me, 'create', 'appointment', booked).allowed).toBe(false);
+    expect(can(me, 'create', 'appointment', { clinicianId: ME }).allowed).toBe(true);
   });
 });

@@ -18,11 +18,16 @@ export const dynamic = 'force-dynamic';
 
 async function WorkListsPage() {
   const { actor } = await requireSession();
+  // Confirmation calls, reschedules and replies are the practice's whole
+  // calendar, so they are front desk's and the manager's; a clinician's
+  // appointment read needs a session or a client to decide on (K4-C1). Asked
+  // rather than caught, so a clinician's visit leaves no denial per list.
+  const desk = may({ actor, action: 'read', resource: 'appointment' });
   const [unconfirmed, continuity, staleAsks, absences] = await Promise.all([
-    unconfirmedSoon(actor),
+    desk ? unconfirmedSoon(actor) : [],
     continuityQueue(actor),
     staleInquiries(actor),
-    prisma.availabilityOverride.findMany({
+    !desk ? [] : prisma.availabilityOverride.findMany({
       where: { kind: 'unavailable', toDate: { gte: systemClock.now() } },
       select: { userId: true, fromDate: true, toDate: true, reason: true, user: { select: { name: true } } },
       orderBy: { fromDate: 'asc' },
@@ -40,10 +45,10 @@ async function WorkListsPage() {
     })),
   );
 
-  const openings = await waitlistOpenings(actor).catch(() => []);
-  const rescheduleAsks = await openRescheduleRequests(actor).catch(() => []);
-  const wroteBack = await openInboundReplies(actor).catch(() => []);
-  const calledBack = await recentlyHandledInboundReplies(actor).catch(() => []);
+  const openings = desk ? await waitlistOpenings(actor).catch(() => []) : [];
+  const rescheduleAsks = desk ? await openRescheduleRequests(actor).catch(() => []) : [];
+  const wroteBack = desk ? await openInboundReplies(actor).catch(() => []) : [];
+  const calledBack = desk ? await recentlyHandledInboundReplies(actor).catch(() => []) : [];
   // Asked rather than caught: a clinician's `self` cell would refuse this read on
   // every visit, and a denial on the record per page load buries the real ones.
   const leaving = may({ actor, action: 'read', resource: 'departure' }) ? await departureWorklist(actor) : [];
@@ -128,6 +133,7 @@ async function WorkListsPage() {
             </Card>
           </section>
         )}
+        {desk && (
         <section>
           <h2 className="mb-2 text-subhead font-semibold">Nobody has said they are coming</h2>
           <p className="mb-3 max-w-prose text-body text-muted">
@@ -170,6 +176,7 @@ async function WorkListsPage() {
             </Card>
           )}
         </section>
+        )}
 
         {leaving.length > 0 && (
           <section>
@@ -261,6 +268,7 @@ async function WorkListsPage() {
           </section>
         )}
 
+        {desk && (
         <section>
           <h2 className="mb-2 text-subhead font-semibold">Clients who wrote back — call them</h2>
           <p className="mb-3 max-w-prose text-body text-muted">
@@ -331,7 +339,9 @@ async function WorkListsPage() {
             </details>
           )}
         </section>
+        )}
 
+        {desk && (
         <section>
           <h2 className="mb-2 text-subhead font-semibold">Clients asking to move a session</h2>
           <p className="mb-3 max-w-prose text-body text-muted">
@@ -386,7 +396,9 @@ async function WorkListsPage() {
             </Card>
           )}
         </section>
+        )}
 
+        {desk && (
         <section>
           <h2 className="mb-2 text-subhead font-semibold">Reschedules from clinician absence</h2>
           <p className="mb-3 max-w-prose text-body text-muted">
@@ -428,6 +440,7 @@ async function WorkListsPage() {
               ))
           )}
         </section>
+        )}
 
         <section>
           <h2 className="mb-2 text-subhead font-semibold">Calls nobody has closed out</h2>
@@ -497,6 +510,7 @@ async function WorkListsPage() {
           )}
         </section>
 
+        {desk && (
         <section>
           <h2 className="mb-2 text-subhead font-semibold">Hours going spare — and who wants one</h2>
           <p className="mb-3 max-w-prose text-body text-muted">
@@ -583,6 +597,7 @@ async function WorkListsPage() {
             </div>
           )}
         </section>
+        )}
 
       </div>
     </>

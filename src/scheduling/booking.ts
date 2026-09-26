@@ -4,6 +4,8 @@ import { prisma, type Tx } from '../db';
 import { systemClock, type Clock } from '../clock';
 import { Conflict, NotFound } from '../errors';
 import { addDays, localDateOf, zonedToUtc, type LocalDate } from '../time';
+import { clientTarget } from '../clients/repository';
+import { appointmentTarget } from './calendar';
 import { freeSlots, pickRoom, workingWindows, type Span } from './availability';
 import { DURATION_MINUTES, occurrenceKey, planOccurrences, type AppointmentType } from './recurrence';
 
@@ -217,9 +219,11 @@ export async function bookAppointment(actor: Actor, input: BookInput) {
     candidates.push(...ordered.map((r) => r.id));
   }
 
+  // Decided on the client, never on `input.clinicianId`: the booker chooses that (K4-C1).
+  const target = await clientTarget(input.clientId);
   const result = await claimRoom(candidates, (roomId) =>
     guarded(
-      { actor, action: 'create', resource: 'appointment', clientId: input.clientId },
+      { actor, action: 'create', resource: 'appointment', clientId: input.clientId, target },
       async (tx) => {
         await slotLock(tx, input.date, input.startMinute);
         return tx.appointment.create({
@@ -246,6 +250,23 @@ export async function bookAppointment(actor: Actor, input: BookInput) {
       ? 'That clinician is already booked at this time'
       : 'No therapy room is free at this time',
     result.conflict === 'clinician' ? 'clinician_busy' : 'no_room',
+  );
+}
+
+/**
+ * Record a standing pattern. Guarded as the booking it is, on the client: a
+ * series row is every future week's appointment waiting to be materialised.
+ */
+export async function createSeries(
+  actor: Actor,
+  input: {
+    clientId: string; clinicianId: string; type: AppointmentType; modality: Modality;
+    frequency: 'weekly' | 'biweekly'; weekday: number; startMinute: number; startDate: Date;
+  },
+) {
+  return guarded(
+    { actor, action: 'create', resource: 'appointment', clientId: input.clientId, target: await clientTarget(input.clientId) },
+    (tx) => tx.appointmentSeries.create({ data: input }),
   );
 }
 
@@ -321,7 +342,7 @@ export async function materialiseSeries(
   const withdrawn = plan.obsolete.map((o) => o.id);
   if (withdrawn.length) {
     await guarded(
-      { actor, action: 'update', resource: 'appointment', clientId: series.clientId },
+      { actor, action: 'update', resource: 'appointment', clientId: series.clientId, target: await appointmentTarget(series) },
       (tx) =>
         tx.appointment.updateMany({
           where: { id: { in: withdrawn } },
@@ -356,9 +377,10 @@ export async function rescheduleAppointment(
     : [];
   const candidates: (string | null)[] = modality === 'in_person' ? rooms.map((r) => r.id) : [null];
 
+  const target = await appointmentTarget(current);
   const result = await claimRoom(candidates, (roomId) =>
     guarded(
-      { actor, action: 'update', resource: 'appointment', resourceId: appointmentId, clientId: current.clientId },
+      { actor, action: 'update', resource: 'appointment', resourceId: appointmentId, clientId: current.clientId, target },
       async (tx) => {
         await slotLock(tx, to.date, to.startMinute);
         return tx.appointment.update({

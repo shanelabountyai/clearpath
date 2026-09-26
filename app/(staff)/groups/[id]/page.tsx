@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getGroupSession } from '../../../../src/scheduling/groups';
-import { NotFound } from '../../../../src/errors';
+import { Forbidden, NotFound } from '../../../../src/errors';
+import { BreakGlassPrompt } from '../../break-glass';
 import { requireSession } from '../../../../src/session';
 import { minutesToHHMM, utcToZoned } from '../../../../src/time';
 import { Card, PageHeader, StatusChip, TierBanner } from '../../../../src/ui/primitives';
@@ -12,13 +13,14 @@ export const dynamic = 'force-dynamic';
 
 export default async function GroupSessionPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  await requireSession();
+  const { actor } = await requireSession();
 
   let group;
   try {
-    group = await getGroupSession(id);
+    group = await getGroupSession(actor, id);
   } catch (e) {
     if (e instanceof NotFound) notFound();
+    if (e instanceof Forbidden) return <BreakGlassPrompt resource="this group" />;
     throw e;
   }
 

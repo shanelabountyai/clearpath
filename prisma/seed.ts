@@ -1221,10 +1221,11 @@ async function main() {
       startAt: zonedToUtc(addDays(realToday, -4), 18 * 60), endAt: zonedToUtc(addDays(realToday, -4), 18 * 60 + 50),
     },
   });
+  // On that day's clock: covering is what lets Kai write it, and the leave has ended since.
   const coveredNote = await createProgressNote(actor(kai), {
     appointmentId: coveredSession.id,
     content: 'Covering session brought forward after the screener. No immediate risk; handing back to Anders on his return.',
-  });
+  }, { clock: fixedClock(zonedToUtc(addDays(realToday, -4), 18 * 60 + 55)) });
   // Signed before the leave ended: a coverer's note left in draft is a second
   // story, and Hana's leave already tells it.
   await signProgressNote(actor(kai), coveredNote.id, { clock: fixedClock(zonedToUtc(addDays(realToday, -4), 19 * 60)) });

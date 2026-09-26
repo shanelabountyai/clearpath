@@ -17,7 +17,7 @@ export interface NavItem {
 export function navFor(actor: Actor): NavItem[] {
   const items: [boolean, NavItem][] = [
     [
-      may({ actor, action: 'read', resource: 'appointment' }),
+      may({ actor, action: 'read', resource: 'appointment', target: { sessionClinicianId: actor.id } }),
       { href: '/calendar', label: 'Calendar', glyph: '◷' },
     ],
     [
@@ -25,11 +25,11 @@ export function navFor(actor: Actor): NavItem[] {
       { href: '/clients', label: 'Clients', glyph: '◫' },
     ],
     [
-      may({ actor, action: 'create', resource: 'appointment' }),
+      may({ actor, action: 'create', resource: 'appointment', target: { clinicianId: actor.id } }),
       { href: '/book', label: 'Book a session', glyph: '＋' },
     ],
     [
-      may({ actor, action: 'create', resource: 'appointment' }),
+      may({ actor, action: 'create', resource: 'appointment', target: { clinicianId: actor.id } }),
       { href: '/book/group', label: 'Book a group', glyph: '⁂' },
     ],
     [
@@ -44,7 +44,7 @@ export function navFor(actor: Actor): NavItem[] {
       { href: '/cosign', label: 'Co-sign queue', glyph: '✍' },
     ],
     [
-      may({ actor, action: 'read', resource: 'appointment' }),
+      may({ actor, action: 'read', resource: 'appointment', target: { sessionClinicianId: actor.id } }),
       { href: '/worklists', label: 'Work lists', glyph: '☰' },
     ],
     [

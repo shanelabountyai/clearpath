@@ -1,6 +1,6 @@
 # Next
 
-**PROJECT CLOSED (2026-09-23).** No open items. Nothing to pick up; the history below is kept for reference.
+**PROJECT CLOSED (2026-09-23).** One open product question from the K4 fixes (group facilitator notes, below). Nothing to pick up; the history below is kept for reference.
 
 **Cleanup landed 2026-09-25 (a2e07eb) — K11 and OPS-04, no new features.**
 
@@ -45,6 +45,45 @@
   production's variables are clean under the new schema. If a future
   variable is added in the Vercel dashboard, paste it without a trailing
   newline or the next boot will refuse it by name.
+
+**K4 authorization fixes landed 2026-09-26 (SHA below) — SEC-07..SEC-11, from the saas-foundation K4 sweep (`~/Projects/saas foundation/audit/K4-SWEEP-2026-09-26.md`, section clinic).**
+
+- **SEC-07 (HIGH, K4-C1)**: a clinician could book any client with themselves
+  (`appointment.create: 'always'`) and `createProgressNote` then took
+  `appt.clinicianId` as the treating relationship — a signed note in another
+  clinician's client's record. Now the note decides on `clientTarget` alone
+  (treating or covering), and `appointment.create` for therapist / associate /
+  supervisor is `treatingCoveringOrSupervising` on the client, for one-offs,
+  series and groups. Front desk and the practice manager still book anyone.
+- **SEC-08 (MED)**: appointment `read`/`update` for clinicians is the new
+  `sessionOrCaseload` rule — the clinician the session is booked with
+  (`Target.sessionClinicianId`), or the client's treating / supervising /
+  covering clinician. `getAppointment`, `setStatus`/`cancelAppointment`,
+  `rescheduleAppointment` and series withdrawal resolve it via
+  `appointmentTarget` in `scheduling/calendar.ts`.
+- **SEC-09 (MED)**: `getGroupSession(actor, id)` is a `guardedAll` read, one
+  audited row per attendee; the auditor and unrelated clinicians are refused.
+- **SEC-10 (MED)**: the whole-practice work lists (`unconfirmedSoon`,
+  `vacationImpact`, `openInboundReplies`, `openRescheduleRequests`, and the
+  reply/reschedule resolves behind them) have no target, so they now deny
+  clinicians; the work-lists page asks `may` first and hides those sections
+  rather than logging a denial per visit.
+- **SEC-11 (LOW)**: the `/book` action's series row is written by
+  `createSeries`, inside `guarded()`.
+- **Open, a product question**: a group facilitator who does not treat an
+  attendee can no longer start that attendee's progress note — only the
+  treating clinician or their coverer can. No seed or spec did this. Decide
+  whether facilitation should be its own grant before anyone relies on it.
+- **Not fixed (LOWs from the same sweep)**: forms issue/read for any client
+  (`forms/service.ts:106-107,285-298`); notes/clients/appointments pages
+  telling not-found from forbidden.
+- **Gate**: typecheck clean; unit sweep 41 files / 3304 tests passed (was
+  3293), `EXIT=0`; `build:e2e` `EXIT=0`; `db:seed:e2e` `EXIT=0` (the seed's
+  covered note now runs on its own day's clock — `createProgressNote` takes an
+  optional clock like `signProgressNote`). Both HIGH halves mutation-checked:
+  restoring `clinicianId: appt.clinicianId` or `create: 'always'` turns
+  `scheduling/caseload.test.ts` (and the matrix spec) red. e2e not run — no
+  spec touched, and no spec or seed has a clinician booking.
 
 **Portfolio artifacts (2026-09-21):** `docs/DEMO.md` added — a live-verified
 demo script (repo, root). The exec-brief write-up for a non-engineering
@@ -142,6 +181,11 @@ Source: `~/Projects/saas foundation/audit/clinic.md` (full scorecard K1–K14 an
 | SEC-04 | LOW | **Capability tokens are stored in plaintext.** `FormRequest.token` and `PortalLink.token` (`prisma/schema.prisma:666,870`) are compared by equality. A DB read yields working client links, which open forms, draft answers and appointment views. There is also no `Referrer-Policy` on `/f` and `/p`. | Store `sha256(token)` and look up by hash. Add `Referrer-Policy: no-referrer` and `Cache-Control: no-store` headers for `/f/*` and `/p/*`. | Unit test: the stored row contains no substring of the issued token. A header test on `/p/<token>`. |
 | SEC-05 | LOW | **No security headers.** No frame-ancestors or X-Frame-Options (staff screens can be framed for clickjacking), no nosniff, no Referrer-Policy. `x-powered-by` is exposed. Verified in `next.config.ts:3-7` and live headers. | `headers()` with XFO DENY / `frame-ancestors 'none'`, nosniff, Referrer-Policy. Set `poweredByHeader: false`. | e2e header assertions on `/`, `/enquire` and `/p/x`. |
 | SEC-06 | LOW | **The test-DB guard is a denylist.** It blocks only `neon.tech`, `rds.amazonaws`, `supabase.co` and `.azure.` (`src/db.ts:13`, `prisma.config.ts:17`, which also lacks `.azure.`). Any other remote host (Render, Railway, a raw IP) passes. | Allow `localhost`, `127.0.0.1` and `::1`, and require `CLEARPATH_ALLOW_CLOUD_DB` for everything else. | Unit test: a `postgres://…@db.render.com/x` URL throws without the flag. |
+| SEC-07 | HIGH | K4-C1: clinician books any client with themselves, then writes a note on the strength of `appt.clinicianId`. | Note decided on the client; `appointment.create` caseload-only for clinicians. | `scheduling/caseload.test.ts` |
+| SEC-08 | MED | By-id appointment read and status/cancel/reschedule not caseload-scoped. | `sessionOrCaseload` + `appointmentTarget`. | same |
+| SEC-09 | MED | Group roster behind `requireSession` only; no actor, permission or audit row. | `guardedAll` per attendee. | same |
+| SEC-10 | MED | Work lists show the whole practice's names and phones to clinicians. | Denied for clinicians; page gates on `may`. | same |
+| SEC-11 | LOW | `/book` series row written outside `guarded()`. | `createSeries`. | same |
 
 I found no raw-SQL injection sinks or `dangerouslySetInnerHTML` in `app/` or `src/` (tagged `$executeRaw` only). The authorization design is careful. The problem is almost entirely that authentication and gating are absent on a live URL.
 

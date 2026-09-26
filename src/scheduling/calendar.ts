@@ -1,9 +1,18 @@
 import { guarded } from '../auth/guard';
-import { ownCaseloadOnly, type Actor } from '../auth/permissions';
+import { ownCaseloadOnly, type Actor, type Target } from '../auth/permissions';
+import { clientTarget } from '../clients/repository';
 import { prisma } from '../db';
 import { NotFound } from '../errors';
 import { addDays, localDateOf, zonedToUtc, type LocalDate } from '../time';
 import { workingWindows, type Override } from './availability';
+
+/**
+ * Who an appointment answers to: its client's record, and the clinician it is
+ * booked with (K4-C1). Every by-id appointment read and write resolves this.
+ */
+export async function appointmentTarget(appt: { clientId: string; clinicianId: string }): Promise<Target> {
+  return { ...(await clientTarget(appt.clientId)), sessionClinicianId: appt.clinicianId };
+}
 
 /**
  * The day, as front desk reads it: who is in which room at what time.
@@ -16,7 +25,9 @@ export async function daySchedule(actor: Actor, date: LocalDate) {
   const mineOnly = ownCaseloadOnly(actor);
 
   return guarded(
-    { actor, action: 'read', resource: 'appointment' },
+    // A clinician's day is the sessions booked with them, which the query below
+    // filters to; the target states that, it does not widen it.
+    { actor, action: 'read', resource: 'appointment', ...(mineOnly && { target: { sessionClinicianId: actor.id } }) },
     async (tx) => {
       const [appointments, rooms, clinicians, overrides] = await Promise.all([
         tx.appointment.findMany({
@@ -82,11 +93,11 @@ export type DaySession = DaySchedule['sessions'][number];
 
 /** One session in full, with everything the detail screen needs. */
 export async function getAppointment(actor: Actor, id: string) {
-  const row = await prisma.appointment.findUnique({ where: { id }, select: { clientId: true } });
+  const row = await prisma.appointment.findUnique({ where: { id }, select: { clientId: true, clinicianId: true } });
   if (!row) throw new NotFound('Appointment');
 
   return guarded(
-    { actor, action: 'read', resource: 'appointment', resourceId: id, clientId: row.clientId },
+    { actor, action: 'read', resource: 'appointment', resourceId: id, clientId: row.clientId, target: await appointmentTarget(row) },
     (tx) =>
       tx.appointment.findUniqueOrThrow({
         where: { id },

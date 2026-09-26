@@ -139,7 +139,7 @@ describe('attendance and notes are per attendee', () => {
 
     await setStatus(actor(desk), absent!.id, 'no_show', { clock: fixedClock('2026-09-01T20:00:00Z') });
 
-    const after = await getGroupSession(group.id);
+    const after = await getGroupSession(actor(desk), group.id);
     expect(after.appointments.find((a) => a.id === absent!.id)!.status).toBe('no_show');
     expect(present.every((p) => after.appointments.find((a) => a.id === p.id)!.status === 'scheduled')).toBe(true);
   });
@@ -212,7 +212,7 @@ describe('leaving and ending a group', () => {
 
     const row = await prisma.appointment.findUniqueOrThrow({ where: { id: moved!.id } });
     expect(row.groupSessionId).toBeNull();
-    expect((await getGroupSession(group.id)).appointments).toHaveLength(2);
+    expect((await getGroupSession(actor(desk), group.id)).appointments).toHaveLength(2);
   });
 
   it('will not let two rescheduled attendees land on each other', async () => {

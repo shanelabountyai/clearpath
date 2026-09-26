@@ -41,7 +41,8 @@ export default async function AppointmentPage({
   const next = TRANSITIONS[appt.status as Status];
   const canWriteNote = may({
     actor, action: 'create', resource: 'progress_note',
-    target: { ...(await clientTarget(appt.clientId)), clinicianId: appt.clinicianId },
+    // The client's record decides, not who the session was booked with (K4-C1).
+    target: await clientTarget(appt.clientId),
   });
   // Front desk sees the fee and the reason it applies; only the practice
   // manager sees a way to reverse it. The matrix decides, here as everywhere.

@@ -4,6 +4,7 @@ import { systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
 import { clientTarget } from '../clients/repository';
 import { Conflict, NotFound } from '../errors';
+import { appointmentTarget } from './calendar';
 import type { Confirmation } from './confirmation';
 
 /** A category the practice reports on, never free text on a money reversal. */
@@ -111,9 +112,9 @@ export async function setStatus(
       actor, action: 'update', resource: 'appointment',
       resourceId: appointmentId, clientId: appt.clientId,
       ...(opts.auditReason ? { reason: opts.auditReason } : {}),
-      // Whose row this is. Staff roles decide on `always` and ignore it; it is
-      // what lets the token door reach one appointment and no other.
-      target: { ownerClientId: appt.clientId },
+      // Whose row this is: the token door reaches one appointment and no other,
+      // and a clinician only their own sessions and caseload (K4-C1).
+      target: { ownerClientId: appt.clientId, ...(await appointmentTarget(appt)) },
     },
     (tx) => tx.appointment.update({ where: { id: appointmentId }, data }),
   );

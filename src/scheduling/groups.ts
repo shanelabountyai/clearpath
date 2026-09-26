@@ -4,7 +4,9 @@ import { prisma } from '../db';
 import { systemClock, type Clock } from '../clock';
 import { Conflict, NotFound } from '../errors';
 import { zonedToUtc, type LocalDate } from '../time';
+import { clientTarget } from '../clients/repository';
 import { claimRoom, slotLock } from './booking';
+import { appointmentTarget } from './calendar';
 import { cancelAppointment } from './lifecycle';
 import { DURATION_MINUTES, type AppointmentType } from './recurrence';
 
@@ -68,11 +70,13 @@ export async function bookGroupSession(actor: Actor, input: GroupBooking) {
     candidates.push(...ordered.map((r) => r.id));
   }
 
+  // Each attendee decided on their own record, never on the facilitator chosen here (K4-C1).
+  const targets = await Promise.all(clientIds.map((id) => clientTarget(id)));
   const result = await claimRoom(candidates, (roomId) =>
     guardedAll(
       // One audit row per client record written to, not one per booking.
-      clientIds.map((clientId) => ({
-        actor, action: 'create' as const, resource: 'appointment' as const, clientId,
+      clientIds.map((clientId, i) => ({
+        actor, action: 'create' as const, resource: 'appointment' as const, clientId, target: targets[i],
       })),
       async (tx) => {
         await slotLock(tx, input.date, input.startMinute);
@@ -104,25 +108,44 @@ export async function bookGroupSession(actor: Actor, input: GroupBooking) {
     );
   }
 
-  return getGroupSession(result.booked);
+  return getGroupSession(actor, result.booked);
 }
 
-/** The group and its attendees. Roster and status only — no clinical content. */
-export async function getGroupSession(groupSessionId: string) {
-  const group = await prisma.groupSession.findUnique({
-    where: { id: groupSessionId },
-    include: {
-      appointments: {
-        select: {
-          id: true, clientId: true, status: true, startAt: true, endAt: true, roomId: true,
-          client: { select: { code: true, firstName: true, lastName: true } },
-        },
-        orderBy: { createdAt: 'asc' },
-      },
-    },
+/**
+ * The group and its attendees. Roster and status only — no clinical content,
+ * but names are still a read of each attendee's appointment: one guarded,
+ * audited read per attendee, and any one refusal refuses the roster.
+ */
+export async function getGroupSession(actor: Actor, groupSessionId: string) {
+  const members = await prisma.appointment.findMany({
+    where: { groupSessionId },
+    select: { id: true, clientId: true, clinicianId: true },
   });
-  if (!group) throw new NotFound('GroupSession');
-  return group;
+  if (!members.length) throw new NotFound('GroupSession');
+  const targets = await Promise.all(members.map((m) => appointmentTarget(m)));
+
+  return guardedAll(
+    members.map((m, i) => ({
+      actor, action: 'read' as const, resource: 'appointment' as const,
+      resourceId: m.id, clientId: m.clientId, target: targets[i],
+    })),
+    async (tx) => {
+      const group = await tx.groupSession.findUnique({
+        where: { id: groupSessionId },
+        include: {
+          appointments: {
+            select: {
+              id: true, clientId: true, status: true, startAt: true, endAt: true, roomId: true,
+              client: { select: { code: true, firstName: true, lastName: true } },
+            },
+            orderBy: { createdAt: 'asc' },
+          },
+        },
+      });
+      if (!group) throw new NotFound('GroupSession');
+      return group;
+    },
+  );
 }
 
 /**

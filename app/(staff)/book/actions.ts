@@ -1,10 +1,9 @@
 'use server';
 
 import { redirect } from 'next/navigation';
-import { prisma } from '../../../src/db';
 import { Conflict } from '../../../src/errors';
 import { requireSession } from '../../../src/session';
-import { bookAppointment, materialiseSeries } from '../../../src/scheduling/booking';
+import { bookAppointment, createSeries, materialiseSeries } from '../../../src/scheduling/booking';
 import { queueToClient } from '../../../src/messaging/outbox';
 import { weekdayOf, zonedToUtc } from '../../../src/time';
 import type { AppointmentType } from '../../../src/scheduling/recurrence';
@@ -44,14 +43,12 @@ export async function book(formData: FormData) {
       redirect(`/appointments/${appt.id}`);
     }
 
-    const series = await prisma.appointmentSeries.create({
-      data: {
-        clientId, clinicianId, type, modality,
-        frequency: recurrence === 'biweekly' ? 'biweekly' : 'weekly',
-        weekday: weekdayOf(date),
-        startMinute,
-        startDate: zonedToUtc(date, 12 * 60),
-      },
+    const series = await createSeries(actor, {
+      clientId, clinicianId, type, modality,
+      frequency: recurrence === 'biweekly' ? 'biweekly' : 'weekly',
+      weekday: weekdayOf(date),
+      startMinute,
+      startDate: zonedToUtc(date, 12 * 60),
     });
     const run = await materialiseSeries(actor, series.id, { from: date });
     back({

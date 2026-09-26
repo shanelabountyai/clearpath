@@ -145,6 +145,13 @@ export interface Target {
   authorSupervisorId?: string;
   /** Treating clinician of the client this resource belongs to. */
   clinicianId?: string;
+  /**
+   * The clinician an appointment is booked with. Not the treating clinician:
+   * a group's facilitator or a coverer can run a session for somebody else's
+   * client. It reaches that one appointment and nothing in the record around
+   * it, and it never decides `create` — whoever books chooses it (K4-C1).
+   */
+  sessionClinicianId?: string;
   /** The single person a private notification is addressed to. */
   recipientId?: string;
   /** Supervisor of the treating clinician, at read time. */
@@ -238,6 +245,9 @@ const coversAuthorSupervisor = (a: Actor, t: Target): boolean =>
 const coversTreatingSupervisor = (a: Actor, t: Target): boolean =>
   a.role === 'supervisor' && onCover(a, t.treatingSupervisorCoverage, t.today);
 
+const runsSession = (a: Actor, t: Target): boolean =>
+  t.sessionClinicianId !== undefined && a.id === t.sessionClinicianId;
+
 const RULES = {
   never: () => false,
   always: () => true,
@@ -317,6 +327,14 @@ const RULES = {
   treatingCoveringOrSupervising: (a: Actor, t: Target) =>
     treats(a, t) || supervisesTreating(a, t) || covers(a, t) || coversTreatingSupervisor(a, t),
   /**
+   * An appointment: the clinician it is booked with, or anybody
+   * `treatingCoveringOrSupervising` names on its client (K4-C1). Read and
+   * update only — booking is decided on the client alone, because the booker
+   * picks the session's clinician and would otherwise grant themselves.
+   */
+  sessionOrCaseload: (a: Actor, t: Target) =>
+    runsSession(a, t) || treats(a, t) || supervisesTreating(a, t) || covers(a, t) || coversTreatingSupervisor(a, t),
+  /**
    * The actor is the person this row is about.
    *
    * Narrower than `recipient`, which is about delivery: this one says the row
@@ -353,7 +371,10 @@ const CLINICIAN: RoleMatrix = {
   // caseload stays with the clinician who comes back to it.
   client: { read: 'treatingCoveringOrSupervising', update: 'treatingOrSupervising' },
   fee: { read: 'treatingOrSupervising' },
-  appointment: { read: 'always', create: 'always', update: 'always' },
+  // Your own sessions and your caseload's, never the whole practice's (K4-C1).
+  // Booking is caseload-only: an appointment names its clinician, and a
+  // clinician free to book anybody with themselves could make any client theirs.
+  appointment: { read: 'sessionOrCaseload', create: 'treatingCoveringOrSupervising', update: 'sessionOrCaseload' },
   attendance_history: { read: 'treatingOrSupervising' },
   progress_note: {
     // Widened from `authorOrSupervisor` by D-04: the clinician who carries the

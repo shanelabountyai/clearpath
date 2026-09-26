@@ -78,18 +78,21 @@ async function progressContext(noteId: string, clock: Clock = systemClock) {
 export async function createProgressNote(
   actor: Actor,
   input: { appointmentId: string; content: string },
+  opts: { clock?: Clock } = {},
 ) {
   const appt = await prisma.appointment.findUnique({
     where: { id: input.appointmentId },
-    select: { clientId: true, clinicianId: true },
+    select: { clientId: true },
   });
   if (!appt) throw new NotFound('Appointment');
 
   return guarded(
     {
       actor, action: 'create', resource: 'progress_note', clientId: appt.clientId,
-      // The session's clinician writes it down; so does the client's coverer, holding it (D-16).
-      target: { ...(await clientTarget(appt.clientId)), clinicianId: appt.clinicianId },
+      // The client's treating clinician writes it down; so does their coverer,
+      // holding it (D-16). Decided on the client, never on `appt.clinicianId`:
+      // whoever booked the session chose that, so it proves nothing (K4-C1).
+      target: await clientTarget(appt.clientId, opts.clock),
     },
     (tx) =>
       tx.progressNote.create({
