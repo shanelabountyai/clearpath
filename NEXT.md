@@ -1,6 +1,6 @@
 # Next
 
-**REOPENED 2026-09-26 for review fixes (Shane chose scope: all P1/High/Med, #1-9).** Five review agents ran (PHI, authz/audit, domain, test quality, cost). Cost review is DONE (crons now daily, restore note in WRITEUP). **Unblocked:** the D-32 group-leader change is committed (SHA pending). Confirm `git status` is clean (`next-env.d.ts` flips when `next dev` runs; not anyone's work), then start. One test sweep at a time; use Opus (money, audit, state machine). Failing test first for each.
+**REOPENED 2026-09-26 for review fixes (Shane chose scope: all P1/High/Med, #1-9).** Five review agents ran (PHI, authz/audit, domain, test quality, cost). Cost review is DONE (crons now daily, restore note in WRITEUP). **Unblocked:** the D-32 group-leader change is committed (f35252c). Confirm `git status` is clean (`next-env.d.ts` flips when `next dev` runs; not anyone's work), then start. One test sweep at a time; use Opus (money, audit, state machine). Failing test first for each.
 
 | # | Sev | Fix |
 |---|---|---|
@@ -88,7 +88,7 @@ Cost baseline 2026-09-26: Neon 29.9 active-h/23d; Vercel $1.86 effective/$0.80 b
   rather than logging a denial per visit.
 - **SEC-11 (LOW)**: the `/book` action's series row is written by
   `createSeries`, inside `guarded()`.
-- **Closed 2026-09-26 as D-32 (SHA pending)**: a group's leader may start the
+- **Closed 2026-09-26 as D-32 (f35252c)**: a group's leader may start the
   progress note for that group session's attendees, and only those
   (`Target.groupLeaderId`, `treatingCoveringOrLeading`). The group-booking path
   needed guarding: a supervisor or coverer could book a client they do not
