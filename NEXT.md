@@ -1,7 +1,25 @@
 # Next
 
-**PROJECT CLOSED (2026-09-23).** One open product question from the K4 fixes (group facilitator notes, below). Nothing to pick up; the history below is kept for reference.
+**REOPENED 2026-09-26 for review fixes (Shane chose scope: all P1/High/Med, #1-9).** Five review agents ran (PHI, authz/audit, domain, test quality, cost). Cost review is DONE (crons now daily, restore note in WRITEUP). **Blocked on:** another session's uncommitted D-32 group-leader change (permissions.ts, notes/service.ts, groups.ts, caseload.test.ts, appointments/[id]/page.tsx). Wait for it to be committed, confirm `git status` is clean, then start. One test sweep at a time; use Opus (money, audit, state machine). Failing test first for each.
 
+| # | Sev | Fix |
+|---|---|---|
+| 1 | P1 | `TRUNCATE` bypasses audit trigger (`migrations/20260901221103_init` :543; `src/test/harness.ts:17` `resetDb`; `prisma/seed.ts:57`; `db:seed:prod`). Add BEFORE TRUNCATE statement trigger; `resetDb` refuses non-local DB and disables the trigger only in its own local transaction; rethink prod reseed. New migration, apply to prod manually (db:migrate:prod). |
+| 2 | P1 | Break-glass free-text reason lands in audit log/CSV/cookie (`app/actions.ts:28-37`, `src/auth/guard.ts:48-50`, `src/reports/audit.ts:61-64`, `src/break-glass-cookie.ts:27`). Use a fixed validated code. Also write the audit row before setting the cookie, and add issued-at expiry to the signed cookie. |
+| 3 | P1 | `openForm`/`saveDraft` (`src/forms/service.ts:136-177`) have no audit row; wrap in transaction with `auditEvent`. Also audit invalid/expired token attempts (portal `liveLink`, forms) like `public-inquiry.ts:162`; route `openPortal`, `requestReschedule`, `submitForm` through `guarded`. |
+| 4 | High | `localDateOf()` on `@db.Date` columns is a day early in NY: `booking.ts:165,290,301-302`, `calendar.ts:67`, `worklists/page.tsx:42-43`. Add `dbDateOf()` in `time.ts` (as `coverage.ts:20` does with `toISOString().slice(0,10)`). |
+| 5 | High | `cancelGroupSession` (`groups.ts:177`) charges every attendee the late fee and is not transactional. Practice-initiated cancel = `cancelled`, no fee, open statuses only, one transaction. |
+| 6 | Med | `setStatus` (`lifecycle.ts:58`) / `advanceStatus` (`appointments/actions.ts:14`) accept caller-chosen `cancelled`/`late_cancelled`; reject unless from `cancelAppointment`. |
+| 7 | Med | Check-then-write races in `lifecycle.ts:77-119`, `waiveFee` :198-219, no-show sweep `nonresponse.ts:112`. Use `updateMany({where:{id,status:from}})` in the guarded tx; Conflict on count 0. |
+| 8 | Med | State-machine bypasses: `booking.ts:347`, `departure.ts:855` (cancels `arrived`/`in_session`), `rescheduleAppointment` `booking.ts:360` moves completed/no_show. |
+| 9 | Med | Guard tests: `permissions.test.ts:857-874` (`==`, `!=`, switch/case, includes), `notes/service.test.ts:317-322` (aliasing, raw SQL, nested include; authorId must be in `where`), `e2e/denials.spec.ts` (status<500 only), `accessibility.spec.ts` skips on no token, tautology `permissions.test.ts:225`, `resolves.toBeTruthy()` in caseload/portal/clients tests. |
+
+Also from the reviews (P2/low, not in chosen scope; log as known gaps or fix opportunistically): process-note `note_closed`/`still_open` thrown before `guarded` (`notes/service.ts:441,486`) and a JS author check at :494; `forms/service.ts:97` puts `client.language` in an error message; recurrence includes today (`recurrence.ts:119`); DST-Sunday minute arithmetic (`booking.ts:121`, `calendar.ts:61`); no-show allowed before start; `Math.round(Number(raw)*100)` in `clients/actions.ts:16`; `updateClient` treatingClinicianId doesn't reroute alerts; retries:1 in CI; missing tests for PHI-in-logs, bare `new Date()` ban, scattered `status =`, alert routing. Confirm D-32 (booker chooses group leader, front desk can book any client into any clinician's group) is recorded as a deliberate decision.
+
+Cost baseline 2026-09-26: Neon 29.9 active-h/23d; Vercel $1.86 effective/$0.80 billed.
+
+---
+## History (prior handoff)
 **Cleanup landed 2026-09-25 (a2e07eb) — K11 and OPS-04, no new features.**
 
 - **K11**: `src/env.ts` is a zod schema over every variable the running app
