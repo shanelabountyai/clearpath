@@ -11,7 +11,7 @@ import { Badge, Card, CONFIRMATION_META, Field, PageHeader, STATUS_META, StatusC
 import { BreakGlassPrompt } from '../../break-glass';
 import { advanceStatus, cancelSession, moveSession, startProgressNote, waiveSessionFee } from '../actions';
 import { systemClock } from '@/src/clock';
-import { clientTarget } from '@/src/clients/repository';
+import { progressNoteTarget } from '@/src/notes/service';
 import { ConfirmButton } from '@/src/ui/confirm-button';
 
 export const dynamic = 'force-dynamic';
@@ -41,8 +41,8 @@ export default async function AppointmentPage({
   const next = TRANSITIONS[appt.status as Status];
   const canWriteNote = may({
     actor, action: 'create', resource: 'progress_note',
-    // The client's record decides, not who the session was booked with (K4-C1).
-    target: await clientTarget(appt.clientId),
+    // The client's record decides, or leading this group session (K4-C1, D-32).
+    target: await progressNoteTarget(appt),
   });
   // Front desk sees the fee and the reason it applies; only the practice
   // manager sees a way to reverse it. The matrix decides, here as everywhere.

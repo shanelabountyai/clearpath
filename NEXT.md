@@ -1,6 +1,6 @@
 # Next
 
-**REOPENED 2026-09-26 for review fixes (Shane chose scope: all P1/High/Med, #1-9).** Five review agents ran (PHI, authz/audit, domain, test quality, cost). Cost review is DONE (crons now daily, restore note in WRITEUP). **Blocked on:** another session's uncommitted D-32 group-leader change (permissions.ts, notes/service.ts, groups.ts, caseload.test.ts, appointments/[id]/page.tsx). Wait for it to be committed, confirm `git status` is clean, then start. One test sweep at a time; use Opus (money, audit, state machine). Failing test first for each.
+**REOPENED 2026-09-26 for review fixes (Shane chose scope: all P1/High/Med, #1-9).** Five review agents ran (PHI, authz/audit, domain, test quality, cost). Cost review is DONE (crons now daily, restore note in WRITEUP). **Unblocked:** the D-32 group-leader change is committed (SHA pending). Confirm `git status` is clean (`next-env.d.ts` flips when `next dev` runs; not anyone's work), then start. One test sweep at a time; use Opus (money, audit, state machine). Failing test first for each.
 
 | # | Sev | Fix |
 |---|---|---|
@@ -14,7 +14,7 @@
 | 8 | Med | State-machine bypasses: `booking.ts:347`, `departure.ts:855` (cancels `arrived`/`in_session`), `rescheduleAppointment` `booking.ts:360` moves completed/no_show. |
 | 9 | Med | Guard tests: `permissions.test.ts:857-874` (`==`, `!=`, switch/case, includes), `notes/service.test.ts:317-322` (aliasing, raw SQL, nested include; authorId must be in `where`), `e2e/denials.spec.ts` (status<500 only), `accessibility.spec.ts` skips on no token, tautology `permissions.test.ts:225`, `resolves.toBeTruthy()` in caseload/portal/clients tests. |
 
-Also from the reviews (P2/low, not in chosen scope; log as known gaps or fix opportunistically): process-note `note_closed`/`still_open` thrown before `guarded` (`notes/service.ts:441,486`) and a JS author check at :494; `forms/service.ts:97` puts `client.language` in an error message; recurrence includes today (`recurrence.ts:119`); DST-Sunday minute arithmetic (`booking.ts:121`, `calendar.ts:61`); no-show allowed before start; `Math.round(Number(raw)*100)` in `clients/actions.ts:16`; `updateClient` treatingClinicianId doesn't reroute alerts; retries:1 in CI; missing tests for PHI-in-logs, bare `new Date()` ban, scattered `status =`, alert routing. Confirm D-32 (booker chooses group leader, front desk can book any client into any clinician's group) is recorded as a deliberate decision.
+Also from the reviews (P2/low, not in chosen scope; log as known gaps or fix opportunistically): process-note `note_closed`/`still_open` thrown before `guarded` (`notes/service.ts:441,486`) and a JS author check at :494; `forms/service.ts:97` puts `client.language` in an error message; recurrence includes today (`recurrence.ts:119`); DST-Sunday minute arithmetic (`booking.ts:121`, `calendar.ts:61`); no-show allowed before start; `Math.round(Number(raw)*100)` in `clients/actions.ts:16`; `updateClient` treatingClinicianId doesn't reroute alerts; retries:1 in CI; missing tests for PHI-in-logs, bare `new Date()` ban, scattered `status =`, alert routing. D-32 (booker chooses group leader; front desk and the practice manager can book any client into any clinician's group, which grants that leader the session's note) is recorded as a deliberate decision in WRITEUP's decisions log.
 
 Cost baseline 2026-09-26: Neon 29.9 active-h/23d; Vercel $1.86 effective/$0.80 billed.
 
@@ -88,10 +88,17 @@ Cost baseline 2026-09-26: Neon 29.9 active-h/23d; Vercel $1.86 effective/$0.80 b
   rather than logging a denial per visit.
 - **SEC-11 (LOW)**: the `/book` action's series row is written by
   `createSeries`, inside `guarded()`.
-- **Open, a product question**: a group facilitator who does not treat an
-  attendee can no longer start that attendee's progress note — only the
-  treating clinician or their coverer can. No seed or spec did this. Decide
-  whether facilitation should be its own grant before anyone relies on it.
+- **Closed 2026-09-26 as D-32 (SHA pending)**: a group's leader may start the
+  progress note for that group session's attendees, and only those
+  (`Target.groupLeaderId`, `treatingCoveringOrLeading`). The group-booking path
+  needed guarding: a supervisor or coverer could book a client they do not
+  treat into a group they lead and grant themselves the note, so clinicians'
+  `appointment.create` is now `caseloadBooking` (a group led by anyone but the
+  client's own clinician is the treating clinician's, or front desk's, to
+  book). Unit sweep 41 files / 3311 tests, `EXIT=0`. Mutation-checked four
+  ways: leader set on every appointment (the K4-C1 individual-session test
+  goes red), leader id ignored, booking cell reverted, leader not passed at
+  booking — each turns a test red. No e2e spec touched.
 - **Not fixed (LOWs from the same sweep)**: forms issue/read for any client
   (`forms/service.ts:106-107,285-298`); notes/clients/appointments pages
   telling not-found from forbidden.

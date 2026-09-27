@@ -71,7 +71,12 @@ export async function bookGroupSession(actor: Actor, input: GroupBooking) {
   }
 
   // Each attendee decided on their own record, never on the facilitator chosen here (K4-C1).
-  const targets = await Promise.all(clientIds.map((id) => clientTarget(id)));
+  // The leader travels too: leading grants the session's note (D-32), so a
+  // group led by anyone but the client's own clinician is the treating
+  // clinician's (or front desk's) to book, never the leader's own reach.
+  const targets = await Promise.all(
+    clientIds.map(async (id) => ({ ...(await clientTarget(id)), groupLeaderId: input.clinicianId })),
+  );
   const result = await claimRoom(candidates, (roomId) =>
     guardedAll(
       // One audit row per client record written to, not one per booking.

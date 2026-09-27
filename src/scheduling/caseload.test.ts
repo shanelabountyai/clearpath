@@ -80,6 +80,48 @@ describe("a progress note is decided on the client, not the session's clinician 
   });
 });
 
+describe('a group leader writes up the session they led, for its attendees only (D-32)', () => {
+  const rowOf = (groupSessionId: string, clientId: string) =>
+    prisma.appointment.findFirstOrThrow({ where: { groupSessionId, clientId } });
+
+  it("lets A start the note for B's client on a group A leads", async () => {
+    const group = await bookGroupSession(actor(desk), {
+      clinicianId: a.id, clientIds: [bsClient.id], date: TUESDAY, startMinute: 600,
+    });
+    const row = await rowOf(group.id, bsClient.id);
+    await expect(createProgressNote(actor(a), { appointmentId: row.id, content: 'x' }))
+      .resolves.toMatchObject({ appointmentId: row.id, clientId: bsClient.id, authorId: a.id });
+  });
+
+  it("refuses A a note for an attendee of somebody else's group", async () => {
+    await bookGroupSession(actor(desk), { clinicianId: a.id, clientIds: [bsClient.id], date: TUESDAY, startMinute: 600 });
+    const c = await makeUser('therapist');
+    const csClient = await makeClient(c.id);
+    const other = await bookGroupSession(actor(desk), {
+      clinicianId: c.id, clientIds: [csClient.id], date: TUESDAY, startMinute: 720,
+    });
+    const row = await rowOf(other.id, csClient.id);
+    await expect(createProgressNote(actor(a), { appointmentId: row.id, content: 'x' }))
+      .rejects.toBeInstanceOf(Forbidden);
+    expect(await prisma.progressNote.count()).toBe(0);
+  });
+
+  it('refuses a supervisor booking a supervisee\'s client into a group they lead; the treating clinician may', async () => {
+    const sup = await makeUser('supervisor');
+    const sv = await makeUser('therapist', { supervisorId: sup.id });
+    const svClient = await makeClient(sv.id);
+    await expect(bookGroupSession(actor(sup), {
+      clinicianId: sup.id, clientIds: [svClient.id], date: TUESDAY, startMinute: 600,
+    })).rejects.toBeInstanceOf(Forbidden);
+    expect(await prisma.appointment.count()).toBe(0);
+    // B hands their own client to A's group: B's call, and it grants A that session.
+    await expect(bookGroupSession(actor(b), {
+      clinicianId: a.id, clientIds: [bsClient.id], date: TUESDAY, startMinute: 720,
+    })).resolves.toMatchObject({ id: expect.any(String) });
+    expect(await prisma.appointment.count({ where: { clientId: bsClient.id, clinicianId: a.id } })).toBe(1);
+  });
+});
+
 describe('a session by id: its clinician and the caseload only (SEC-08)', () => {
   it("refuses an unrelated therapist reading, moving, marking or cancelling B's session", async () => {
     const appt = await oneOff(desk, b.id);

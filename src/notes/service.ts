@@ -75,6 +75,23 @@ async function progressContext(noteId: string, clock: Clock = systemClock) {
   };
 }
 
+/**
+ * Who may start a note on this session. The client's treating clinician writes
+ * it down; so does their coverer, holding it (D-16). Decided on the client,
+ * never on an individual session's `clinicianId`: whoever booked it chose that,
+ * so it proves nothing (K4-C1). A group row is the exception: its clinician
+ * led the session, and documents it for that attendee (D-32).
+ */
+export async function progressNoteTarget(
+  appt: { clientId: string; clinicianId: string; groupSessionId: string | null },
+  clock?: Clock,
+): Promise<Target> {
+  return {
+    ...(await clientTarget(appt.clientId, clock)),
+    ...(appt.groupSessionId && { groupLeaderId: appt.clinicianId }),
+  };
+}
+
 export async function createProgressNote(
   actor: Actor,
   input: { appointmentId: string; content: string },
@@ -82,17 +99,14 @@ export async function createProgressNote(
 ) {
   const appt = await prisma.appointment.findUnique({
     where: { id: input.appointmentId },
-    select: { clientId: true },
+    select: { clientId: true, clinicianId: true, groupSessionId: true },
   });
   if (!appt) throw new NotFound('Appointment');
 
   return guarded(
     {
       actor, action: 'create', resource: 'progress_note', clientId: appt.clientId,
-      // The client's treating clinician writes it down; so does their coverer,
-      // holding it (D-16). Decided on the client, never on `appt.clinicianId`:
-      // whoever booked the session chose that, so it proves nothing (K4-C1).
-      target: await clientTarget(appt.clientId, opts.clock),
+      target: await progressNoteTarget(appt, opts.clock),
     },
     (tx) =>
       tx.progressNote.create({

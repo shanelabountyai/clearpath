@@ -196,7 +196,7 @@ const coveredBy = (id: string): Pick<Target, 'coverage' | 'authorSupervisorCover
 const insider = (role: Role): [Actor, Target] => [
   { id: ME, role, breakGlass: { reason: 'client in crisis' } },
   {
-    authorId: ME, authorSupervisorId: ME, clinicianId: ME, sessionClinicianId: ME, recipientId: ME,
+    authorId: ME, authorSupervisorId: ME, clinicianId: ME, sessionClinicianId: ME, recipientId: ME, groupLeaderId: ME,
     treatingSupervisorId: ME, ownerClientId: ME, subjectUserId: ME, ...coveredBy(ME),
   },
 ];
@@ -204,7 +204,7 @@ const insider = (role: Role): [Actor, Target] => [
 const oversight = (role: Role): [Actor, Target] => [
   { id: ME, role },
   {
-    authorId: OTHER, authorSupervisorId: ME, clinicianId: OTHER, sessionClinicianId: OTHER, recipientId: OTHER,
+    authorId: OTHER, authorSupervisorId: ME, clinicianId: OTHER, sessionClinicianId: OTHER, recipientId: OTHER, groupLeaderId: OTHER,
     treatingSupervisorId: ME, ownerClientId: OTHER, subjectUserId: OTHER, ...coveredBy(OTHER),
   },
 ];
@@ -212,7 +212,7 @@ const oversight = (role: Role): [Actor, Target] => [
 const stranger = (role: Role): [Actor, Target] => [
   { id: ME, role },
   {
-    authorId: OTHER, authorSupervisorId: OTHER, clinicianId: OTHER, sessionClinicianId: OTHER, recipientId: OTHER,
+    authorId: OTHER, authorSupervisorId: OTHER, clinicianId: OTHER, sessionClinicianId: OTHER, recipientId: OTHER, groupLeaderId: OTHER,
     treatingSupervisorId: OTHER, ownerClientId: OTHER, subjectUserId: OTHER, ...coveredBy(OTHER),
   },
 ];
@@ -1183,5 +1183,24 @@ describe('appointments: the session reaches the row, never the booking (K4-C1)',
     // Naming yourself as the clinician proves nothing about the client.
     expect(can(me, 'create', 'appointment', booked).allowed).toBe(false);
     expect(can(me, 'create', 'appointment', { clinicianId: ME }).allowed).toBe(true);
+  });
+});
+
+describe('a group leader writes the session note; booking cannot make one (D-32)', () => {
+  it.each(['therapist', 'associate', 'supervisor'] as const)('%s', (role) => {
+    const me = { id: ME, role };
+    expect(can(me, 'create', 'progress_note', { clinicianId: OTHER, groupLeaderId: ME }).allowed).toBe(true);
+    // Running an individual session is not leading a group.
+    expect(can(me, 'create', 'progress_note', { clinicianId: OTHER, sessionClinicianId: ME }).allowed).toBe(false);
+    // Nor is being supervisor or coverer of the client's clinician enough to book a group you lead.
+    const reach: Target = { clinicianId: OTHER, treatingSupervisorId: ME, ...coveredBy(ME) };
+    expect(can(me, 'create', 'appointment', { ...reach, groupLeaderId: ME }).allowed).toBe(false);
+    // The treating clinician may put their own client in anybody's group.
+    expect(can(me, 'create', 'appointment', { clinicianId: ME, groupLeaderId: OTHER }).allowed).toBe(true);
+  });
+
+  it('a supervisor keeps booking a supervisee\'s client into the supervisee\'s own group', () => {
+    const t: Target = { clinicianId: OTHER, treatingSupervisorId: ME, groupLeaderId: OTHER };
+    expect(can({ id: ME, role: 'supervisor' }, 'create', 'appointment', t).allowed).toBe(true);
   });
 });

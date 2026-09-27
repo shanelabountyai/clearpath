@@ -152,6 +152,13 @@ export interface Target {
    * it, and it never decides `create` — whoever books chooses it (K4-C1).
    */
   sessionClinicianId?: string;
+  /**
+   * The clinician leading the group session this appointment belongs to. Set
+   * only for a group attendee's own row, so it names that session and that
+   * attendee and nothing else (D-32). On a booking it is who the group will be
+   * led by; on a progress note, who led the session being written up.
+   */
+  groupLeaderId?: string;
   /** The single person a private notification is addressed to. */
   recipientId?: string;
   /** Supervisor of the treating clinician, at read time. */
@@ -248,6 +255,9 @@ const coversTreatingSupervisor = (a: Actor, t: Target): boolean =>
 const runsSession = (a: Actor, t: Target): boolean =>
   t.sessionClinicianId !== undefined && a.id === t.sessionClinicianId;
 
+const leadsGroup = (a: Actor, t: Target): boolean =>
+  t.groupLeaderId !== undefined && a.id === t.groupLeaderId;
+
 const RULES = {
   never: () => false,
   always: () => true,
@@ -273,6 +283,14 @@ const RULES = {
   treating: treats,
   /** Writing into the record for the dated window, never after it. */
   treatingOrCovering: (a: Actor, t: Target) => treats(a, t) || covers(a, t),
+  /**
+   * `treatingOrCovering`, and whoever led the group session being written up
+   * (D-32). The leader documents the session they ran. `groupLeaderId` is only
+   * ever set on a group attendee's own appointment, so this reaches that one
+   * session's attendees and never an individual session: the booker's choice of
+   * clinician still proves nothing there (K4-C1).
+   */
+  treatingCoveringOrLeading: (a: Actor, t: Target) => treats(a, t) || covers(a, t) || leadsGroup(a, t),
   /**
    * The official record's readers: whoever wrote it, the supervisor responsible
    * for that author, and the clinician who carries the client *now*.
@@ -327,6 +345,17 @@ const RULES = {
   treatingCoveringOrSupervising: (a: Actor, t: Target) =>
     treats(a, t) || supervisesTreating(a, t) || covers(a, t) || coversTreatingSupervisor(a, t),
   /**
+   * A clinician's booking. `treatingCoveringOrSupervising`, except a group led
+   * by somebody other than the client's own clinician: that booking grants the
+   * leader the session's note (D-32), so only the treating clinician may make
+   * it. A supervisor or coverer who could otherwise book the client into a
+   * group they lead would be granting themselves the note (K4-C1).
+   */
+  caseloadBooking: (a: Actor, t: Target) =>
+    t.groupLeaderId !== undefined && t.groupLeaderId !== t.clinicianId
+      ? treats(a, t)
+      : treats(a, t) || supervisesTreating(a, t) || covers(a, t) || coversTreatingSupervisor(a, t),
+  /**
    * An appointment: the clinician it is booked with, or anybody
    * `treatingCoveringOrSupervising` names on its client (K4-C1). Read and
    * update only — booking is decided on the client alone, because the booker
@@ -374,7 +403,7 @@ const CLINICIAN: RoleMatrix = {
   // Your own sessions and your caseload's, never the whole practice's (K4-C1).
   // Booking is caseload-only: an appointment names its clinician, and a
   // clinician free to book anybody with themselves could make any client theirs.
-  appointment: { read: 'sessionOrCaseload', create: 'treatingCoveringOrSupervising', update: 'sessionOrCaseload' },
+  appointment: { read: 'sessionOrCaseload', create: 'caseloadBooking', update: 'sessionOrCaseload' },
   attendance_history: { read: 'treatingOrSupervising' },
   progress_note: {
     // Widened from `authorOrSupervisor` by D-04: the clinician who carries the
@@ -384,8 +413,9 @@ const CLINICIAN: RoleMatrix = {
     read: 'authorSupervisorTreatingOrCovering',
     // Writing is the treating clinician's, and the coverer's while they hold
     // the sessions. A supervisor countersigns the record; they do not author
-    // into somebody else's.
-    create: 'treatingOrCovering',
+    // into somebody else's. And the leader of a group session, for that
+    // session's attendees (D-32).
+    create: 'treatingCoveringOrLeading',
     update: 'author',
     sign: 'author',
   },
