@@ -339,7 +339,7 @@ describe('the auditor', () => {
   const someActivity = async () => {
     const c = await makeClient(therapist.id);
     await book(c.id, 900);
-    await guarded({ actor: actor(admin, 'welfare check'), action: 'read', resource: 'client', clientId: c.id }, async () => null);
+    await guarded({ actor: actor(admin, 'safeguarding'), action: 'read', resource: 'client', clientId: c.id }, async () => null);
     await guarded({ actor: actor(desk), action: 'read', resource: 'process_note', clientId: c.id }, async () => null)
       .catch(() => null);
     return c;
@@ -356,7 +356,7 @@ describe('the auditor', () => {
     await someActivity();
     const { rows } = await queryAuditLog(actor(auditorUser), { flaggedOnly: true });
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ breakGlass: true, reason: 'welfare check' });
+    expect(rows[0]).toMatchObject({ breakGlass: true, reason: 'safeguarding' });
   });
 
   it('filters to denials', async () => {

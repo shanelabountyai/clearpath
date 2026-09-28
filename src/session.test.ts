@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from './db';
-import { isSwitchable } from './session';
+import { isSwitchable, openBreakGlass } from './session';
+import { verifyBreakGlass } from './break-glass-cookie';
+import { fixedClock } from './clock';
 import { makeUser, resetDb } from './test/harness';
 
 describe('isSwitchable (SEC-03)', () => {
@@ -22,5 +24,29 @@ describe('isSwitchable (SEC-03)', () => {
     expect(await isSwitchable(gone.id)).toBe(false);
     expect(await isSwitchable('no-such-user')).toBe(false);
     expect(await isSwitchable('')).toBe(false);
+  });
+});
+
+describe('openBreakGlass (review #2)', () => {
+  beforeEach(resetDb);
+  const env = { CLEARPATH_SESSION_SECRET: 'test-secret' } as unknown as NodeJS.ProcessEnv;
+  const clock = fixedClock('2026-09-28T14:00:00Z');
+
+  it('refuses free text: no cookie and nothing in the audit log', async () => {
+    const pm = await makeUser('admin');
+    const prose = 'client called the practice in distress, clinician on leave';
+    expect(await openBreakGlass({ id: pm.id, role: pm.role }, prose, clock, env)).toBeNull();
+    expect(await openBreakGlass({ id: pm.id, role: pm.role }, '', clock, env)).toBeNull();
+    expect(await prisma.auditEvent.count()).toBe(0);
+  });
+
+  it('logs the code, flagged, then hands back a cookie that verifies to that code', async () => {
+    const pm = await makeUser('admin');
+    const cookie = await openBreakGlass({ id: pm.id, role: pm.role }, ' client_crisis ', clock, env);
+
+    const rows = await prisma.auditEvent.findMany();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ actorId: pm.id, breakGlass: true, rule: 'breakGlass', reason: 'client_crisis' });
+    expect(verifyBreakGlass(pm.id, cookie!, clock.now(), env)).toBe('client_crisis');
   });
 });

@@ -2,7 +2,10 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { requiresSecondFactor, type Actor } from './auth/permissions';
 import { prisma } from './db';
-import { verifyBreakGlass } from './break-glass-cookie';
+import { signBreakGlass, verifyBreakGlass } from './break-glass-cookie';
+import { isBreakGlassReason } from './break-glass-reasons';
+import { auditEvent } from './auth/guard';
+import { systemClock, type Clock } from './clock';
 
 /**
  * The dev-mode user switcher.
@@ -50,7 +53,7 @@ export async function currentSession(): Promise<Session | null> {
   // A break-glass cookie only counts if `startBreakGlass` signed it for this
   // user; a hand-set one has no audit row behind it.
   const rawReason = jar.get(BREAK_GLASS_COOKIE)?.value;
-  const reason = rawReason ? verifyBreakGlass(user.id, rawReason) : null;
+  const reason = rawReason ? verifyBreakGlass(user.id, rawReason, systemClock.now()) : null;
   return {
     user,
     secondFactor: { required: requiresSecondFactor(user.role), satisfied: false },
@@ -85,3 +88,20 @@ export const switchableUsers = () =>
     },
     orderBy: [{ role: 'asc' }, { name: 'asc' }],
   });
+
+/**
+ * Open break-glass: log it, then return the cookie value to set — or null for
+ * anything but a listed reason code (review #2). The row is written before a
+ * cookie exists, so a failed write leaves no break-glass behind it.
+ */
+export async function openBreakGlass(
+  actor: Actor,
+  raw: string,
+  clock: Clock = systemClock,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+  const reason = raw.trim();
+  if (!isBreakGlassReason(reason)) return null;
+  await auditEvent({ ...actor, breakGlass: { reason } }, 'read', 'client', { rule: 'breakGlass' });
+  return signBreakGlass(actor.id, reason, clock.now(), env);
+}

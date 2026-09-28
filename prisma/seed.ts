@@ -899,9 +899,9 @@ async function main() {
 
   // ── three break-glass events, for the auditor to find ─────────────────
   const breakGlassCases: [string, string][] = [
-    ['client did not attend and could not be reached; welfare check', clients[2]!.id],
-    ['subpoena response, ref 2026-114', clients[11]!.id],
-    ['clinician on leave, client called the practice in distress', clients[23]!.id],
+    ['safeguarding', clients[2]!.id],
+    ['records_request', clients[11]!.id],
+    ['client_crisis', clients[23]!.id],
   ];
   for (const [reason, clientId] of breakGlassCases) {
     await guarded(

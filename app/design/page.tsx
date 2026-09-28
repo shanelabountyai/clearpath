@@ -195,7 +195,7 @@ export default function DesignSystemPage() {
         title="Break-glass"
         note="Administration reaches a clinical record only through a logged door. The friction is deliberate and proportionate — a reason is required and the consequence is stated — but it is not an accusation: somebody reaches for this when a client is in crisis and their clinician is unreachable. The bar then renders from the staff layout, above every page, for the whole duration of the access."
       >
-        <BreakGlassBar reason="client called the practice in distress and their clinician is on leave" endAction={specimen} />
+        <BreakGlassBar reason="client_crisis" endAction={specimen} />
         <div className="-my-5">
           <BreakGlassDialog resource="this client record" action={specimen} />
         </div>

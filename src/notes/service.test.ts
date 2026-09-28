@@ -296,9 +296,9 @@ describe('progress note reads', () => {
   it('let the practice manager through only with break-glass, flagged', async () => {
     const note = await draft();
     await expect(getProgressNote(actor(admin), note.id)).rejects.toBeInstanceOf(Forbidden);
-    await expect(getProgressNote(actor(admin, 'subpoena, ref 2026-114'), note.id)).resolves.toBeTruthy();
+    await expect(getProgressNote(actor(admin, 'records_request'), note.id)).resolves.toBeTruthy();
     const [row] = await prisma.auditEvent.findMany({ where: { breakGlass: true, allowed: true } });
-    expect(row!.reason).toContain('subpoena');
+    expect(row!.reason).toBe('records_request');
   });
 });
 

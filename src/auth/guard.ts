@@ -29,8 +29,8 @@ interface GuardRequest {
    * waiver's `goodwill`, and the amount it reversed. Never free text and never
    * clinical: this column is read by the one role that may not open a record.
    * A read that only a leave made possible carries `leave:<leaveId>` when the
-   * action has no code of its own (leave P0-9). Break-glass justification
-   * still fills it when nothing else does.
+   * action has no code of its own (leave P0-9). The break-glass reason code
+   * (`break-glass-reasons.ts`) fills it when nothing else does.
    */
   reason?: string;
 }

@@ -2,9 +2,8 @@
 
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
-import { BREAK_GLASS_COOKIE, USER_COOKIE, isSwitchable, requireSession } from '../src/session';
-import { signBreakGlass } from '../src/break-glass-cookie';
-import { auditEvent } from '../src/auth/guard';
+import { BREAK_GLASS_COOKIE, USER_COOKIE, isSwitchable, openBreakGlass, requireSession } from '../src/session';
+import { BREAK_GLASS_TTL } from '../src/break-glass-cookie';
 
 /** Dev-mode identity switch. The seam where real authentication would go. */
 export async function switchUser(formData: FormData) {
@@ -21,20 +20,18 @@ export async function switchUser(formData: FormData) {
 }
 
 /**
- * Open a break-glass session. The reason is required, it is attached to every
- * audit row written while it is open, and opening it is itself logged.
+ * Open a break-glass session. The reason is a code from a fixed list, it is
+ * attached to every audit row written while it is open, and opening it is
+ * itself logged — before the cookie is set.
  */
 export async function startBreakGlass(formData: FormData) {
-  const reason = String(formData.get('reason') ?? '').trim();
-  // Server-side too, not just the form's `required`: this is a trust boundary,
-  // and a reason of "." would otherwise buy the same access as a real one.
-  if (reason.length < 10) return;
-
   const { actor } = await requireSession();
+  const cookie = await openBreakGlass(actor, String(formData.get('reason') ?? ''));
+  if (!cookie) return;
   const jar = await cookies();
-  jar.set(BREAK_GLASS_COOKIE, signBreakGlass(actor.id, reason), { httpOnly: true, sameSite: 'lax', path: '/' });
-
-  await auditEvent({ ...actor, breakGlass: { reason } }, 'read', 'client', { rule: 'breakGlass' });
+  jar.set(BREAK_GLASS_COOKIE, cookie, {
+    httpOnly: true, sameSite: 'lax', path: '/', maxAge: BREAK_GLASS_TTL / 1000,
+  });
   revalidatePath('/', 'layout');
 }
 

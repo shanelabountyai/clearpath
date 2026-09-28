@@ -78,7 +78,7 @@ test.describe('the access story', () => {
     await page.goto(`/clients/${demoClient}`);
     await expect(page.getByRole('heading', { name: 'Break-glass access required' })).toBeVisible();
 
-    await page.getByLabel('Reason (required)').fill('client called the practice in distress, clinician on leave');
+    await page.getByLabel('Client in crisis and their clinician is unreachable').check();
     await page.getByRole('button', { name: 'Break glass' }).click();
 
     await expect(page.getByText('Break-glass access is open.')).toBeVisible();

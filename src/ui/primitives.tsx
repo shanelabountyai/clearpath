@@ -2,6 +2,7 @@ import Link from 'next/link';
 import type { CSSProperties, ReactNode } from 'react';
 import { CHARGEABLE } from '../scheduling/states';
 import { AUDIT_CODE } from '../reports/audit-code';
+import { BREAK_GLASS_REASONS, isBreakGlassReason } from '../break-glass-reasons';
 import { localDateOf, minutesToHHMM } from '../time';
 import type { DaySession } from '../scheduling/calendar';
 import { Button, type ButtonVariant } from './button';
@@ -592,15 +593,19 @@ export function BreakGlassDialog({
           reason you give.
         </p>
         <form action={action} className="mt-4">
-          <label htmlFor="reason" className="block text-micro font-medium tracking-wide text-subtle uppercase">
-            Reason (required)
-          </label>
-          <textarea
-            id="reason" name="reason" rows={3} required minLength={10}
-            placeholder="e.g. client called the practice in distress and their clinician is on leave"
-            className="mt-1 w-full rounded-[var(--radius)] border p-2.5 text-body"
-            style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
-          />
+          {/* A fixed list, not a text box: the reason goes into the audit log,
+              and prose there is how PHI gets into it (review #2). */}
+          <fieldset>
+            <legend className="block text-micro font-medium tracking-wide text-subtle uppercase">
+              Reason (required)
+            </legend>
+            {Object.entries(BREAK_GLASS_REASONS).map(([code, label]) => (
+              <label key={code} className="mt-2 flex items-start gap-2 text-body">
+                <input type="radio" name="reason" value={code} required className="mt-1" />
+                {label}
+              </label>
+            ))}
+          </fieldset>
           <div className="mt-3 flex items-center justify-between gap-3">
             <p className="text-caption text-subtle">
               Break-glass reaches demographics and progress notes. It does not reach
@@ -637,7 +642,8 @@ export function BreakGlassBar({
       <p className="text-body">
         <span aria-hidden>⚠ </span>
         <strong>Break-glass access is open.</strong> Everything you open is logged against
-        your name with this reason: <em>{reason}</em>
+        your name with this reason:{' '}
+        <em>{isBreakGlassReason(reason) ? BREAK_GLASS_REASONS[reason] : reason}</em>
       </p>
       <form action={endAction}>
         <button

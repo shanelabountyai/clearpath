@@ -87,8 +87,9 @@ Screenshots on file: `docs/screenshots/cosign-queue.png`,
 ### 4. Break-glass, logged
 Switch to **Elena Sarkis — Practice manager**. Open TC-036 and try to read
 the process note — refused, same as Rosa, no exceptions (hard rule 2). Open
-any *progress* note instead and use **break-glass** with a reason. The bar at
-the top of the screen stays visible for the whole session as a reminder
+any *progress* note instead and use **break-glass**, picking a reason from the fixed list (a list, not a
+text box, so nothing clinical can be typed into the audit log). The bar at
+the top of the screen stays visible for the hour it lasts as a reminder
 she's using it.
 
 Screenshot on file: `docs/screenshots/break-glass.png`.
@@ -100,7 +101,7 @@ read of the process note, Elena's break-glass read — all there, all with a
 rule name, none with note content.
 
 *Say:* "The denial is logged the same as the grant. And the reason column —
-it's a code, `leave:<id>` or `probe`, never free text, because free text is
+it's a code, `leave:<id>` or a break-glass code like `client_crisis`, never free text, because free text is
 how PHI leaks into a log."
 
 Screenshot on file: `docs/screenshots/audit-log-both.png`.
