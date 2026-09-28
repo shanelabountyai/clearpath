@@ -195,7 +195,7 @@ describe('who may produce one', () => {
         type: 'standard', modality: 'in_person',
       },
     });
-    await setStatus(actor(desk), missed.id, 'no_show', { clock });
+    await setStatus(actor(desk), missed.id, 'no_show', { clock: fixedClock(missed.startAt) });
 
     const bill = await buildSuperbill(actor(desk), client.id, MARCH);
     expect(bill.lines).toHaveLength(1);

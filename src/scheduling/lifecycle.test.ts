@@ -289,6 +289,19 @@ describe('against the database', () => {
       expect(summary.chargeableFeeCents).toBe(27000);
     });
 
+    it('cannot be charged before the session starts', async () => {
+      const appt = await book();
+      await expect(
+        setStatus(actor(desk), appt.id, 'no_show', { clock: fixedClock(new Date(SESSION_START.getTime() - 60_000)) }),
+      ).rejects.toMatchObject({ code: 'not_started' });
+
+      const after = await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } });
+      expect(after).toMatchObject({ status: 'scheduled', chargeFeeCents: null });
+
+      const out = await setStatus(actor(desk), appt.id, 'no_show', { clock: fixedClock(SESSION_START) });
+      expect(out.chargeFeeCents).toBe(9000);
+    });
+
     it('is integer cents, never a float', async () => {
       const appt = await book();
       const out = await setStatus(actor(desk), appt.id, 'no_show');

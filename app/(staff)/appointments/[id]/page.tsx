@@ -38,7 +38,9 @@ export default async function AppointmentPage({
   const settings = await prisma.practiceSettings.findUnique({ where: { id: 1 } });
   const windowHours = settings?.lateCancelWindowHours ?? 24;
   const wouldBeLate = classifyCancellation(appt.startAt, systemClock.now(), windowHours) === 'late_cancelled';
-  const next = TRANSITIONS[appt.status as Status];
+  // No-show only once the session has started; `transition` refuses it earlier.
+  const started = systemClock.now() >= appt.startAt;
+  const next = TRANSITIONS[appt.status as Status].filter((s) => s !== 'no_show' || started);
   const canWriteNote = may({
     actor, action: 'create', resource: 'progress_note',
     // The client's record decides, or leading this group session (K4-C1, D-32).

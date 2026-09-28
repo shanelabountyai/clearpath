@@ -99,6 +99,11 @@ async function transition(actor: Actor, appointmentId: string, to: Status, opts:
 
   const settings = await loadSettings();
   const now = clock.now();
+  // Nobody has missed a session that has not begun, and a no-show carries a
+  // fee. Before the start the answer is a cancellation, which reads the clock.
+  if (to === 'no_show' && now < appt.startAt) {
+    throw new Conflict('A session cannot be a no-show before it starts', 'not_started');
+  }
 
   const data: Record<string, unknown> = { status: to };
   if (to === 'cancelled' || to === 'late_cancelled') {

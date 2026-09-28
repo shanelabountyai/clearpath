@@ -4556,7 +4556,11 @@ two reason-coded rows and no grant.
 
 - Recurrence expansion includes today (`recurrence.ts:119`).
 - Minute arithmetic on a DST Sunday (`booking.ts:121`, `calendar.ts:61`).
-- A no-show can be recorded before the session starts.
+- ~~A no-show can be recorded before the session starts.~~ Closed 2026-09-28
+  (D-45). `transition` refuses `no_show` while the clock is before `startAt`
+  (Conflict `not_started`), so no fee lands on a session that has not begun.
+  The appointment page hides the button until the start. The sweep was never
+  affected, because it only looks at sessions past start plus the grace period.
 - ~~`clients/actions.ts:16` parses cents as `Math.round(Number(raw) * 100)`,
   which goes through a float.~~ Closed 2026-09-28 (D-44). `centsFromDollars`
   splits the string at the point and builds cents from two integers. Input
@@ -4852,6 +4856,7 @@ two reason-coded rows and no grant.
 | P2 review findings: fix the two that break a hard rule, log the rest (D-42, 2026-09-28) | Shane's choice after #1-9 closed. Fixed: process-note `note_closed`/`still_open` refusals thrown before `guarded` (unaudited, rule 4) and the JS author check in `amendProcessNote`; `client.language` in a `forms/service.ts` error message (rule 3). Logged as known gaps, not fixed: recurrence includes today, DST-Sunday minute arithmetic, no-show before start, float cents parse in `clients/actions.ts`, `updateClient` not rerouting alerts, CI `retries: 1`, missing tests for PHI-in-logs / bare `new Date()` / scattered `status =` / alert routing |
 | `updateClient` cannot change the treating clinician (D-43, 2026-09-28) | Shane picked it from §58, because it breaks hard rule 9. Moving a client has to move their open alerts, and departure already does both. No caller ever passed `treatingClinicianId`, so removing the field closes the gap without a second rerouting path to keep in sync. The type refuses it and so does a runtime check (for a cast or a spread form). The test was mutation-checked: removing the guard turns it red |
 | Fee input parsed by string, refused when it would round (D-44, 2026-09-28) | Shane picked it from §58, because it breaks hard rule 6. `Math.round(Number(raw) * 100)` gave the right answer for ordinary input and silently rounded `12.345`. It also accepted `1e3` as $1,000. Rounding a fee someone typed is a guess about which cents they meant, so the parser refuses it instead. The test was mutation-checked: putting the float parse back turns it red |
+| No-show refused before the session starts (D-45, 2026-09-28) | Shane picked it from §58: a no-show carries a fee, and nobody has missed a session that has not begun. Before the start, the answer is a cancellation, which reads the clock and picks its own fee. The check sits beside `bad_transition` in `transition` and is not audited, the same as that one. At the start instant the no-show is allowed; a stricter rule (start plus grace) would stop the front desk from recording a client who has plainly not come. The test was mutation-checked: removing the guard turns it red |
 
 ## What this project deliberately is not
 
