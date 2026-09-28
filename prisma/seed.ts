@@ -471,7 +471,9 @@ async function main() {
   let seededDeclines = 0;
   for (const [i, c] of decliners.entries()) {
     const upcoming = await prisma.appointment.findFirst({
-      where: { clientId: c.id, status: 'scheduled', startAt: { gt: now } },
+      // `reminders: none` because `soon` above picks among startAt ties by heap
+      // order, and can land on this client's session and ask it first.
+      where: { clientId: c.id, status: 'scheduled', startAt: { gt: now }, reminders: { none: {} } },
       orderBy: { startAt: 'asc' },
     });
     if (!upcoming) continue;
