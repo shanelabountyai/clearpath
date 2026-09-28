@@ -96,7 +96,7 @@ export async function issueForm(
   const untranslated = missingLanguages(asSchema(template.schema))[client.language];
   if (untranslated.length) {
     throw new Conflict(
-      `Template ${template.key} v${template.version} has no ${client.language} for: ${untranslated.join(', ')}`,
+      `Template ${template.key} v${template.version} is missing this client's language for: ${untranslated.join(', ')}`,
       'template_not_translated',
     );
   }

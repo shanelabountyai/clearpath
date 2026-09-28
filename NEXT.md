@@ -1,6 +1,11 @@
 # Next
 
-**REOPENED 2026-09-26 for review fixes (Shane chose scope: all P1/High/Med, #1-9).** Five review agents ran (PHI, authz/audit, domain, test quality, cost). Cost review is DONE (crons now daily, restore note in WRITEUP). **Unblocked:** the D-32 group-leader change is committed (f35252c). Confirm `git status` is clean (`next-env.d.ts` flips when `next dev` runs; not anyone's work), **All nine are done (2026-09-28).** **Next item (D-42, Shane chose): fix the two hard-rule P2s, then close the reopen.** (a) `notes/service.ts` ~:441/:486 — `note_closed`/`still_open` thrown before `guarded`, so the refusal is not audited; and the JS `note.authorId !== actor.id` at ~:494 in `amendProcessNote` — move both inside `guarded`, author filter in SQL. (b) `forms/service.ts:97` — `client.language` in an error message; ids only. Failing test first; Opus. Then log the remaining P2s in WRITEUP known gaps (list is in D-42) and write the closure verdict. One test sweep at a time; use Opus (money, audit, state machine). Failing test first for each.
+**Nothing queued. The review reopen (2026-09-26) closed on 2026-09-28.** Items #1-9 (D-33..D-41) and D-42 are all done. D-42 put the process-note state refusals (`note_closed`/`still_open`) inside `guarded`, as reason-coded `allowed:false` rows. A non-author is now refused by the matrix, on the record, before learning the note's state. The author filter is in SQL, and the client's language is out of the forms error message. The remaining review P2s are logged in WRITEUP §58 "Not done". Unit 42/3370 EXIT=0. The next session starts only when Shane picks something, for example one of the §58 gaps.
+
+Cost baseline 2026-09-26: Neon 29.9 active-h/23d; Vercel $1.86 effective/$0.80 billed.
+
+---
+## History: the review reopen (2026-09-26 to 09-28)
 
 | # | Sev | Fix |
 |---|---|---|

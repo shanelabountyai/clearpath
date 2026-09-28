@@ -1,4 +1,4 @@
-import { guarded, guardedAll, may } from '../auth/guard';
+import { auditEvent, guarded, guardedAll, may } from '../auth/guard';
 import { can, requiresCoSignature, type Actor, type Target } from '../auth/permissions';
 import { systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
@@ -433,27 +433,49 @@ export async function listProcessNotes(actor: Actor, clientId: string) {
   );
 }
 
+/**
+ * A process note's state refusals — `note_closed`, `still_open` — are denials
+ * like any other (hard rule 4), and only the author may learn the note's
+ * state. So the check runs inside `guarded`, after the matrix has refused
+ * everyone else on the record, and reads the row filtered on the author in
+ * SQL. Throwing there rolls the grant back; this puts the refusal in its place.
+ */
+async function refusalsAudited<T>(actor: Actor, noteId: string, clientId: string, work: Promise<T>): Promise<T> {
+  try {
+    return await work;
+  } catch (e) {
+    if (e instanceof Conflict && (e.code === 'note_closed' || e.code === 'still_open')) {
+      await auditEvent(actor, 'update', 'process_note', {
+        resourceId: noteId, clientId, rule: 'author', reason: `refused:${e.code}`, allowed: false,
+      });
+    }
+    throw e;
+  }
+}
+
 export async function updateProcessNote(actor: Actor, noteId: string, content: string) {
   const note = await prisma.processNote.findUnique({
-    where: { id: noteId }, select: { authorId: true, clientId: true, closedAt: true },
+    where: { id: noteId }, select: { authorId: true, clientId: true },
   });
   if (!note) throw new NotFound('ProcessNote');
-  if (note.closedAt) throw new Conflict('This note is closed. Add an amendment instead.', 'note_closed');
 
-  return guarded(
+  return refusalsAudited(actor, noteId, note.clientId, guarded(
     {
       actor, action: 'update', resource: 'process_note', resourceId: noteId, clientId: note.clientId,
       target: { authorId: note.authorId },
     },
     async (tx) => {
+      const own = await tx.processNote.findFirst({ where: { id: noteId, authorId: actor.id }, select: { closedAt: true } });
+      if (!own) throw new NotFound('ProcessNote');
+      if (own.closedAt) throw new Conflict('This note is closed. Add an amendment instead.', 'note_closed');
       const { count } = await tx.processNote.updateMany({
-        where: { id: noteId, authorId: actor.id },
+        where: { id: noteId, authorId: actor.id, closedAt: null },
         data: { content },
       });
       if (count === 0) throw new NotFound('ProcessNote');
       return tx.processNote.findFirstOrThrow({ where: { id: noteId, authorId: actor.id } });
     },
-  );
+  ));
 }
 
 export async function closeProcessNote(actor: Actor, noteId: string, opts: { clock?: Clock } = {}) {
@@ -480,21 +502,22 @@ export async function closeProcessNote(actor: Actor, noteId: string, opts: { clo
 
 export async function amendProcessNote(actor: Actor, noteId: string, content: string) {
   const note = await prisma.processNote.findUnique({
-    where: { id: noteId }, select: { authorId: true, clientId: true, closedAt: true },
+    where: { id: noteId }, select: { authorId: true, clientId: true },
   });
   if (!note) throw new NotFound('ProcessNote');
-  if (!note.closedAt) throw new Conflict('Edit the note instead of amending it', 'still_open');
 
-  return guarded(
+  return refusalsAudited(actor, noteId, note.clientId, guarded(
     {
       actor, action: 'update', resource: 'process_note', resourceId: noteId, clientId: note.clientId,
       target: { authorId: note.authorId },
     },
     async (tx) => {
-      if (note.authorId !== actor.id) throw new NotFound('ProcessNote');
+      const own = await tx.processNote.findFirst({ where: { id: noteId, authorId: actor.id }, select: { closedAt: true } });
+      if (!own) throw new NotFound('ProcessNote');
+      if (!own.closedAt) throw new Conflict('Edit the note instead of amending it', 'still_open');
       return tx.noteAmendment.create({
         data: { kind: 'process', processNoteId: noteId, authorId: actor.id, content },
       });
     },
-  );
+  ));
 }

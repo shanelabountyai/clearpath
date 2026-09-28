@@ -4529,6 +4529,41 @@ through a variable first would get past it. The paging only moves forward from
 Newest: there is no "previous page", because the cursor points one way. Going
 back a single page needs a second cursor, so add it if auditors ask.
 
+## 58. The refusal that came before the door
+
+**Problem.** `updateProcessNote` and `amendProcessNote` checked the note's
+state (`note_closed`, `still_open`) before calling `guarded`. That broke two
+rules. A refusal on the note's state was a denial nobody logged (hard rule 4).
+It also answered anyone who asked: a supervisor who tried to edit an
+associate's closed process note learned it was closed, before the matrix
+refused them. `amendProcessNote` also checked the author in JS
+(`note.authorId !== actor.id`), where hard rule 2 wants the filter in SQL.
+Separately, `issueForm`'s untranslated-template refusal put the client's
+language into the error message (hard rule 3).
+
+**Design.** The state check now runs inside `guarded`, on a row read with
+`authorId` in the `where`. So the matrix refuses a non-author, on the record,
+before anything about the note is read. For the author, the `Conflict` thrown
+inside rolls back the grant, and `refusalsAudited` then writes the refusal as
+an `allowed: false` row with rule `author` and reason `refused:<code>`. The
+update's `updateMany` also names `closedAt: null`, so it writes on the state
+it read. The forms message names the template and the missing field keys,
+and not the language. Tests: a non-author gets `Forbidden` on a closed note
+for both calls, with two denial rows. The author's two state refusals leave
+two reason-coded rows and no grant.
+
+**Not done.** These review P2s are logged here and not fixed:
+
+- Recurrence expansion includes today (`recurrence.ts:119`).
+- Minute arithmetic on a DST Sunday (`booking.ts:121`, `calendar.ts:61`).
+- A no-show can be recorded before the session starts.
+- `clients/actions.ts:16` parses cents as `Math.round(Number(raw) * 100)`,
+  which goes through a float.
+- `updateClient` changing `treatingClinicianId` does not reroute open alerts.
+- CI runs Playwright with `retries: 1`, which can hide a flaky spec.
+- There are no structural tests yet for PHI in app logs, bare `new Date()`
+  outside `clock.ts`, scattered `status =` assignments, or alert routing.
+
 ## Decisions log
 
 | Decision | Why |

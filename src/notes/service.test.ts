@@ -262,6 +262,29 @@ describe('a process note has one reader, forever', () => {
     expect((await getProcessNote(actor(associate), note.id)).amendments).toHaveLength(1);
   });
 
+  it('refuses a non-author before saying anything about the note, on the record', async () => {
+    const note = await mine();
+    await closeProcessNote(actor(associate), note.id);
+    await expect(updateProcessNote(actor(supervisor), note.id, 'x')).rejects.toBeInstanceOf(Forbidden);
+    await expect(amendProcessNote(actor(supervisor), note.id, 'x')).rejects.toBeInstanceOf(Forbidden);
+    const denials = await prisma.auditEvent.findMany({ where: { resource: 'process_note', allowed: false } });
+    expect(denials).toHaveLength(2);
+    expect(denials.every((d) => d.actorId === supervisor.id)).toBe(true);
+  });
+
+  it('logs a state refusal on the author\'s own note as a denial', async () => {
+    const open = await mine();
+    await expect(amendProcessNote(actor(associate), open.id, 'x')).rejects.toMatchObject({ code: 'still_open' });
+    await closeProcessNote(actor(associate), open.id);
+    await expect(updateProcessNote(actor(associate), open.id, 'x')).rejects.toMatchObject({ code: 'note_closed' });
+
+    const denials = await prisma.auditEvent.findMany({ where: { resource: 'process_note', allowed: false } });
+    expect(denials.map((d) => d.reason).sort()).toEqual(['refused:note_closed', 'refused:still_open']);
+    expect(denials.every((d) => d.actorId === associate.id && d.resourceId === open.id)).toBe(true);
+    // the refused write left no grant behind: the close is the only allowed update
+    expect(await prisma.auditEvent.count({ where: { resource: 'process_note', action: 'update', allowed: true } })).toBe(1);
+  });
+
   it('logs the author reading their own note', async () => {
     const note = await mine();
     await getProcessNote(actor(associate), note.id);

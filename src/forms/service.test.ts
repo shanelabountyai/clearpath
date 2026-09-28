@@ -91,6 +91,9 @@ describe('a form is not sent in a language it is not written in', () => {
 
     await expect(issueForm(actor(desk), { clientId: spanish.id, templateKey: 'half' }))
       .rejects.toMatchObject({ code: 'template_not_translated' });
+    // Keys, never the client's language: an error message is not the record (hard rule 3).
+    await expect(issueForm(actor(desk), { clientId: spanish.id, templateKey: 'half' }))
+      .rejects.toSatisfy((e) => (e as Error).message.endsWith(': b') && !/\bes\b/.test((e as Error).message));
 
     // and nothing was queued to a client who could not have read it
     expect(await prisma.formRequest.count()).toBe(0);
