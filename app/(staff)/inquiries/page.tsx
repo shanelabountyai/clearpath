@@ -6,6 +6,7 @@ import { clinicianCapacity, listInquiries, listReferrers, previewInquiryPurge, t
 import { possibleDuplicates } from '../../../src/clients/repository';
 import { Badge, Card, EmptyState, PageHeader, SelectField, TextField, TierBanner } from '../../../src/ui/primitives';
 import { withDenial } from '@/src/ui/denied';
+import { localDateOf } from '@/src/time';
 import { CONVERT_REFUSAL, Refusal } from '../departures/ui';
 import { addReferrer, assign, convert, discard, recordInquiry, setAccepting, toggleReferrer } from './actions';
 
@@ -247,7 +248,7 @@ async function InquiriesPage({
                     {i.referrerId && ` (${referrerLabel.get(i.referrerId) ?? 'a practice'})`}
                     {i.referredOutToId && ` · referred to ${referrerLabel.get(i.referredOutToId) ?? 'another practice'}`}
                     {i.requestedClinicianId && ` · asked for ${names.get(i.requestedClinicianId) ?? 'someone'}`}
-                    {' · '}{i.createdAt.toISOString().slice(0, 10)}
+                    {' · '}{localDateOf(i.createdAt)}
                   </p>
                   {i.note && <p className="mt-1 max-w-prose text-body text-muted">{i.note}</p>}
 

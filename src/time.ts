@@ -72,7 +72,7 @@ export function weekdayOf(date: LocalDate): number {
 
 export function addDays(date: LocalDate, days: number): LocalDate {
   const [y, m, d] = date.split('-').map(Number) as [number, number, number];
-  return toLocalDate(new Date(Date.UTC(y, m - 1, d + days)));
+  return dbDateOf(new Date(Date.UTC(y, m - 1, d + days)));
 }
 
 /** Whole days from `a` to `b`. Dates are calendar days, so this never drifts. */
@@ -84,9 +84,13 @@ export function daysBetween(a: LocalDate, b: LocalDate): number {
   return Math.round((day(b) - day(a)) / 86_400_000);
 }
 
-function toLocalDate(utcMidnight: Date): LocalDate {
-  return utcMidnight.toISOString().slice(0, 10);
-}
+/**
+ * The date a `@db.Date` column stores. Prisma hands it back as UTC midnight,
+ * which is the evening before in New York, so `localDateOf` reads it a day
+ * early. Date columns go through this pair; instants go through `localDateOf`.
+ */
+export const dbDateOf = (utcMidnight: Date): LocalDate => utcMidnight.toISOString().slice(0, 10);
+export const dbDate = (date: LocalDate): Date => new Date(`${date}T00:00:00Z`);
 
 /** The local date an instant falls on, in the practice timezone. */
 export function localDateOf(instant: Date): LocalDate {

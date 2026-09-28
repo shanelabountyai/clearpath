@@ -5,6 +5,7 @@ import { Conflict } from '../errors';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { localDateOf, zonedToUtc } from '../time';
 import { availableSlots, bookAppointment, materialiseSeries, rescheduleAppointment } from './booking';
+import { daySchedule } from './calendar';
 
 const TUESDAY = '2026-09-01';
 const THREE_PM = 15 * 60;
@@ -263,4 +264,53 @@ it('every booking is audit-logged against the client', async () => {
   const rows = await prisma.auditEvent.findMany({ where: { clientId: c.id } });
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({ action: 'create', resource: 'appointment', allowed: true });
+});
+
+describe('date-only columns read as the date they store', () => {
+  // A `@db.Date` comes back as UTC midnight, which is the evening before in
+  // New York. Read through `localDateOf` it lands a day early.
+  const dayOff = (userId: string, date: string) =>
+    prisma.availabilityOverride.create({
+      data: { userId, fromDate: new Date(`${date}T00:00:00Z`), toDate: new Date(`${date}T00:00:00Z`), kind: 'unavailable' },
+    });
+
+  it('a one-day override blocks that day in the slot finder', async () => {
+    const t = await clinicianWorkingTuesdays();
+    await dayOff(t.id, TUESDAY);
+    expect(await availableSlots({ clinicianId: t.id, date: TUESDAY, type: 'standard', modality: 'telehealth' })).toEqual([]);
+  });
+
+  it('a one-day override marks the clinician away on the day schedule', async () => {
+    const t = await clinicianWorkingTuesdays();
+    await dayOff(t.id, TUESDAY);
+    expect((await daySchedule(actor(desk), TUESDAY)).away).toContain(t.id);
+  });
+
+  it('extra hours or an afternoon off do not mark the clinician away', async () => {
+    const t = await clinicianWorkingTuesdays();
+    const day = new Date(`${TUESDAY}T00:00:00Z`);
+    await prisma.availabilityOverride.createMany({
+      data: [
+        { userId: t.id, fromDate: day, toDate: day, kind: 'available', startMinute: 1020, endMinute: 1140 },
+        { userId: t.id, fromDate: day, toDate: day, kind: 'unavailable', startMinute: 780, endMinute: 1020 },
+      ],
+    });
+    expect((await daySchedule(actor(desk), TUESDAY)).away).not.toContain(t.id);
+  });
+
+  it('a series ending on a Tuesday still books that Tuesday', async () => {
+    for (let i = 1; i <= 4; i++) await makeRoom(`Room ${i}`);
+    const t = await clinicianWorkingTuesdays();
+    const c = await makeClient(t.id);
+    const series = await prisma.appointmentSeries.create({
+      data: {
+        clientId: c.id, clinicianId: t.id, frequency: 'weekly', weekday: 2, startMinute: THREE_PM,
+        startDate: new Date(`${TUESDAY}T00:00:00Z`), endDate: new Date('2026-09-15T00:00:00Z'),
+        type: 'standard', modality: 'in_person',
+      },
+    });
+    await materialiseSeries(actor(desk), series.id, { from: TUESDAY, horizonDays: 28 });
+    const appts = await prisma.appointment.findMany({ orderBy: { startAt: 'asc' } });
+    expect(appts.map((a) => localDateOf(a.startAt))).toEqual(['2026-09-01', '2026-09-08', '2026-09-15']);
+  });
 });

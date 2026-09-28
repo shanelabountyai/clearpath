@@ -5,7 +5,7 @@ import { continuityQueue, staleInquiries, unconfirmedSoon, vacationImpact, waitl
 import { openRescheduleRequests } from '../../../src/portal/service';
 import { openInboundReplies, recentlyHandledInboundReplies } from '../../../src/messaging/inbound';
 import { dismissReturnSummary, handleRescheduleRequest, markInboundHandled, reopenInboundHandled } from './actions';
-import { localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
+import { dbDateOf, localDateOf, minutesToHHMM, utcToZoned, WEEKDAYS } from '../../../src/time';
 import { Badge, Button, Card, CONFIRMATION_META, EmptyState, PageHeader, TierBanner } from '../../../src/ui/primitives';
 import { systemClock } from '@/src/clock';
 import { withDenial } from '@/src/ui/denied';
@@ -39,8 +39,8 @@ async function WorkListsPage() {
       absence: a,
       sessions: await vacationImpact(actor, {
         clinicianId: a.userId,
-        fromDate: localDateOf(a.fromDate),
-        toDate: localDateOf(a.toDate),
+        fromDate: dbDateOf(a.fromDate),
+        toDate: dbDateOf(a.toDate),
       }),
     })),
   );
@@ -413,7 +413,7 @@ async function WorkListsPage() {
               .map((d) => (
                 <Card key={d.absence.userId + d.absence.fromDate.toISOString()} className="mb-3">
                   <h3 className="font-semibold">
-                    {d.absence.user.name} · {localDateOf(d.absence.fromDate)} to {localDateOf(d.absence.toDate)}
+                    {d.absence.user.name} · {dbDateOf(d.absence.fromDate)} to {dbDateOf(d.absence.toDate)}
                     <span className="ml-2 font-normal text-muted">{d.absence.reason}</span>
                   </h3>
                   <ul className="mt-2 divide-y" style={{ borderColor: 'var(--border)' }}>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addDays, daysBetween, localDateOf, utcToZoned, weekdayOf, zonedToUtc } from './time';
+import { addDays, daysBetween, dbDate, dbDateOf, localDateOf, utcToZoned, weekdayOf, zonedToUtc } from './time';
 
 describe('local wall time to instant', () => {
   it('converts a winter afternoon (EST, UTC-5)', () => {
@@ -64,5 +64,12 @@ describe('calendar arithmetic', () => {
   it('reports the local date of an instant, not the UTC one', () => {
     // 01:30 UTC on the 2nd is still the evening of the 1st in New York.
     expect(localDateOf(new Date('2026-09-02T01:30:00Z'))).toBe('2026-09-01');
+  });
+
+  it('reads a @db.Date as the date it stores, not the NY evening before', () => {
+    const stored = new Date('2026-09-01T00:00:00Z');
+    expect(dbDateOf(stored)).toBe('2026-09-01');
+    expect(localDateOf(stored)).toBe('2026-08-31');
+    expect(dbDate('2026-09-01')).toEqual(stored);
   });
 });

@@ -3,8 +3,8 @@ import { ownCaseloadOnly, type Actor, type Target } from '../auth/permissions';
 import { clientTarget } from '../clients/repository';
 import { prisma } from '../db';
 import { NotFound } from '../errors';
-import { addDays, localDateOf, zonedToUtc, type LocalDate } from '../time';
-import { workingWindows, type Override } from './availability';
+import { addDays, dbDate, dbDateOf, zonedToUtc, type LocalDate } from '../time';
+import { isAway } from './availability';
 
 /**
  * Who an appointment answers to: its client's record, and the clinician it is
@@ -53,22 +53,21 @@ export async function daySchedule(actor: Actor, date: LocalDate) {
           orderBy: { name: 'asc' },
         }),
         tx.availabilityOverride.findMany({
-          where: { fromDate: { lte: zonedToUtc(date, 0) }, toDate: { gte: zonedToUtc(date, 0) } },
+          where: { fromDate: { lte: dbDate(date) }, toDate: { gte: dbDate(date) } },
           select: { userId: true, kind: true, fromDate: true, toDate: true, startMinute: true, endMinute: true, reason: true },
         }),
       ]);
 
       const minutesOf = (d: Date) => Math.round((d.getTime() - zonedToUtc(date, 0).getTime()) / 60_000);
 
+      // Away means the whole day off. Extra hours or an afternoon off still
+      // leave the clinician on the schedule.
       const away = new Set(
         overrides
-          .filter((o) => {
-            const asOverride: Override = {
-              fromDate: localDateOf(o.fromDate), toDate: localDateOf(o.toDate),
-              kind: o.kind, startMinute: o.startMinute ?? undefined, endMinute: o.endMinute ?? undefined,
-            };
-            return workingWindows([{ weekday: 0, startMinute: 0, endMinute: 1440 }], [asOverride], date).length === 0;
-          })
+          .filter((o) => isAway([{
+            fromDate: dbDateOf(o.fromDate), toDate: dbDateOf(o.toDate),
+            kind: o.kind, startMinute: o.startMinute ?? undefined, endMinute: o.endMinute ?? undefined,
+          }], date))
           .map((o) => o.userId),
       );
 

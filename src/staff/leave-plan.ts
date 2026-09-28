@@ -5,7 +5,7 @@ import { systemClock, type Clock } from '../clock';
 import { prisma, type Tx } from '../db';
 import { Conflict, NotFound } from '../errors';
 import { SYSTEM_ACTOR } from '../scheduling/reminders';
-import { addDays, localDateOf, zonedToUtc, type LocalDate } from '../time';
+import { addDays, dbDate, dbDateOf, localDateOf, zonedToUtc, type LocalDate } from '../time';
 import { ownerOf, ROUTED_CLIENT, routesOf, type RoutedClient } from './coverage';
 import { maySupervise, mayTreat } from './departure';
 import { canTransition, leavePhase } from './leave';
@@ -24,9 +24,6 @@ import { canTransition, leavePhase } from './leave';
  * rules only application code can decide, because only it knows today.
  */
 
-const dbDate = (d: LocalDate) => new Date(`${d}T00:00:00Z`);
-const localDate = (d: Date): LocalDate => d.toISOString().slice(0, 10);
-
 /** `leave_no_overlap` decides, not a pre-check: two admins booking the same weeks is a race a read would lose. */
 function overlapAsConflict(e: unknown): unknown {
   const text = e instanceof Error ? `${e.message}${JSON.stringify((e as { meta?: unknown }).meta ?? '')}` : '';
@@ -39,7 +36,7 @@ async function leaveRow(leaveId: string, clock: Clock) {
   const row = await prisma.leave.findUnique({ where: { id: leaveId } });
   if (!row) throw new NotFound('Leave');
   const today = localDateOf(clock.now());
-  const dates = { fromDate: localDate(row.fromDate), toDate: localDate(row.toDate), cancelledAt: row.cancelledAt };
+  const dates = { fromDate: dbDateOf(row.fromDate), toDate: dbDateOf(row.toDate), cancelledAt: row.cancelledAt };
   return { ...row, ...dates, today, phase: leavePhase(dates, today) };
 }
 
@@ -491,7 +488,7 @@ export async function listLeaves(actor: Actor, clock: Clock = systemClock) {
       orderBy: { fromDate: 'asc' },
     });
     return rows.map((r) => {
-      const dates = { fromDate: localDate(r.fromDate), toDate: localDate(r.toDate) };
+      const dates = { fromDate: dbDateOf(r.fromDate), toDate: dbDateOf(r.toDate) };
       return { ...r, ...dates, phase: leavePhase(dates, today) };
     });
   });
@@ -528,7 +525,7 @@ export async function leaveWorklist(actor: Actor, clock: Clock = systemClock) {
       orderBy: { fromDate: 'asc' },
     });
     return Promise.all(open.map(async (l) => {
-      const dates = { fromDate: localDate(l.fromDate), toDate: localDate(l.toDate) };
+      const dates = { fromDate: dbDateOf(l.fromDate), toDate: dbDateOf(l.toDate) };
       const named = [l.coveringClinicianId, ...l.coverage.map((c) => c.coveringClinicianId)];
       const cover = l.coveringSupervisor;
       const [unavailable, clients, unreadAlerts, supervisees] = await Promise.all([
@@ -631,8 +628,8 @@ export async function dismissWhileYouWereAway(actor: Actor, leaveId: string, clo
 export async function whileYouWereAway(actor: Actor, clock: Clock = systemClock) {
   const leave = await recentlyBack(actor, clock);
   if (!leave) return null;
-  const fromDate = localDate(leave.fromDate);
-  const toDate = localDate(leave.toDate);
+  const fromDate = dbDateOf(leave.fromDate);
+  const toDate = dbDateOf(leave.toDate);
   const during = { gte: zonedToUtc(fromDate, 0), lt: zonedToUtc(addDays(toDate, 1), 0) };
   const onCaseload = { client: { treatingClinicianId: actor.id } };
   const client = { select: { code: true } };

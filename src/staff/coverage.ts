@@ -1,6 +1,6 @@
 import type { Target } from '../auth/permissions';
 import { prisma, type Tx } from '../db';
-import type { LocalDate } from '../time';
+import { dbDate, dbDateOf, type LocalDate } from '../time';
 import { leavePhase } from './leave';
 
 /**
@@ -15,9 +15,6 @@ import { leavePhase } from './leave';
 
 type Db = Tx | typeof prisma;
 export type Coverage = NonNullable<Target['coverage']>;
-
-const dbDate = (d: LocalDate) => new Date(`${d}T00:00:00Z`);
-const localDate = (d: Date): LocalDate => d.toISOString().slice(0, 10);
 
 /**
  * Each client's coverage under their treating clinician's open leave.
@@ -55,8 +52,8 @@ export async function coverageOf(
     out.set(c.id, {
       leaveId: leave.id,
       coveringClinicianId: leave.coverage.find((r) => r.clientId === c.id)?.coveringClinicianId ?? leave.coveringClinicianId,
-      fromDate: localDate(leave.fromDate),
-      toDate: localDate(leave.toDate),
+      fromDate: dbDateOf(leave.fromDate),
+      toDate: dbDateOf(leave.toDate),
       cancelledAt: leave.cancelledAt,
     });
   }
@@ -91,7 +88,7 @@ export async function supervisionCoverageOf(
     if (!l.coveringSupervisorId) continue;
     out.set(l.userId, {
       leaveId: l.id, coveringClinicianId: l.coveringSupervisorId,
-      fromDate: localDate(l.fromDate), toDate: localDate(l.toDate), cancelledAt: l.cancelledAt,
+      fromDate: dbDateOf(l.fromDate), toDate: dbDateOf(l.toDate), cancelledAt: l.cancelledAt,
     });
   }
   return out;
@@ -117,7 +114,7 @@ export async function supervisionCoveredBy(db: Db, actorId: string, today: Local
     superviseeIds: l.user.supervisees.map((s) => s.id),
     coverage: {
       leaveId: l.id, coveringClinicianId: actorId,
-      fromDate: localDate(l.fromDate), toDate: localDate(l.toDate), cancelledAt: l.cancelledAt,
+      fromDate: dbDateOf(l.fromDate), toDate: dbDateOf(l.toDate), cancelledAt: l.cancelledAt,
     } satisfies Coverage,
   }));
 }
