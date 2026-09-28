@@ -28,5 +28,12 @@ export const TRANSITIONS: Record<Status, readonly Status[]> = {
 export const canTransition = (from: Status, to: Status): boolean =>
   TRANSITIONS[from].includes(to);
 
+/**
+ * Sessions that have not started: the only ones that may still be cancelled,
+ * withdrawn, moved or handed to another clinician. Derived from the table, so
+ * a status added there cannot be forgotten here.
+ */
+export const UNSTARTED = (Object.keys(TRANSITIONS) as Status[]).filter((s) => canTransition(s, 'cancelled'));
+
 /** Statuses that count against a client's attendance record. */
 export const CHARGEABLE: readonly Status[] = ['no_show', 'late_cancelled'];

@@ -389,7 +389,7 @@ const NOTICE = fixedClock('2026-09-01T13:00:00Z');
 const EXECUTION = fixedClock('2026-09-30T22:00:00Z');
 
 /** Telehealth, so no room is involved and only the clinician can clash. */
-async function book(clientId: string, clinicianId: string, startIso: string, status: 'scheduled' | 'completed' = 'scheduled') {
+async function book(clientId: string, clinicianId: string, startIso: string, status: 'scheduled' | 'arrived' | 'in_session' | 'completed' = 'scheduled') {
   const startAt = new Date(startIso);
   return prisma.appointment.create({
     data: {
@@ -523,6 +523,21 @@ describe('the transfer, in one transaction (P0-6)', () => {
     expect(await prisma.departure.findUniqueOrThrow({ where: { id: departure.id } })).toMatchObject({
       status: 'executed', executedAt: EXECUTION.now(),
     });
+  });
+
+  it('leaves a session already under way on the last day with the clinician running it', async () => {
+    const { manager, alex, beth, kept, ended, departure, decide } = await practice();
+    const keptNow = await book(kept.id, alex.id, '2026-09-30T20:00:00Z', 'in_session');
+    const endedNow = await book(ended.id, alex.id, '2026-09-30T21:00:00Z', 'arrived');
+    await decide(kept.id, 'transfer', beth.id);
+    await decide(ended.id, 'discharge');
+
+    await executeDeparture(actor(manager), departure.id, EXECUTION);
+
+    expect(await prisma.appointment.findUniqueOrThrow({ where: { id: keptNow.id } }))
+      .toMatchObject({ status: 'in_session', clinicianId: alex.id });
+    expect(await prisma.appointment.findUniqueOrThrow({ where: { id: endedNow.id } }))
+      .toMatchObject({ status: 'arrived', clinicianId: alex.id, cancelledAt: null });
   });
 
   it('refuses a client nobody decided, and a transfer to somebody no longer here — before any write', async () => {

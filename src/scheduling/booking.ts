@@ -6,6 +6,7 @@ import { Conflict, NotFound } from '../errors';
 import { addDays, dbDateOf, localDateOf, zonedToUtc, type LocalDate } from '../time';
 import { clientTarget } from '../clients/repository';
 import { appointmentTarget } from './calendar';
+import { UNSTARTED } from './states';
 import { freeSlots, pickRoom, workingWindows, type Span } from './availability';
 import { DURATION_MINUTES, occurrenceKey, planOccurrences, type AppointmentType } from './recurrence';
 
@@ -343,11 +344,16 @@ export async function materialiseSeries(
   if (withdrawn.length) {
     await guarded(
       { actor, action: 'update', resource: 'appointment', clientId: series.clientId, target: await appointmentTarget(series) },
-      (tx) =>
-        tx.appointment.updateMany({
-          where: { id: { in: withdrawn } },
+      async (tx) => {
+        // The plan read these as unstarted; one that has since started stays
+        // as it is, and the throw takes the other withdrawals and the audit
+        // row back out. A rerun plans from a fresh read.
+        const { count } = await tx.appointment.updateMany({
+          where: { id: { in: withdrawn }, status: { in: UNSTARTED } },
           data: { status: 'cancelled', cancelReason: 'series updated', cancelledAt: clock.now() },
-        }),
+        });
+        if (count !== withdrawn.length) throw new Conflict('A session changed while saving', 'stale_status');
+      },
     );
   }
 
@@ -366,6 +372,11 @@ export async function rescheduleAppointment(
 ) {
   const current = await prisma.appointment.findUnique({ where: { id: appointmentId } });
   if (!current) throw new NotFound('Appointment');
+  // A session that happened, or was called off, is history: the correction for
+  // it is a new appointment, not a moved one (states.ts).
+  if (!UNSTARTED.includes(current.status)) {
+    throw new Conflict(`A ${current.status} session cannot be moved`, 'not_reschedulable');
+  }
 
   const type = to.type ?? current.type;
   const modality = to.modality ?? current.modality;
@@ -383,8 +394,8 @@ export async function rescheduleAppointment(
       { actor, action: 'update', resource: 'appointment', resourceId: appointmentId, clientId: current.clientId, target },
       async (tx) => {
         await slotLock(tx, to.date, to.startMinute);
-        return tx.appointment.update({
-          where: { id: appointmentId },
+        const { count } = await tx.appointment.updateMany({
+          where: { id: appointmentId, status: current.status },
           data: {
             startAt, endAt, roomId, type, modality,
             detached: current.seriesId ? true : false,
@@ -395,6 +406,8 @@ export async function rescheduleAppointment(
             groupSessionId: null,
           },
         });
+        if (count === 0) throw new Conflict('The session changed while saving', 'stale_status');
+        return tx.appointment.findUniqueOrThrow({ where: { id: appointmentId } });
       },
     ),
   );

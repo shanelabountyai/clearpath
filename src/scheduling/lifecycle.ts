@@ -22,8 +22,8 @@ export type FeeWaiveReason = 'practice_error' | 'client_disputed' | 'emergency' 
 export type DeclineReason =
   | 'cannot_make_it' | 'need_a_different_time' | 'prefer_earlier' | 'prefer_later';
 
-import { CHARGEABLE, TRANSITIONS, canTransition, type Status } from './states';
-export { CHARGEABLE, TRANSITIONS, canTransition, type Status };
+import { CHARGEABLE, TRANSITIONS, UNSTARTED, canTransition, type Status } from './states';
+export { CHARGEABLE, TRANSITIONS, UNSTARTED, canTransition, type Status };
 
 /**
  * Late or advance, decided from the clock rather than from whoever clicks.

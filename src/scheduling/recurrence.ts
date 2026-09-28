@@ -1,4 +1,5 @@
 import { addDays, daysBetween, weekdayOf, type LocalDate } from '../time';
+import { UNSTARTED as UNSTARTED_STATUSES } from './states';
 
 /**
  * Standing weekly sessions are the backbone of a counseling practice, so the
@@ -80,7 +81,7 @@ export interface ExistingInstance {
 }
 
 /** Statuses that have not yet begun, and so may still be rewritten by an edit. */
-const UNSTARTED = new Set(['scheduled', 'confirmed']);
+const UNSTARTED = new Set<string>(UNSTARTED_STATUSES);
 
 export interface Plan {
   /** Dates with no instance yet. */

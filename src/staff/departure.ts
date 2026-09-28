@@ -7,7 +7,7 @@ import { Conflict, NotFound } from '../errors';
 import { clientUrl, queueToClient } from '../messaging/outbox';
 import { ensurePortalLink } from '../portal/service';
 import { conflictKind } from '../scheduling/booking';
-import { TRANSITIONS as SESSION_TRANSITIONS, type Status as SessionStatus } from '../scheduling/lifecycle';
+import { UNSTARTED } from '../scheduling/lifecycle';
 import { SYSTEM_ACTOR } from '../scheduling/reminders';
 import { daysBetween, localDateOf, zonedToUtc, type LocalDate } from '../time';
 import { ROUTED_CLIENT, routesOf, type RoutedClient } from './coverage';
@@ -320,10 +320,6 @@ export type DepartureBlocker =
    */
   | { kind: 'leave_open'; leaveId: string };
 
-/** Sessions that have not happened yet. Derived, so a new status cannot be forgotten here. */
-const OPEN_SESSIONS = (Object.keys(SESSION_TRANSITIONS) as SessionStatus[])
-  .filter((s) => SESSION_TRANSITIONS[s].length > 0);
-
 /** Practice-local midnight at the start of the last day. */
 const lastDayStart = (lastDayOn: Date) => zonedToUtc(lastDayOn.toISOString().slice(0, 10), 0);
 
@@ -445,7 +441,7 @@ async function blockersOf(db: Tx | typeof prisma, d: DepartureRow, today: LocalD
      AND tstzrange(o."startAt", o."endAt", '[)') && tstzrange(m."startAt", m."endAt", '[)')
     WHERE m."clinicianId" = ${d.userId}
       AND m."startAt" >= ${from}
-      AND m.status::text = ANY(${OPEN_SESSIONS})
+      AND m.status::text = ANY(${UNSTARTED})
     ORDER BY m."startAt"
   `;
   for (const c of clashes) blockers.push({ kind: 'hour_clash', ...c });
@@ -823,7 +819,9 @@ export async function executeDeparture(actor: Actor, departureId: string, clock:
         });
 
         for (const a of assignments) {
-          const future = { clientId: a.clientId, clinicianId: d.userId, startAt: { gte: from }, status: { in: OPEN_SESSIONS } };
+          // Unstarted only: a session under way on the last day is the leaver's to
+          // finish, neither cancelled nor handed to someone mid-hour.
+          const future = { clientId: a.clientId, clinicianId: d.userId, startAt: { gte: from }, status: { in: UNSTARTED } };
           const receiver = a.receivingClinicianId;
 
           if (receiver) {

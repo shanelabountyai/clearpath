@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { guarded } from '../auth/guard';
 import { prisma } from '../db';
 import { Conflict } from '../errors';
@@ -235,6 +235,25 @@ describe('recurring series', () => {
     expect(run.withdrawn).toHaveLength(2);
   });
 
+  it('withdraws nothing that moved on since the plan read it, and says so', async () => {
+    for (let i = 1; i <= 4; i++) await makeRoom(`Room ${i}`);
+    const { series } = await makeSeries();
+    await materialiseSeries(actor(desk), series.id, { from: TUESDAY, horizonDays: 21 });
+    await prisma.appointmentSeries.update({ where: { id: series.id }, data: { weekday: 4 } });
+
+    // The plan reads the 15th as scheduled; the client arrives before the write.
+    const read = await prisma.appointment.findMany({ where: { seriesId: series.id } });
+    const fifteenth = read.find((a) => localDateOf(a.startAt) === '2026-09-15')!;
+    await prisma.appointment.update({ where: { id: fifteenth.id }, data: { status: 'arrived' } });
+    const real = prisma.appointment.findMany.bind(prisma.appointment);
+    vi.spyOn(prisma.appointment, 'findMany').mockImplementation(real as never).mockResolvedValueOnce(read as never);
+
+    await expect(materialiseSeries(actor(desk), series.id, { from: '2026-09-15', horizonDays: 14 }))
+      .rejects.toMatchObject({ code: 'stale_status' });
+    expect((await prisma.appointment.findUniqueOrThrow({ where: { id: fifteenth.id } })).status).toBe('arrived');
+    expect(await prisma.appointment.count({ where: { status: 'cancelled' } })).toBe(0);
+  });
+
   it('records a week it cannot honour instead of failing the whole run', async () => {
     await makeRoom('The only room');
     const { series } = await makeSeries();
@@ -250,6 +269,43 @@ describe('recurring series', () => {
     const run = await materialiseSeries(actor(desk), series.id, { from: TUESDAY, horizonDays: 14 });
     expect(run.skipped).toEqual(['2026-09-08']);
     expect(run.created).toHaveLength(2);
+  });
+});
+
+describe('rescheduling', () => {
+  it('moves only a session that has not started — never one that ended', async () => {
+    await makeRoom('Room 1');
+    const t = await clinicianWorkingTuesdays();
+    const c = await makeClient(t.id);
+    for (const status of ['arrived', 'in_session', 'completed', 'no_show', 'cancelled', 'late_cancelled'] as const) {
+      const appt = await bookAppointment(actor(desk), {
+        clientId: c.id, clinicianId: t.id, date: TUESDAY, startMinute: 540,
+        type: 'standard', modality: 'telehealth',
+      });
+      await prisma.appointment.update({ where: { id: appt.id }, data: { status } });
+      await expect(rescheduleAppointment(actor(desk), appt.id, { date: '2026-09-08', startMinute: 600 }))
+        .rejects.toMatchObject({ code: 'not_reschedulable' });
+      const after = await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } });
+      expect(after.startAt).toEqual(appt.startAt);
+      // Out of the hour, so the next one can book it.
+      await prisma.appointment.update({ where: { id: appt.id }, data: { status: 'cancelled' } });
+    }
+  });
+
+  it('refuses a session that started between the read and the write', async () => {
+    const t = await clinicianWorkingTuesdays();
+    const c = await makeClient(t.id);
+    const appt = await bookAppointment(actor(desk), {
+      clientId: c.id, clinicianId: t.id, date: TUESDAY, startMinute: 540,
+      type: 'standard', modality: 'telehealth',
+    });
+    await prisma.appointment.update({ where: { id: appt.id }, data: { status: 'arrived' } });
+    const real = prisma.appointment.findUnique.bind(prisma.appointment);
+    vi.spyOn(prisma.appointment, 'findUnique').mockImplementation(real as never).mockResolvedValueOnce(appt as never);
+
+    await expect(rescheduleAppointment(actor(desk), appt.id, { date: '2026-09-08', startMinute: 600 }))
+      .rejects.toMatchObject({ code: 'stale_status' });
+    expect((await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } })).startAt).toEqual(appt.startAt);
   });
 });
 
