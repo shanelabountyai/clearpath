@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { auditEvent, guarded } from '../auth/guard';
 import type { Actor } from '../auth/permissions';
+import { PUBLIC_ACTOR } from '../clients/public-inquiry';
 import { clientTarget } from '../clients/repository';
 import { systemClock, DAY, type Clock } from '../clock';
 import { prisma, type Tx } from '../db';
@@ -106,10 +107,44 @@ export async function issuePortalLink(actor: Actor, input: IssuePortalLink) {
   );
 }
 
-async function liveLink(token: string, clock: Clock) {
+/** The actor a token stands for. Honest in the trail: the client did this. */
+const tokenActor = (link: { clientId: string }): Actor =>
+  ({ id: link.clientId, role: 'client' });
+
+type Door =
+  | { action: 'read'; resource: 'portal_link' }
+  | { action: 'update'; resource: 'appointment'; resourceId: string };
+
+const OPEN: Door = { action: 'read', resource: 'portal_link' };
+const onAppointment = (resourceId: string): Door => ({ action: 'update', resource: 'appointment', resourceId });
+
+/**
+ * The link behind a token, or a refusal that is on the record.
+ *
+ * Hard rule 4 wants denials logged, and a link that does not open is one: an
+ * unknown token is logged as the public (there is nobody to name), an expired
+ * one against the client it was issued to. Reason codes only, and never the
+ * token — a log row is not a place to keep a working key.
+ */
+async function liveLink(token: string, clock: Clock, door: Door) {
   const link = await prisma.portalLink.findUnique({ where: { token } });
-  if (!link) throw new NotFound('PortalLink');
-  if (link.expiresAt < clock.now()) throw new Conflict('This link has expired', 'expired');
+  // ponytail: one audit row per unknown-token hit, unthrottled. Behind the demo
+  // gate that is fine; a public deployment wants the enquiry form's per-address
+  // throttle in front of this before a scanner fills the table.
+  if (!link) {
+    await auditEvent(PUBLIC_ACTOR, door.action, door.resource, {
+      resourceId: 'resourceId' in door ? door.resourceId : undefined,
+      rule: 'token', reason: 'refused:unknown_token', allowed: false,
+    });
+    throw new NotFound('PortalLink');
+  }
+  if (link.expiresAt < clock.now()) {
+    await auditEvent(tokenActor(link), door.action, door.resource, {
+      resourceId: 'resourceId' in door ? door.resourceId : link.id,
+      clientId: link.clientId, rule: 'token', reason: 'refused:expired', allowed: false,
+    });
+    throw new Conflict('This link has expired', 'expired');
+  }
   return link;
 }
 
@@ -123,13 +158,16 @@ async function liveLink(token: string, clock: Clock) {
  */
 export async function openPortal(token: string, opts: { clock?: Clock } = {}) {
   const clock = opts.clock ?? systemClock;
-  const link = await liveLink(token, clock);
+  const link = await liveLink(token, clock, OPEN);
   const now = clock.now();
 
-  // One transaction: the read, the touch and the audit row commit together, the
-  // same rule every staff-side read follows through `guarded`. The token door
-  // sits outside the matrix, not outside the log.
-  const { client, settings, appointments } = await prisma.$transaction(async (tx) => {
+  // The client is the actor: they opened their own door. Logged like any other
+  // read of their record, because that is what it is — and decided by the
+  // matrix like one (D-35).
+  const { client, settings, appointments } = await guarded({
+    actor: tokenActor(link), ...OPEN, resourceId: link.id, clientId: link.clientId,
+    target: { ownerClientId: link.clientId },
+  }, async (tx) => {
     const client = await tx.client.findUniqueOrThrow({
       where: { id: link.clientId },
       // Language joins `firstName` here for the same reason it is safe to:
@@ -163,15 +201,6 @@ export async function openPortal(token: string, opts: { clock?: Clock } = {}) {
 
     await tx.portalLink.update({ where: { id: link.id }, data: { lastOpenedAt: now } });
 
-    // The client is the actor: they opened their own door. Logged like any
-    // other read of their record, because that is what it is.
-    await auditEvent(
-      { id: link.clientId, role: 'client' },
-      'read', 'portal_link',
-      { resourceId: link.id, clientId: link.clientId, rule: 'token' },
-      tx as Tx,
-    );
-
     return { client, settings, appointments };
   });
 
@@ -201,8 +230,16 @@ async function ownAppointment(
     select: { id: true, clientId: true, status: true, startAt: true, confirmation: true },
   });
   // Not "forbidden": a token that names someone else's appointment should learn
-  // nothing about whether it exists.
-  if (!appt || appt.clientId !== link.clientId) throw new NotFound('Appointment');
+  // nothing about whether it exists. The record does learn it, against the
+  // token's own client — never the other client's id, which would put them on
+  // this client's trail.
+  if (!appt || appt.clientId !== link.clientId) {
+    await auditEvent(tokenActor(link), 'update', 'appointment', {
+      resourceId: appointmentId, clientId: link.clientId,
+      rule: 'token', reason: 'refused:not_own', allowed: false,
+    });
+    throw new NotFound('Appointment');
+  }
   if (appt.status === 'cancelled' || appt.status === 'late_cancelled') {
     throw new Conflict('That appointment is already cancelled', 'already_cancelled');
   }
@@ -211,10 +248,6 @@ async function ownAppointment(
   }
   return appt;
 }
-
-/** The actor a token stands for. Honest in the trail: the client did this. */
-const tokenActor = (link: { clientId: string }): Actor =>
-  ({ id: link.clientId, role: 'client' });
 
 const tokenRequest = (link: { clientId: string }, appointmentId: string) => ({
   actor: tokenActor(link),
@@ -240,7 +273,7 @@ export async function confirmAppointment(
   opts: { clock?: Clock } = {},
 ) {
   const clock = opts.clock ?? systemClock;
-  const link = await liveLink(token, clock);
+  const link = await liveLink(token, clock, onAppointment(appointmentId));
   const appt = await ownAppointment(link, appointmentId, clock);
 
   // A second tap is the same confirmation, not a second one — the same rule as
@@ -268,7 +301,7 @@ export async function declineAppointment(
   opts: { clock?: Clock; acknowledgeFee?: boolean; reason?: RescheduleReason } = {},
 ) {
   const clock = opts.clock ?? systemClock;
-  const link = await liveLink(token, clock);
+  const link = await liveLink(token, clock, onAppointment(appointmentId));
   const appt = await ownAppointment(link, appointmentId, clock);
 
   const settings = await prisma.practiceSettings.findUnique({ where: { id: 1 } });
@@ -324,7 +357,7 @@ export async function requestReschedule(
   opts: { clock?: Clock } = {},
 ) {
   const clock = opts.clock ?? systemClock;
-  const link = await liveLink(token, clock);
+  const link = await liveLink(token, clock, onAppointment(appointmentId));
   await ownAppointment(link, appointmentId, clock);
 
   const existing = await prisma.rescheduleRequest.findFirst({
@@ -332,18 +365,12 @@ export async function requestReschedule(
   });
   if (existing) return existing;
 
-  return prisma.$transaction(async (tx) => {
-    const request = await tx.rescheduleRequest.create({
+  // `update`, not `create`: the client asked about a session they hold, and
+  // booked nothing. The reason code tells this row from a confirm or decline.
+  return guarded({ ...tokenRequest(link, appointmentId), reason: 'reschedule_requested' }, (tx) =>
+    tx.rescheduleRequest.create({
       data: { appointmentId, clientId: link.clientId, reason },
-    });
-    await auditEvent(
-      { id: link.clientId, role: 'client' },
-      'create', 'appointment',
-      { resourceId: appointmentId, clientId: link.clientId, rule: 'token' },
-      tx as Tx,
-    );
-    return request;
-  });
+    }));
 }
 
 // ──────────────────────────── the front-desk side ────────────────────────────

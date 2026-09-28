@@ -550,16 +550,22 @@ const MATRIX: Record<Role, RoleMatrix> = {
   },
 
   /**
-   * One cell, and it is the whole client-facing surface.
+   * The whole client-facing surface: the portal link and the form link.
    *
    * Clients never authenticate into the staff application; they hold a link.
-   * Reading behind that link and asking for a different time stay outside the
-   * matrix, because neither changes anything. Confirming and declining do —
-   * a decline cancels a session — so the capability is stated here rather than
-   * assumed by whoever wrote the door. `token` still requires the row to be
-   * theirs, so a link that names somebody else's appointment decides `never`.
+   * Every door behind one goes through `guarded` like any staff read, so each
+   * is a cell here rather than a capability assumed by whoever wrote the door
+   * (D-35): reading their schedule, opening and saving a form, submitting it,
+   * and confirming, declining or asking to move a session. `token` still
+   * requires the row to be theirs, so a link that names somebody else's row
+   * decides `never`.
    */
-  client: { appointment: { update: 'token' } },
+  client: {
+    appointment: { update: 'token' },
+    portal_link: { read: 'token' },
+    form_request: { read: 'token', update: 'token' },
+    form_submission: { create: 'token' },
+  },
 
   /**
    * One cell, `unconditional`, and it is the entire public internet.

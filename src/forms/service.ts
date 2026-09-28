@@ -1,7 +1,8 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { auditEvent, guarded } from '../auth/guard';
 import type { Actor } from '../auth/permissions';
 import { systemClock, type Clock, DAY } from '../clock';
+import { PUBLIC_ACTOR } from '../clients/public-inquiry';
 import { clientTarget } from '../clients/repository';
 import { prisma, type Tx } from '../db';
 import { Conflict, NotFound } from '../errors';
@@ -125,6 +126,62 @@ export async function issueForm(
 
 // ───────────────────────── the tokenized client door ─────────────────────────
 
+/** The actor a form link stands for: the client it was issued to. */
+const tokenActor = (clientId: string): Actor => ({ id: clientId, role: 'client' });
+
+type TokenAction = { action: 'read' | 'update'; resource: 'form_request' } | { action: 'create'; resource: 'form_submission' };
+
+/**
+ * The request behind a token, or a refusal that is on the record.
+ *
+ * Hard rule 4 wants denials logged, and a token that does not open is one: an
+ * unknown token is logged as the public (there is nobody to name), an expired
+ * or spent one against the client it was issued to. Reason codes only — the
+ * token itself never reaches the log, since a log row is not a place to keep
+ * a working key.
+ */
+async function liveRequest(token: string, clock: Clock, door: TokenAction) {
+  const request = await prisma.formRequest.findUnique({
+    where: { token },
+    // The client's language and code and nothing else about them. The page is
+    // rendered in Spanish or it is not, so a leaked link discloses that either
+    // way — this adds no surface, where a name would. The code is for the
+    // clinician's alert, never the page.
+    include: { template: true, client: { select: { language: true, code: true } } },
+  });
+  const refuse = async (reason: string, clientId?: string) => {
+    await auditEvent(
+      clientId ? tokenActor(clientId) : PUBLIC_ACTOR, door.action, door.resource,
+      { resourceId: request?.id, clientId, rule: 'token', reason: `refused:${reason}`, allowed: false },
+    );
+  };
+  // ponytail: one audit row per unknown-token hit, unthrottled. Behind the demo
+  // gate that is fine; a public deployment wants the enquiry form's per-address
+  // throttle in front of this before a scanner fills the table.
+  if (!request) {
+    await refuse('unknown_token');
+    throw new NotFound('FormRequest');
+  }
+  if (request.status === 'submitted') {
+    await refuse('already_submitted', request.clientId);
+    throw new Conflict('This form has already been submitted', 'already_submitted');
+  }
+  if (request.expiresAt < clock.now()) {
+    await refuse('expired', request.clientId);
+    throw new Conflict('This link has expired', 'expired');
+  }
+  return request;
+}
+
+/** The `guarded` request for a live form link: the client, on their own row. */
+const tokenRequest = (request: { id: string; clientId: string }, door: TokenAction) => ({
+  actor: tokenActor(request.clientId),
+  ...door,
+  resourceId: request.id,
+  clientId: request.clientId,
+  target: { ownerClientId: request.clientId },
+});
+
 /**
  * Everything reachable with a token, and nothing more: the form itself and the
  * client's own saved answers.
@@ -135,23 +192,17 @@ export async function issueForm(
  */
 export async function openForm(token: string, opts: { clock?: Clock } = {}) {
   const clock = opts.clock ?? systemClock;
-  const request = await prisma.formRequest.findUnique({
-    where: { token },
-    // The client's language and nothing else about them. The page is rendered
-    // in Spanish or it is not, so a leaked link discloses that either way —
-    // this adds no surface, where a name would.
-    include: { template: true, client: { select: { language: true } } },
-  });
-  if (!request) throw new NotFound('FormRequest');
-  if (request.status === 'submitted') throw new Conflict('This form has already been submitted', 'already_submitted');
-  if (request.expiresAt < clock.now()) throw new Conflict('This link has expired', 'expired');
+  const door = { action: 'read', resource: 'form_request' } as const;
+  const request = await liveRequest(token, clock, door);
 
-  if (request.status === 'sent') {
-    await prisma.formRequest.update({
-      where: { id: request.id },
-      data: { status: 'started', startedAt: clock.now() },
-    });
-  }
+  await guarded(tokenRequest(request, door), async (tx) => {
+    if (request.status === 'sent') {
+      await tx.formRequest.update({
+        where: { id: request.id },
+        data: { status: 'started', startedAt: clock.now() },
+      });
+    }
+  });
 
   return {
     name: request.template.name,
@@ -165,15 +216,14 @@ export async function openForm(token: string, opts: { clock?: Clock } = {}) {
 /** Save progress. A screener asking hard questions is not a one-sitting task. */
 export async function saveDraft(token: string, answers: Answers, opts: { clock?: Clock } = {}) {
   const clock = opts.clock ?? systemClock;
-  const request = await prisma.formRequest.findUnique({ where: { token } });
-  if (!request) throw new NotFound('FormRequest');
-  if (request.status === 'submitted') throw new Conflict('This form has already been submitted', 'already_submitted');
-  if (request.expiresAt < clock.now()) throw new Conflict('This link has expired', 'expired');
+  const door = { action: 'update', resource: 'form_request' } as const;
+  const request = await liveRequest(token, clock, door);
 
-  await prisma.formRequest.update({
-    where: { id: request.id },
-    data: { draftAnswers: answers as object, status: 'started', startedAt: request.startedAt ?? clock.now() },
-  });
+  await guarded(tokenRequest(request, door), (tx) =>
+    tx.formRequest.update({
+      where: { id: request.id },
+      data: { draftAnswers: answers as object, status: 'started', startedAt: request.startedAt ?? clock.now() },
+    }));
 }
 
 interface SubmitResult {
@@ -195,13 +245,8 @@ export async function submitForm(
   opts: { clock?: Clock } = {},
 ): Promise<SubmitResult> {
   const clock = opts.clock ?? systemClock;
-  const request = await prisma.formRequest.findUnique({
-    where: { token },
-    include: { template: true, client: { select: { id: true, treatingClinicianId: true, code: true } } },
-  });
-  if (!request) throw new NotFound('FormRequest');
-  if (request.status === 'submitted') throw new Conflict('This form has already been submitted', 'already_submitted');
-  if (request.expiresAt < clock.now()) throw new Conflict('This link has expired', 'expired');
+  const door = { action: 'create', resource: 'form_submission' } as const;
+  const request = await liveRequest(token, clock, door);
 
   const schema = asSchema(request.template.schema);
   const errors = validateSubmission(schema, answers);
@@ -217,9 +262,14 @@ export async function submitForm(
   const signature = schema.fields.find((f) => f.type === 'signature');
   const now = clock.now();
 
-  return prisma.$transaction(async (tx) => {
+  // Minted here so the audit row can name the submission it describes.
+  const submissionId = randomUUID();
+
+  // The client is the actor: they filled this in through their own link.
+  return guarded({ ...tokenRequest(request, door), resourceId: submissionId }, async (tx) => {
     const submission = await tx.formSubmission.create({
       data: {
+        id: submissionId,
         requestId: request.id,
         clientId: request.clientId,
         templateId: request.templateId,
@@ -263,14 +313,6 @@ export async function submitForm(
         tx,
       );
     }
-
-    // The client is the actor: they filled this in through their own link.
-    await auditEvent(
-      { id: request.clientId, role: 'client' },
-      'create', 'form_submission',
-      { resourceId: submission.id, clientId: request.clientId, rule: 'token' },
-      tx as Tx,
-    );
 
     return { submissionId: submission.id, needsReview: score.needsReview, reasons: score.reasons };
   });

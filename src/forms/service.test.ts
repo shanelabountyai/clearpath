@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../db';
-import { Conflict, Forbidden } from '../errors';
+import { Conflict, Forbidden, NotFound } from '../errors';
 import { actor, makeClient, makeUser, resetDb, settings } from '../test/harness';
 import { fixedClock, DAY } from '../clock';
 import { consentToTreat, wellbeingCheckIn } from './fixtures';
@@ -177,6 +177,60 @@ describe('the tokenized link', () => {
     expect(msg!.body).toContain('/f/');
     expect(msg!.body.toLowerCase()).not.toContain('screener');
     expect(msg!.body.toLowerCase()).not.toContain('counseling');
+  });
+});
+
+describe('the token door is on the record', () => {
+  const rows = (where: object = {}) =>
+    prisma.auditEvent.findMany({ where: { resource: { in: ['form_request', 'form_submission'] }, actorRole: { in: ['client', 'public'] }, ...where } });
+
+  it('logs opening and saving as the client, by token, against the request', async () => {
+    const request = await issueScreener();
+    await openForm(request.token);
+    await saveDraft(request.token, { item_1: 2 });
+
+    const logged = await rows();
+    expect(logged.map((r) => r.action).sort()).toEqual(['read', 'update']);
+    for (const r of logged) {
+      expect(r).toMatchObject({
+        actorId: client.id, actorRole: 'client', resource: 'form_request',
+        resourceId: request.id, clientId: client.id, allowed: true, rule: 'token',
+      });
+    }
+    expect(JSON.stringify(logged)).not.toContain('item_1');
+  });
+
+  it('names the submission it created', async () => {
+    const request = await issueScreener();
+    const { submissionId } = await submitForm(request.token, zeros);
+    const [row] = await rows({ resource: 'form_submission' });
+    expect(row).toMatchObject({ action: 'create', resourceId: submissionId, rule: 'token', allowed: true });
+  });
+
+  it('logs an unknown token as a public refusal, with no client', async () => {
+    await expect(openForm('not-a-token')).rejects.toBeInstanceOf(NotFound);
+    await expect(saveDraft('not-a-token', {})).rejects.toBeInstanceOf(NotFound);
+    await expect(submitForm('not-a-token', zeros)).rejects.toBeInstanceOf(NotFound);
+
+    const logged = await rows();
+    expect(logged).toHaveLength(3);
+    for (const r of logged) {
+      expect(r).toMatchObject({ actorRole: 'public', clientId: null, allowed: false, reason: 'refused:unknown_token' });
+    }
+  });
+
+  it('logs an expired or spent link as a refusal against its client', async () => {
+    const request = await issueScreener();
+    const later = fixedClock(new Date(Date.now() + 40 * DAY));
+    await expect(openForm(request.token, { clock: later })).rejects.toMatchObject({ code: 'expired' });
+    await submitForm(request.token, zeros);
+    await expect(saveDraft(request.token, zeros)).rejects.toMatchObject({ code: 'already_submitted' });
+
+    const refused = await rows({ allowed: false });
+    expect(refused.map((r) => r.reason).sort()).toEqual(['refused:already_submitted', 'refused:expired']);
+    for (const r of refused) {
+      expect(r).toMatchObject({ actorId: client.id, actorRole: 'client', resourceId: request.id, clientId: client.id });
+    }
   });
 });
 

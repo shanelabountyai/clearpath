@@ -124,6 +124,38 @@ describe('what is behind the door', () => {
     await expect(openPortal(link.token, { clock: later })).rejects.toMatchObject({ code: 'expired' });
   });
 
+  it('logs an unknown token as a public refusal, and an expired one against its client', async () => {
+    await expect(openPortal('not-a-token', { clock })).rejects.toBeInstanceOf(NotFound);
+    const link = await issuePortalLink(actor(desk), { clientId: client.id, expiresInDays: 1, clock });
+    const later = fixedClock(new Date(clock.now().getTime() + 3 * DAY));
+    await expect(openPortal(link.token, { clock: later })).rejects.toMatchObject({ code: 'expired' });
+
+    const refused = await prisma.auditEvent.findMany({ where: { allowed: false }, orderBy: { at: 'asc' } });
+    expect(refused).toHaveLength(2);
+    expect(refused[0]).toMatchObject({
+      actorRole: 'public', action: 'read', resource: 'portal_link', clientId: null, reason: 'refused:unknown_token',
+    });
+    expect(refused[1]).toMatchObject({
+      actorId: client.id, actorRole: 'client', action: 'read', resource: 'portal_link',
+      resourceId: link.id, clientId: client.id, reason: 'refused:expired',
+    });
+  });
+
+  it('logs a token naming somebody else\'s appointment as a refusal', async () => {
+    const neighbour = await makeClient(mine.id);
+    const theirs = await bookOne(neighbour.id, mine.id);
+    const link = await issuePortalLink(actor(desk), { clientId: client.id, clock });
+
+    await expect(confirmAppointment(link.token, theirs.id, { clock })).rejects.toBeInstanceOf(NotFound);
+    const row = await prisma.auditEvent.findFirstOrThrow({ where: { allowed: false } });
+    // Logged against the token's client, never the neighbour: the refusal
+    // must not put the other client's id on this client's trail.
+    expect(row).toMatchObject({
+      actorId: client.id, action: 'update', resource: 'appointment',
+      resourceId: theirs.id, clientId: client.id, reason: 'refused:not_own',
+    });
+  });
+
   it('logs the open as the client, by token', async () => {
     await open();
     const row = await prisma.auditEvent.findFirstOrThrow({
@@ -193,10 +225,13 @@ describe('asking for a different time', () => {
     await requestReschedule(await linkFor(), appt.id, 'prefer_earlier', { clock });
 
     const row = await prisma.auditEvent.findFirstOrThrow({
-      where: { actorRole: 'client', action: 'create', resource: 'appointment' },
+      where: { actorRole: 'client', resource: 'appointment' },
     });
-    expect(row.clientId).toBe(client.id);
-    expect(row.rule).toBe('token');
+    // `update`, not `create`: the client asked about a session; they booked nothing.
+    expect(row).toMatchObject({
+      action: 'update', resourceId: appt.id, clientId: client.id,
+      rule: 'token', allowed: true, reason: 'reschedule_requested',
+    });
   });
 });
 

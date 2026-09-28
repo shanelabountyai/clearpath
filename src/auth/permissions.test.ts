@@ -121,10 +121,13 @@ const ALLOWED: Record<Role, Set<string>> = {
     leave: 'read create update',
   }),
   auditor: spec({ audit_log: 'read' }),
-  // The tokenized door, and nothing else in the matrix. `update` is confirm and
-  // decline; reading behind the link and asking for a different time change
-  // nothing and stay outside this file.
-  client: spec({ appointment: 'update' }),
+  // The tokenized doors, and nothing else in the matrix. Every one of them goes
+  // through `guarded`, so each is a cell: reading behind the portal link,
+  // opening and saving a form, submitting it, and confirming, declining or
+  // asking to move a session (`appointment:update`).
+  client: spec({
+    appointment: 'update', portal_link: 'read', form_request: 'read update', form_submission: 'create',
+  }),
   // The public enquiry form. One cell, and it is the whole anonymous internet.
   public: spec({ inquiry: 'create' }),
 };
@@ -888,7 +891,7 @@ describe('caseload scoping', () => {
   });
 });
 
-describe('the client role reaches exactly one cell, and only their own row', () => {
+describe('the client role reaches only its token cells, and only their own row', () => {
   const holder = { id: ME, role: 'client' as Role };
 
   it('confirms and declines their own appointment', () => {
@@ -902,6 +905,16 @@ describe('the client role reaches exactly one cell, and only their own row', () 
     expect(can(holder, 'update', 'appointment', {}).allowed).toBe(false);
   });
 
+  it('opens their own portal and form, and nobody else\'s', () => {
+    for (const [action, resource] of [
+      ['read', 'portal_link'], ['read', 'form_request'], ['update', 'form_request'], ['create', 'form_submission'],
+    ] as [Action, Resource][]) {
+      expect(can(holder, action, resource, { ownerClientId: ME }).allowed, `${resource}:${action}`).toBe(true);
+      expect(can(holder, action, resource, { ownerClientId: OTHER }).allowed, `${resource}:${action}`).toBe(false);
+      expect(can(holder, action, resource, {}).allowed, `${resource}:${action}`).toBe(false);
+    }
+  });
+
   it('cannot be talked into it by a relationship or by break-glass', () => {
     const dressed = { id: ME, role: 'client' as Role, breakGlass: { reason: 'x' } };
     const everything: Target = {
@@ -910,7 +923,7 @@ describe('the client role reaches exactly one cell, and only their own row', () 
     };
     for (const resource of RESOURCES) {
       for (const action of ACTIONS) {
-        if (resource === 'appointment' && action === 'update') continue;
+        if (ALLOWED.client.has(`${resource}:${action}`)) continue;
         expect(can(dressed, action, resource, { ...everything, ownerClientId: ME }).allowed,
           `${resource}:${action}`).toBe(false);
       }
