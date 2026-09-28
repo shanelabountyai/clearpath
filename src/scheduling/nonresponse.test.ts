@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DAY, HOUR, fixedClock } from '../clock';
 import { prisma } from '../db';
 import { dispatchOutbox, recordDeliveryReceipt } from '../messaging/delivery';
@@ -198,6 +198,47 @@ describe('the status transition, and the four times it must not happen', () => {
     expect(after.status).toBe('cancelled');
     expect(after.confirmation).toBe('no_response');
     expect(after.chargeFeeCents).toBeNull();
+  });
+});
+
+/**
+ * The sweep reads every candidate first and writes one by one, so a person can
+ * act on a row in between. Their answer wins; the sweep's snapshot does not.
+ */
+describe('a row that moved after the sweep read it', () => {
+  /** Hand the sweep the list as it was, then let `change` happen. */
+  async function staleSweep(change: () => Promise<unknown>) {
+    const findMany = prisma.appointment.findMany.bind(prisma.appointment);
+    // Default is the bound real method: a spy's own pass-through breaks
+    // Prisma's delegates for every later test in the file.
+    vi.spyOn(prisma.appointment, 'findMany').mockImplementation(findMany as never).mockImplementationOnce((async (args: never) => {
+      const rows = await findMany(args);
+      await change();
+      return rows;
+    }) as never);
+    return runNonResponseSweep(afterGrace());
+  }
+
+  it('does not charge, or overwrite the answer of, a client who confirmed', async () => {
+    const appt = await asked();
+
+    const out = await staleSweep(() =>
+      prisma.appointment.update({ where: { id: appt.id }, data: { confirmation: 'confirmed' } }));
+
+    expect(out).toEqual({ recorded: [], noShowed: [] });
+    const after = await reload(appt.id);
+    expect(after).toMatchObject({ status: 'scheduled', confirmation: 'confirmed', chargeFeeCents: null });
+  });
+
+  it('does not charge a client the front desk checked in', async () => {
+    const appt = await asked();
+
+    const out = await staleSweep(() =>
+      setStatus(actor(desk), appt.id, 'arrived', { clock: fixedClock(new Date(START.getTime() + 22 * MINUTE)) }));
+
+    expect(out).toEqual({ recorded: [appt.id], noShowed: [] });
+    const after = await reload(appt.id);
+    expect(after).toMatchObject({ status: 'arrived', confirmation: 'no_response', chargeFeeCents: null });
   });
 });
 

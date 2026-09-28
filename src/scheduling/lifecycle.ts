@@ -66,6 +66,12 @@ type TransitionOpts = {
      * role that may not open a record, so only codes go in it.
      */
     auditReason?: string;
+    /**
+     * What the caller saw when it decided, if it decided on an older read than
+     * this one — the sweep chose on a list, and a person can act in between.
+     * The write lands only while the row still says this.
+     */
+    expect?: { status: Status; confirmation?: Confirmation };
 };
 
 /**
@@ -125,7 +131,21 @@ async function transition(actor: Actor, appointmentId: string, to: Status, opts:
       // and a clinician only their own sessions and caseload (K4-C1).
       target: { ownerClientId: appt.clientId, ...(await appointmentTarget(appt)) },
     },
-    (tx) => tx.appointment.update({ where: { id: appointmentId }, data }),
+    async (tx) => {
+      // The check above read the row; this write names what it read, so a row
+      // that moved in between refuses instead of being painted over — and the
+      // throw takes the audit row back out with it.
+      const { count } = await tx.appointment.updateMany({
+        where: {
+          id: appointmentId,
+          status: opts.expect?.status ?? from,
+          ...(opts.expect?.confirmation ? { confirmation: opts.expect.confirmation } : {}),
+        },
+        data,
+      });
+      if (count === 0) throw new Conflict('The session changed while saving', 'stale_status');
+      return tx.appointment.findUniqueOrThrow({ where: { id: appointmentId } });
+    },
   );
 }
 
@@ -217,15 +237,20 @@ export async function waiveFee(
       // readable by the auditor without disclosing anything about the person.
       reason: `${reason}:${appt.chargeFeeCents}`,
     },
-    (tx) =>
-      tx.appointment.update({
-        where: { id: appointmentId },
+    async (tx) => {
+      // Guarded on the amount the audit reason names, so two waivers racing
+      // leave one row saying what was reversed, not two.
+      const { count } = await tx.appointment.updateMany({
+        where: { id: appointmentId, feeWaivedAt: null, chargeFeeCents: appt.chargeFeeCents },
         data: {
           chargeFeeCents: 0,
           feeWaivedById: actor.id,
           feeWaivedAt: (opts.clock ?? systemClock).now(),
           feeWaiveReason: reason,
         },
-      }),
+      });
+      if (count === 0) throw new Conflict('That fee is already waived', 'already_waived');
+      return tx.appointment.findUniqueOrThrow({ where: { id: appointmentId } });
+    },
   );
 }

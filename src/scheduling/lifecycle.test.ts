@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fixedClock, HOUR } from '../clock';
 import { prisma } from '../db';
 import { Forbidden } from '../errors';
@@ -11,6 +11,18 @@ const TUESDAY = '2026-09-01';
 const THREE_PM = 15 * 60;
 /** 2026-09-01 15:00 America/New_York is 19:00 UTC. */
 const SESSION_START = new Date('2026-09-01T19:00:00Z');
+
+/**
+ * The next `n` reads of an appointment return `row`, as if they ran before a
+ * write that has since landed. Falls through to a bound real method after:
+ * a spy's own pass-through and vi.restoreAllMocks both break Prisma's
+ * delegates, and every later test in the file would read `undefined`.
+ */
+function staleReads(row: unknown, n: number) {
+  const real = prisma.appointment.findUnique.bind(prisma.appointment);
+  const spy = vi.spyOn(prisma.appointment, 'findUnique').mockImplementation(real as never);
+  for (let i = 0; i < n; i++) spy.mockResolvedValueOnce(row as never);
+}
 
 describe('the state machine (pure)', () => {
   it('walks the happy path', () => {
@@ -124,6 +136,29 @@ describe('against the database', () => {
     const appt = await book();
     await expect(setStatus(actor(desk), appt.id, to)).rejects.toMatchObject({ code: 'use_cancel' });
     expect((await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } })).status).toBe('scheduled');
+  });
+
+  /**
+   * The check reads, the write lands later. Whatever moved the row in between,
+   * the write must refuse rather than paint over it — a stale `scheduled`
+   * would otherwise late-cancel (and bill) a client already checked in.
+   */
+  describe('a transition that lost a race', () => {
+    it('refuses when the status moved between the read and the write', async () => {
+      const appt = await book();
+      const stale = await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } });
+      await setStatus(actor(desk), appt.id, 'arrived');
+      staleReads(stale, 2); // cancelAppointment reads, then transition does
+
+      await expect(
+        cancelAppointment(actor(desk), appt.id, { clock: fixedClock(new Date(SESSION_START.getTime() - 3 * HOUR)) }),
+      ).rejects.toMatchObject({ code: 'stale_status' });
+
+      const after = await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } });
+      expect(after.status).toBe('arrived');
+      expect(after.chargeFeeCents).toBeNull();
+      expect(await prisma.auditEvent.count({ where: { resourceId: appt.id, action: 'update', allowed: true } })).toBe(1);
+    });
   });
 
   it('frees the room and the clinician once cancelled', async () => {
@@ -329,6 +364,18 @@ describe('against the database', () => {
     it('refuses when there is no fee to waive', async () => {
       const appt = await book();
       await expect(waiveFee(actor(admin), appt.id, 'goodwill')).rejects.toMatchObject({ code: 'no_fee' });
+    });
+
+    it('refuses a second waiver that read the row before the first one wrote', async () => {
+      const appt = await charged();
+      const stale = await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } });
+      await waiveFee(actor(admin), appt.id, 'goodwill');
+      staleReads(stale, 1);
+
+      await expect(waiveFee(actor(admin), appt.id, 'practice_error')).rejects.toMatchObject({ code: 'already_waived' });
+
+      expect((await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } })).feeWaiveReason).toBe('goodwill');
+      expect(await prisma.auditEvent.count({ where: { resource: 'fee', action: 'waive', allowed: true } })).toBe(1);
     });
 
     it('refuses to waive the same fee twice', async () => {

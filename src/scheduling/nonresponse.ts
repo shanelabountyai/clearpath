@@ -1,6 +1,7 @@
 import { guarded } from '../auth/guard';
 import { systemClock, type Clock } from '../clock';
 import { prisma } from '../db';
+import { Conflict } from '../errors';
 import { confirmationRequired, type ConfirmationSettings } from './confirmation';
 import { setStatus } from './lifecycle';
 import { SYSTEM_ACTOR } from './reminders';
@@ -104,37 +105,72 @@ export async function runNonResponseSweep(
     // untouchable. Only a row nobody has said anything about is guessable —
     // which also means a cancelled or completed session falls straight through
     // to the communication fact and no further.
-    if (autoNoShow && mayCharge && appt.status === 'scheduled') {
-      // One transaction: the status, the fee and the audit row commit together
-      // or not at all. The fee is derived inside `setStatus` from
-      // `noShowFeeCents`, so a sweep-set no-show and a human-set one are the
-      // same money — the policy is about the fact, not about who noticed it.
-      await setStatus(SYSTEM_ACTOR, appt.id, 'no_show', {
-        clock,
-        confirmation: 'no_response',
-        auditReason: 'no_response',
-      });
+    //
+    // Each write names the row it read — `pending`, and `scheduled` for the
+    // charge — because the list is a snapshot and a person may have answered,
+    // checked them in or cancelled since. A refused charge falls back to only
+    // recording the silence; a refused record means somebody answered, and the
+    // sweep has nothing left to say.
+    if (autoNoShow && mayCharge && appt.status === 'scheduled' && await noShow(appt.id, clock)) {
       result.noShowed.push(appt.id);
-    } else {
-      await guarded(
-        {
-          actor: SYSTEM_ACTOR,
-          action: 'update',
-          resource: 'appointment',
-          resourceId: appt.id,
-          clientId: appt.clientId,
-          // Two different silences, and the trail says which. `undelivered`
-          // means the practice never reached them — the row a client disputing
-          // a policy would need, and the row an auditor would look for when the
-          // charge everybody expected is missing.
-          reason: eligible && !reached ? 'no_response_undelivered' : 'no_response',
-        },
-        (tx) =>
-          tx.appointment.update({ where: { id: appt.id }, data: { confirmation: 'no_response' } }),
-      );
+    } else if (!(await recordSilence(appt.id, appt.clientId, eligible && !reached))) {
+      continue;
     }
     result.recorded.push(appt.id);
   }
 
   return result;
+}
+
+const stale = (e: unknown) => e instanceof Conflict && e.code === 'stale_status';
+
+async function noShow(id: string, clock: Clock): Promise<boolean> {
+  try {
+
+      // One transaction: the status, the fee and the audit row commit together
+      // or not at all. The fee is derived inside `setStatus` from
+      // `noShowFeeCents`, so a sweep-set no-show and a human-set one are the
+      // same money — the policy is about the fact, not about who noticed it.
+    await setStatus(SYSTEM_ACTOR, id, 'no_show', {
+      clock,
+      confirmation: 'no_response',
+      auditReason: 'no_response',
+      expect: { status: 'scheduled', confirmation: 'pending' },
+    });
+    return true;
+  } catch (e) {
+    // `bad_transition` too: the fresh read found a row no-show cannot follow.
+    if (stale(e) || (e instanceof Conflict && e.code === 'bad_transition')) return false;
+    throw e;
+  }
+}
+
+async function recordSilence(id: string, clientId: string, undelivered: boolean): Promise<boolean> {
+  try {
+    await guarded(
+      {
+        actor: SYSTEM_ACTOR,
+        action: 'update',
+        resource: 'appointment',
+        resourceId: id,
+        clientId,
+        // Two different silences, and the trail says which. `undelivered`
+        // means the practice never reached them — the row a client disputing
+        // a policy would need, and the row an auditor would look for when the
+        // charge everybody expected is missing.
+        reason: undelivered ? 'no_response_undelivered' : 'no_response',
+      },
+      async (tx) => {
+        const { count } = await tx.appointment.updateMany({
+          where: { id, confirmation: 'pending' },
+          data: { confirmation: 'no_response' },
+        });
+        if (count === 0) throw new Conflict('Answered while sweeping', 'stale_status');
+      },
+    );
+    return true;
+  } catch (e) {
+    if (stale(e)) return false;
+    throw e;
+  }
 }
