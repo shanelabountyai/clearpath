@@ -8,6 +8,7 @@ import { minutesToHHMM, utcToZoned } from '../../../../src/time';
 import { Card, PageHeader, StatusChip, TierBanner } from '../../../../src/ui/primitives';
 import { cancelGroup } from '../actions';
 import { ConfirmButton } from '@/src/ui/confirm-button';
+import { canTransition, type Status } from '@/src/scheduling/states';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +30,8 @@ export default async function GroupSessionPage({ params }: { params: Promise<{ i
   const live = group.appointments.filter(
     (a) => a.status !== 'cancelled' && a.status !== 'late_cancelled',
   );
+  // Who the button reaches: someone already arrived keeps their session (D-37).
+  const cancellable = group.appointments.filter((a) => canTransition(a.status as Status, 'cancelled'));
 
   return (
     <>
@@ -36,13 +39,13 @@ export default async function GroupSessionPage({ params }: { params: Promise<{ i
         title={group.topic ?? 'Group session'}
         subtitle={when ? `${when.date} · ${minutesToHHMM(when.minutes)} · ${live.length} attending` : 'No attendees'}
         actions={
-          live.length > 0 ? (
+          cancellable.length > 0 ? (
             <form action={cancelGroup}>
               <input type="hidden" name="groupId" value={group.id} />
               <ConfirmButton
                 variant="danger"
-                title={`Cancel this session for all ${live.length} attending?`}
-                consequence="Every attendee's appointment is cancelled at once, not just one person's."
+                title={`Cancel this session for the ${cancellable.length} not yet arrived?`}
+                consequence="Each of their appointments is cancelled at once, as a practice cancellation: no late fee."
                 confirmLabel="Cancel the session"
               >
                 Cancel the session

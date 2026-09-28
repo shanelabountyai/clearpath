@@ -7,7 +7,7 @@ import { zonedToUtc, type LocalDate } from '../time';
 import { clientTarget } from '../clients/repository';
 import { claimRoom, slotLock } from './booking';
 import { appointmentTarget } from './calendar';
-import { cancelAppointment } from './lifecycle';
+import { TRANSITIONS, canTransition, type Status } from './states';
 import { DURATION_MINUTES, type AppointmentType } from './recurrence';
 
 type Modality = 'in_person' | 'telehealth';
@@ -154,28 +154,43 @@ export async function getGroupSession(actor: Actor, groupSessionId: string) {
 }
 
 /**
- * Cancel every attendee's appointment.
+ * Cancel the session for everyone still booked into it, as the practice.
  *
- * Each one goes through the ordinary cancellation, so each attendee is judged
- * against the late-cancel window on their own — the practice cancelling a group
- * is not the same event as one client dropping out of it, and the fee logic
- * already knows the difference.
+ * Not N client cancellations: the practice calling off its own hour is not a
+ * client dropping out, so nobody is judged against the late-cancel window and
+ * nobody is charged. Only attendees who can still become `cancelled` are
+ * touched — someone already arrived, or already cancelled on their own, keeps
+ * the record they have. All of it or none of it, in one transaction: one
+ * denial refuses the lot, and a status that moves underneath us is a Conflict.
  */
 export async function cancelGroupSession(
   actor: Actor,
   groupSessionId: string,
   opts: { reason?: string; clock?: Clock } = {},
 ) {
-  const clock = opts.clock ?? systemClock;
+  const now = (opts.clock ?? systemClock).now();
+  const open = (Object.keys(TRANSITIONS) as Status[]).filter((s) => canTransition(s, 'cancelled'));
   const members = await prisma.appointment.findMany({
-    where: { groupSessionId, status: { notIn: ['cancelled', 'late_cancelled'] } },
-    select: { id: true },
+    where: { groupSessionId, status: { in: open } },
+    select: { id: true, clientId: true, clinicianId: true },
   });
+  if (!members.length) return { cancelled: [] as string[] };
+  const targets = await Promise.all(members.map((m) => appointmentTarget(m)));
+  const ids = members.map((m) => m.id);
 
-  const cancelled: string[] = [];
-  for (const m of members) {
-    await cancelAppointment(actor, m.id, { reason: opts.reason, clock });
-    cancelled.push(m.id);
-  }
-  return { cancelled };
+  await guardedAll(
+    members.map((m, i) => ({
+      actor, action: 'update' as const, resource: 'appointment' as const,
+      resourceId: m.id, clientId: m.clientId, reason: 'group_cancelled',
+      target: { ownerClientId: m.clientId, ...targets[i] },
+    })),
+    async (tx) => {
+      const { count } = await tx.appointment.updateMany({
+        where: { id: { in: ids }, status: { in: open } },
+        data: { status: 'cancelled', cancelledAt: now, cancelledById: actor.id, cancelReason: opts.reason ?? null },
+      });
+      if (count !== ids.length) throw new Conflict('An attendee changed while cancelling', 'stale_status');
+    },
+  );
+  return { cancelled: ids };
 }

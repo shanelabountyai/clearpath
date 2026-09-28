@@ -226,20 +226,52 @@ describe('leaving and ending a group', () => {
     ).rejects.toMatchObject({ code: 'clinician_busy' });
   });
 
-  it('cancels every attendee, judging each against the late-cancel window', async () => {
+  it('cancels every attendee as a practice cancellation, with no fee even inside the window', async () => {
     await makeRoom('Room 1');
     const group = await book((await attendees(3)).map((c) => c.id));
 
-    // Well ahead of the session: an advance cancellation, no fee.
-    const early = fixedClock(new Date(group.appointments[0]!.startAt.getTime() - 5 * DAY));
+    // An hour before: a client doing this would be late. The practice is not.
+    const late = fixedClock(new Date(group.appointments[0]!.startAt.getTime() - 3_600_000));
     const { cancelled } = await cancelGroupSession(actor(desk), group.id, {
-      reason: 'clinician unwell', clock: early,
+      reason: 'clinician unwell', clock: late,
     });
 
     expect(cancelled).toHaveLength(3);
     const rows = await prisma.appointment.findMany();
     expect(rows.every((r) => r.status === 'cancelled')).toBe(true);
     expect(rows.every((r) => r.chargeFeeCents === null)).toBe(true);
+    expect(rows.every((r) => r.cancelledById === desk.id)).toBe(true);
+    const audit = await prisma.auditEvent.findMany({
+      where: { action: 'update', resource: 'appointment', allowed: true },
+    });
+    expect(audit).toHaveLength(3);
+    expect(audit.every((a) => a.reason === 'group_cancelled')).toBe(true);
+  });
+
+  it('leaves attendees who are already past scheduled alone', async () => {
+    await makeRoom('Room 1');
+    const group = await book((await attendees(3)).map((c) => c.id));
+    const [here, gone] = group.appointments;
+    await setStatus(actor(desk), here!.id, 'arrived');
+    await setStatus(actor(desk), gone!.id, 'late_cancelled');
+
+    const { cancelled } = await cancelGroupSession(actor(desk), group.id);
+
+    expect(cancelled).toHaveLength(1);
+    expect((await prisma.appointment.findUniqueOrThrow({ where: { id: here!.id } })).status).toBe('arrived');
+    expect((await prisma.appointment.findUniqueOrThrow({ where: { id: gone!.id } })).status).toBe('late_cancelled');
+  });
+
+  it('cancels all of the group or none of it', async () => {
+    await makeRoom('Room 1');
+    // A clinician who treats one attendee may touch that appointment, not the others'.
+    const other = await makeUser('therapist');
+    const theirs = await makeClient(other.id);
+    const group = await book([theirs.id, ...(await attendees(2)).map((c) => c.id)]);
+
+    await expect(cancelGroupSession(actor(other), group.id)).rejects.toBeInstanceOf(Forbidden);
+    const rows = await prisma.appointment.findMany({ where: { groupSessionId: group.id } });
+    expect(rows.every((r) => r.status === 'scheduled')).toBe(true);
   });
 
   it('frees the room once the group is cancelled', async () => {
