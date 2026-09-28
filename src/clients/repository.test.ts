@@ -198,6 +198,12 @@ describe('editing', () => {
     expect(created.code).toBe('TC-500');
   });
 
+  it('refuses to move the client to another clinician, which would strand their alerts', async () => {
+    // @ts-expect-error treatingClinicianId is not a ClientEdit field
+    await expect(updateClient(actor(desk), client.id, { treatingClinicianId: other.id })).rejects.toBeInstanceOf(TypeError);
+    expect((await getClient(actor(therapist), client.id)).treatingClinicianId).toBe(therapist.id);
+  });
+
   it('does not let an unrelated clinician edit', async () => {
     await expect(updateClient(actor(other), client.id, { phone: '555' })).rejects.toBeInstanceOf(Forbidden);
   });

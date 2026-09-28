@@ -274,13 +274,17 @@ export type ClientEdit = Partial<{
   /// Which set of message bodies — and which deny-list. See `DENY_LISTS`.
   language: 'en' | 'es';
   status: 'active' | 'inactive';
-  treatingClinicianId: string;
+  /// No `treatingClinicianId`: moving a client moves their alerts (hard rule 9),
+  /// and only departure does both. See `updateClient`.
   /// How they found us. Demographics, not a clinical answer — see D-04.
   referralSource: 'gp' | 'friend' | 'search' | 'other' | null;
   referralNote: string | null;
 }>;
 
 export async function updateClient(actor: Actor, clientId: string, data: ClientEdit) {
+  // The type already refuses it; this catches a cast or a spread form. An edit
+  // here would leave open alerts with the old clinician.
+  if ('treatingClinicianId' in data) throw new TypeError('Change the treating clinician through departure');
   const target = await clientTarget(clientId);
 
   return guarded(

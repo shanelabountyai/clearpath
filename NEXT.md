@@ -1,6 +1,6 @@
 # Next
 
-**Nothing queued. The review reopen (2026-09-26) closed on 2026-09-28.** Items #1-9 (D-33..D-41) and D-42 are all done. D-42 put the process-note state refusals (`note_closed`/`still_open`) inside `guarded`, as reason-coded `allowed:false` rows. A non-author is now refused by the matrix, on the record, before learning the note's state. The author filter is in SQL, and the client's language is out of the forms error message. The remaining review P2s are logged in WRITEUP §58 "Not done". Unit 42/3370 EXIT=0. The next session starts only when Shane picks something, for example one of the §58 gaps.
+**Nothing queued. D-43 closed on 2026-09-28:** `updateClient` can no longer change `treatingClinicianId`. The field is gone from `ClientEdit`, and a runtime check refuses it. Departure is the only path that moves a caseload, and it moves the alerts too (hard rule 9). The remaining gaps are in WRITEUP §58 "Not done": float cents parse (hard rule 6), recurrence includes today, DST-Sunday arithmetic, no-show before start, CI `retries: 1`, and the missing structural tests. The next session starts only when Shane picks one.
 
 Cost baseline 2026-09-26: Neon 29.9 active-h/23d; Vercel $1.86 effective/$0.80 billed.
 
