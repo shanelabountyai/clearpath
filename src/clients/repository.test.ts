@@ -29,7 +29,7 @@ describe('reading a client record', () => {
   });
 
   it('the treating clinician reads it', async () => {
-    await expect(getClient(actor(therapist), client.id)).resolves.toBeTruthy();
+    await expect(getClient(actor(therapist), client.id)).resolves.toMatchObject({ id: client.id });
   });
 
   it('another clinician does not', async () => {
@@ -263,9 +263,9 @@ describe("a supervisor and their supervisee's client", () => {
     const assoc = await makeUser('associate', { supervisorId: boss.id });
     const theirClient = await makeClient(assoc.id);
 
-    await expect(getClient(actor(boss), theirClient.id)).resolves.toBeTruthy();
+    await expect(getClient(actor(boss), theirClient.id)).resolves.toMatchObject({ id: theirClient.id });
     await prisma.user.update({ where: { id: assoc.id }, data: { supervisorId: newBoss.id } });
     await expect(getClient(actor(boss), theirClient.id)).rejects.toBeInstanceOf(Forbidden);
-    await expect(getClient(actor(newBoss), theirClient.id)).resolves.toBeTruthy();
+    await expect(getClient(actor(newBoss), theirClient.id)).resolves.toMatchObject({ id: theirClient.id });
   });
 });

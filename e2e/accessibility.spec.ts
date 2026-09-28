@@ -33,14 +33,15 @@ test.describe('client-facing pages carry no WCAG 2.2 AA violation', () => {
       join "Client" c on c.id = r."clientId"
       where t.key = 'intake' and r.status <> 'submitted' and c.language = 'en'
       order by r.token limit 1`);
-    test.skip(!token, 'no unsubmitted intake in the seed');
+    // A seed that stops issuing one must fail here, not quietly scan nothing.
+    expect(token, 'no unsubmitted intake in the seed').toBeTruthy();
     await page.goto(`/f/${token}`);
     await scan(page);
   });
 
   test('the client portal', async ({ page }) => {
     const token = sql(`select token from "PortalLink" order by "createdAt" desc limit 1`);
-    test.skip(!token, 'no portal link in the seed');
+    expect(token, 'no portal link in the seed').toBeTruthy();
     await page.goto(`/p/${token}`);
     await scan(page);
   });

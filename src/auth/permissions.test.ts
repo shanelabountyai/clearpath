@@ -225,7 +225,14 @@ describe('permission matrix — every cell', () => {
     RESOURCES.flatMap((res) => ACTIONS.map((a) => [role, res, a] as [Role, Resource, Action])),
   );
 
-  it('covers every cell', () => expect(cells).toHaveLength(ROLES.length * RESOURCES.length * ACTIONS.length));
+  // A misspelt cell in the spec ('discrad') names nothing, so the matrix cell it
+  // meant is expected to deny — and passes if the matrix forgot it too.
+  it('the spec names only real cells', () => {
+    const real = new Set(cells.map(([, r, a]) => `${r}:${a}`));
+    for (const role of ROLES) {
+      expect([...ALLOWED[role], ...UNCONDITIONAL[role]].filter((k) => !real.has(k)), role).toEqual([]);
+    }
+  });
 
   it.each(cells)('%s / %s / %s', (role, resource, action) => {
     const key = `${resource}:${action}`;
@@ -857,8 +864,25 @@ describe('auditor', () => {
   });
 });
 
+// Authorization decisions come from can(); nothing else branches on a role —
+// by comparison either way round and loose or strict, by switch, or by
+// membership in a list.
+const ROLE = `['"](${ROLES.join('|')})['"]`;
+const ROLE_CHECK = new RegExp([
+  String.raw`\brole\s*[=!]==?`,
+  String.raw`[=!]==?\s*[\w.]*\brole\b`,
+  `${ROLE}\\s*[=!]==?`,
+  `[=!]==?\\s*${ROLE}`,
+  String.raw`switch\s*\([^)]*\brole\s*\)`,
+  `case\\s+${ROLE}\\s*:`,
+  String.raw`\.includes\(\s*[\w.]*\brole\s*\)`,
+].join('|'));
+
+const adHocRoleChecks = (files: [string, string][]) =>
+  files.filter(([, src]) => ROLE_CHECK.test(src)).map(([path]) => path);
+
 it('no ad-hoc role checks outside the auth module', () => {
-  const offenders: string[] = [];
+  const files: [string, string][] = [];
   // `app/` is where the rule is easiest to break: a page that draws its own
   // conclusion about a role is an endpoint doing its own authorization.
   for (const dir of ['src', 'app']) {
@@ -867,14 +891,26 @@ it('no ad-hoc role checks outside the auth module', () => {
       if (!/\.tsx?$/.test(f) || f.endsWith('.test.ts')) continue;
       if (path.startsWith('src/auth/') || path.startsWith('src/generated/')) continue;
       if (!statSync(path).isFile()) continue;
-      const src = readFileSync(path, 'utf8');
-      // Authorization decisions come from can(); nothing else branches on a role.
-      if (/\.role\s*[=!]==|['"](front_desk|therapist|associate|supervisor|admin|auditor|public)['"]\s*[=!]==/.test(src)) {
-        offenders.push(path);
-      }
+      files.push([path, readFileSync(path, 'utf8')]);
     }
   }
-  expect(offenders).toEqual([]);
+  expect(adHocRoleChecks(files)).toEqual([]);
+});
+
+it.each([
+  `if (actor.role === 'admin')`,
+  `if (actor.role == 'admin')`,
+  `if (session.role != "auditor")`,
+  `if ('supervisor' === actor.role)`,
+  `const { role } = actor; if (role !== 'therapist') return;`,
+  `if (wanted === user.role)`,
+  `switch (actor.role) { default: }`,
+  `switch (role) {}`,
+  `case 'front_desk': return null;`,
+  `if (['admin', 'supervisor'].includes(actor.role))`,
+  `if (CLINICAL.includes(role))`,
+])('the role-check guard catches %s', (src) => {
+  expect(adHocRoleChecks([['planted.ts', src]])).toEqual(['planted.ts']);
 });
 
 describe('caseload scoping', () => {

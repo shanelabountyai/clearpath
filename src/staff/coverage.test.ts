@@ -67,7 +67,7 @@ describe('which leave and which coverer (clientTarget)', () => {
 
   it('opens the record on both boundary days and neither side, and each read names the leave', async () => {
     const p = await onLeave();
-    for (const day of [FIRST, LAST]) await expect(getClient(actor(p.dev), p.mine.id, day)).resolves.toBeTruthy();
+    for (const day of [FIRST, LAST]) await expect(getClient(actor(p.dev), p.mine.id, day)).resolves.toMatchObject({ id: p.mine.id });
     for (const day of [DAY_BEFORE, BACK]) {
       await expect(getClient(actor(p.dev), p.mine.id, day)).rejects.toBeInstanceOf(Forbidden);
     }
@@ -88,7 +88,7 @@ describe('which leave and which coverer (clientTarget)', () => {
   it('stops the day after an early return, and a cancelled leave resolves to nothing', async () => {
     const p = await onLeave();
     await editLeaveDates(actor(p.ray), p.leave.id, { fromDate: NOUR_AWAY.fromDate, toDate: '2026-10-20' }, DAY_TWO);
-    await expect(getClient(actor(p.dev), p.mine.id, on('2026-10-20'))).resolves.toBeTruthy();
+    await expect(getClient(actor(p.dev), p.mine.id, on('2026-10-20'))).resolves.toMatchObject({ id: p.mine.id });
     await expect(getClient(actor(p.dev), p.mine.id, on('2026-10-21'))).rejects.toBeInstanceOf(Forbidden);
 
     const winter = await createLeave(
@@ -187,7 +187,7 @@ describe('a supervisor away, and who countersigns in their place (P1-3, D-21)', 
     const p = await rosaAway();
     const ids = async (clock: Clock) => (await listClients(actor(p.dev), { clock })).map((c) => c.id);
 
-    await expect(getClient(actor(p.dev), p.client.id, DAY_TWO)).resolves.toBeTruthy();
+    await expect(getClient(actor(p.dev), p.client.id, DAY_TWO)).resolves.toMatchObject({ id: p.client.id });
     await expect(getClient(actor(p.dev), p.client.id, BACK)).rejects.toBeInstanceOf(Forbidden);
     expect(await ids(DAY_TWO)).toEqual([p.client.id]);
     expect(await ids(BACK)).toEqual([]);
@@ -402,7 +402,7 @@ describe('the leaver\'s supervisor is away (D-26)', () => {
 
     await executeDeparture(actor(p.ray), p.departure.id, lastDay);
     expect(await p.at()).toMatchObject({ recipientId: p.dev.id, coveringLeaveId: leave.id });
-    await expect(getClient(actor(p.dev), p.ended.id, lastDay)).resolves.toBeTruthy();
+    await expect(getClient(actor(p.dev), p.ended.id, lastDay)).resolves.toMatchObject({ id: p.ended.id });
 
     expect(await runLeaveAlertSweep(LAST)).toEqual([]);
     expect(await runLeaveAlertSweep(BACK)).toEqual([p.alert.id]);

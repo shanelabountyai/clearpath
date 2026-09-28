@@ -52,9 +52,12 @@ for (const [role, name] of Object.entries(USERS)) {
 
     const crashed: string[] = [];
     for (const route of ROUTES) {
-      const res = await page.goto(route, { waitUntil: 'commit' });
+      const res = await page.goto(route);
       const status = res?.status() ?? 0;
       if (status >= 500) crashed.push(`${route} → ${status}`);
+      // A page that throws once streaming has begun answers 200 and renders
+      // the staff error boundary instead, so the status alone cannot see it.
+      else if (await page.getByText('This page could not load').count()) crashed.push(`${route} → error boundary`);
     }
 
     // Named in the failure, because "one of eleven routes broke" is not a

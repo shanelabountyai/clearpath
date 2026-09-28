@@ -280,7 +280,7 @@ describe('a process note has one reader, forever', () => {
 describe('progress note reads', () => {
   it("let a supervisor read their supervisee's", async () => {
     const note = await draft();
-    await expect(getProgressNote(actor(supervisor), note.id)).resolves.toBeTruthy();
+    await expect(getProgressNote(actor(supervisor), note.id)).resolves.toMatchObject({ id: note.id });
   });
 
   it('deny an unrelated clinician', async () => {
@@ -296,7 +296,7 @@ describe('progress note reads', () => {
   it('let the practice manager through only with break-glass, flagged', async () => {
     const note = await draft();
     await expect(getProgressNote(actor(admin), note.id)).rejects.toBeInstanceOf(Forbidden);
-    await expect(getProgressNote(actor(admin, 'records_request'), note.id)).resolves.toBeTruthy();
+    await expect(getProgressNote(actor(admin, 'records_request'), note.id)).resolves.toMatchObject({ id: note.id });
     const [row] = await prisma.auditEvent.findMany({ where: { breakGlass: true, allowed: true } });
     expect(row!.reason).toBe('records_request');
   });
@@ -312,18 +312,65 @@ describe('progress note reads', () => {
  * on the shape of the call — `authorId` must appear inside the query itself,
  * which is the difference between filtering in SQL and filtering in JS.
  */
-function unauthoredProcessNoteQueries(): string[] {
+/** The `{...}` value of `key:` in `args`, braces balanced; '' if absent or not a literal. */
+function objectAt(args: string, key: string): string {
+  const m = new RegExp(`\\b${key}\\s*:\\s*\\{`).exec(args);
+  if (!m) return '';
+  let depth = 0;
+  for (let i = m.index + m[0].length - 1; i < args.length; i++) {
+    if (args[i] === '{') depth++;
+    else if (args[i] === '}' && --depth === 0) return args.slice(m.index, i + 1);
+  }
+  return '';
+}
+
+function unauthoredProcessNoteQueries(files: [string, string][]): string[] {
   const offenders: string[] = [];
-  for (const path of sourceFiles()) {
-    const src = readSource(path);
-    for (const m of src.matchAll(/\bprocessNote\.\w+/g)) {
-      const args = callArgs(src, (m.index ?? 0) + m[0].length);
-      if (!args.includes('authorId')) offenders.push(`${path}: ${m[0]}`);
+  for (const [path, src] of files) {
+    // Raw SQL has no shape to check; the table's only door is the delegate.
+    if (src.includes('"ProcessNote"')) offenders.push(`${path}: raw SQL`);
+    // Through a relation (a client's `processNotes`, an amendment's
+    // `processNote`) the query is on another model and names nobody's author.
+    for (const m of src.matchAll(/\bprocessNotes?\s*:\s*(true|\{)/g)) offenders.push(`${path}: nested ${m[0]}`);
+    // An alias (`const pn = tx.processNote`, `{ processNote } = prisma`) hides
+    // every call made through it from the check below.
+    if (/\{[^}]*\bprocessNote\b[^}]*\}\s*=/.test(src)) offenders.push(`${path}: destructured`);
+    for (const m of src.matchAll(/(?:\.|\[\s*['"`])processNote\b(?:['"`]\s*\])?(?:\s*(\.\w+))?/g)) {
+      const [call, op] = m;
+      if (!op) { offenders.push(`${path}: aliased ${call}`); continue; }
+      const args = callArgs(src, (m.index ?? 0) + call.length);
+      if (/^\.create(Many)?$/.test(op)) {
+        if (!objectAt(args, 'data').includes('authorId')) offenders.push(`${path}: ${call}`);
+        continue;
+      }
+      // The pre-guard lookup: one row by id, never its content, so `guarded`
+      // can decide on the author and log a refusal against the right client.
+      const peek = op === '.findUnique' && objectAt(args, 'select') && !/\bcontent\b|\binclude\b/.test(args);
+      // Anything else filters on the author in SQL.
+      if (!peek && !objectAt(args, 'where').includes('authorId')) offenders.push(`${path}: ${call}`);
     }
   }
   return offenders;
 }
 
 it('every process-note query names the author inside the query', () => {
-  expect(unauthoredProcessNoteQueries()).toEqual([]);
+  expect(unauthoredProcessNoteQueries(sourceFiles().map((p) => [p, readSource(p)]))).toEqual([]);
+});
+
+it.each([
+  `tx.processNote.findMany({ where: { clientId }, select: { authorId: true, content: true } })`,
+  `prisma.processNote.findFirst({ where: { id }, orderBy: { authorId: 'asc' } })`,
+  `prisma.processNote.findUnique({ where: { id }, select: { content: true } })`,
+  `prisma.processNote.findUnique({ where: { id }, include: { amendments: true } })`,
+  `prisma.processNote.findUnique({ where: { id } })`,
+  `tx.processNote.updateMany({ where: filter, data: { authorId: x } })`,
+  `tx.processNote.create({ data: { clientId, content } })`,
+  `const pn = tx.processNote; pn.findMany({})`,
+  `const { processNote } = prisma; processNote.findMany({})`,
+  `prisma['processNote'].findMany({ where: { clientId } })`,
+  `prisma.client.findMany({ include: { processNotes: true } })`,
+  `prisma.noteAmendment.findMany({ select: { processNote: { select: { content: true } } } })`,
+  'prisma.$queryRaw`SELECT content FROM "ProcessNote" WHERE "clientId" = ${id}`',
+])('the process-note guard catches %s', (src) => {
+  expect(unauthoredProcessNoteQueries([['planted.ts', src]])).not.toEqual([]);
 });

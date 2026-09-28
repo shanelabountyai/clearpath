@@ -65,8 +65,8 @@ describe('booking is caseload-only for clinicians (SEC-07)', () => {
   });
 
   it('still lets the treating clinician and front desk book, desk for anyone with anyone', async () => {
-    await expect(oneOff(b, b.id)).resolves.toBeTruthy();
-    await expect(oneOff(desk, a.id, 720)).resolves.toBeTruthy();
+    await expect(oneOff(b, b.id)).resolves.toMatchObject({ clientId: bsClient.id, clinicianId: b.id });
+    await expect(oneOff(desk, a.id, 720)).resolves.toMatchObject({ clientId: bsClient.id, clinicianId: a.id });
   });
 });
 
@@ -76,7 +76,8 @@ describe("a progress note is decided on the client, not the session's clinician 
     await expect(createProgressNote(actor(a), { appointmentId: appt.id, content: 'x' }))
       .rejects.toBeInstanceOf(Forbidden);
     expect(await prisma.progressNote.count()).toBe(0);
-    await expect(createProgressNote(actor(b), { appointmentId: appt.id, content: 'x' })).resolves.toBeTruthy();
+    await expect(createProgressNote(actor(b), { appointmentId: appt.id, content: 'x' }))
+      .resolves.toMatchObject({ appointmentId: appt.id, clientId: bsClient.id, authorId: b.id });
   });
 });
 
@@ -136,8 +137,8 @@ describe('a session by id: its clinician and the caseload only (SEC-08)', () => 
 
   it('allows the treating clinician, and the clinician the session is booked with', async () => {
     const appt = await oneOff(desk, a.id);
-    await expect(getAppointment(actor(b), appt.id)).resolves.toBeTruthy();
-    await expect(getAppointment(actor(a), appt.id)).resolves.toBeTruthy();
+    await expect(getAppointment(actor(b), appt.id)).resolves.toMatchObject({ id: appt.id });
+    await expect(getAppointment(actor(a), appt.id)).resolves.toMatchObject({ id: appt.id });
   });
 });
 

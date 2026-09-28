@@ -57,7 +57,7 @@ describe('issuing the door', () => {
   });
 
   it('lets the treating clinician issue one, and refuses a stranger', async () => {
-    await expect(issuePortalLink(actor(mine), { clientId: client.id, clock })).resolves.toBeTruthy();
+    await expect(issuePortalLink(actor(mine), { clientId: client.id, clock })).resolves.toMatchObject({ clientId: client.id });
     const other = await makeUser('therapist');
     await expect(
       issuePortalLink(actor(other), { clientId: client.id, clock }),
