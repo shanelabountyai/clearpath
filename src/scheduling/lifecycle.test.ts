@@ -114,8 +114,16 @@ describe('against the database', () => {
   it('refuses an illegal transition', async () => {
     const appt = await book();
     await expect(setStatus(actor(desk), appt.id, 'completed')).rejects.toMatchObject({ code: 'bad_transition' });
-    await setStatus(actor(desk), appt.id, 'cancelled');
+    await cancelAppointment(actor(desk), appt.id, { clock: fixedClock(new Date(SESSION_START.getTime() - 48 * HOUR)) });
     await expect(setStatus(actor(desk), appt.id, 'confirmed')).rejects.toMatchObject({ code: 'bad_transition' });
+  });
+
+  // `advanceStatus` posts whatever `to` the form carries. A hand-edited form
+  // must not pick "cancelled" for an hour-before cancel and dodge the fee.
+  it.each(['cancelled', 'late_cancelled'] as const)('refuses %s through setStatus — only cancelAppointment decides', async (to) => {
+    const appt = await book();
+    await expect(setStatus(actor(desk), appt.id, to)).rejects.toMatchObject({ code: 'use_cancel' });
+    expect((await prisma.appointment.findUniqueOrThrow({ where: { id: appt.id } })).status).toBe('scheduled');
   });
 
   it('frees the room and the clinician once cancelled', async () => {

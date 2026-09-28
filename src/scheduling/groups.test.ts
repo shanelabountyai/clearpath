@@ -5,7 +5,7 @@ import { fixedClock, DAY } from '../clock';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { bookAppointment, rescheduleAppointment } from './booking';
 import { bookGroupSession, cancelGroupSession, getGroupSession } from './groups';
-import { setStatus } from './lifecycle';
+import { cancelAppointment, setStatus } from './lifecycle';
 import { createProgressNote, getProgressNote, listProgressNotes } from '../notes/service';
 
 const TUESDAY = '2026-09-01';
@@ -253,7 +253,7 @@ describe('leaving and ending a group', () => {
     const group = await book((await attendees(3)).map((c) => c.id));
     const [here, gone] = group.appointments;
     await setStatus(actor(desk), here!.id, 'arrived');
-    await setStatus(actor(desk), gone!.id, 'late_cancelled');
+    await cancelAppointment(actor(desk), gone!.id, { clock: fixedClock('2026-09-01T12:00:00Z') });
 
     const { cancelled } = await cancelGroupSession(actor(desk), group.id);
 

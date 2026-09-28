@@ -7,7 +7,7 @@ import { queueToClient } from '../messaging/outbox';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
 import { bookAppointment } from './booking';
 import { bookGroupSession } from './groups';
-import { setStatus } from './lifecycle';
+import { cancelAppointment, setStatus } from './lifecycle';
 import { runNonResponseSweep } from './nonresponse';
 import { runReminderHorizon } from './reminders';
 
@@ -187,7 +187,7 @@ describe('the status transition, and the four times it must not happen', () => {
 
   it('does not resurrect a cancelled hour into a no-show fee', async () => {
     const appt = await asked();
-    await setStatus(actor(desk), appt.id, 'cancelled', {
+    await cancelAppointment(actor(desk), appt.id, {
       clock: fixedClock(new Date(START.getTime() - 48 * HOUR)),
     });
 

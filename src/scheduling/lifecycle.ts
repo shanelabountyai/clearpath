@@ -54,12 +54,7 @@ async function loadSettings() {
   );
 }
 
-/** Move a session along its lifecycle. Fees are derived, never supplied. */
-export async function setStatus(
-  actor: Actor,
-  appointmentId: string,
-  to: Status,
-  opts: {
+type TransitionOpts = {
     reason?: string;
     clock?: Clock;
     confirmation?: Confirmation;
@@ -71,8 +66,22 @@ export async function setStatus(
      * role that may not open a record, so only codes go in it.
      */
     auditReason?: string;
-  } = {},
-) {
+};
+
+/**
+ * Move a session along its lifecycle. Fees are derived, never supplied.
+ *
+ * Not a door to either cancellation: which one it is decides a fee, and that
+ * is `cancelAppointment`'s to read off the clock, not the caller's to pick.
+ */
+export async function setStatus(actor: Actor, appointmentId: string, to: Status, opts: TransitionOpts = {}) {
+  if (to === 'cancelled' || to === 'late_cancelled') {
+    throw new Conflict('Cancel through cancelAppointment', 'use_cancel');
+  }
+  return transition(actor, appointmentId, to, opts);
+}
+
+async function transition(actor: Actor, appointmentId: string, to: Status, opts: TransitionOpts) {
   const clock = opts.clock ?? systemClock;
   const appt = await prisma.appointment.findUnique({ where: { id: appointmentId } });
   if (!appt) throw new NotFound('Appointment');
@@ -140,7 +149,7 @@ export async function cancelAppointment(
 
   const settings = await loadSettings();
   const to = classifyCancellation(appt.startAt, clock.now(), settings.lateCancelWindowHours);
-  return setStatus(actor, appointmentId, to, opts);
+  return transition(actor, appointmentId, to, opts);
 }
 
 /**
