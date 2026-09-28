@@ -307,6 +307,17 @@ export async function createClient(
  * The fee is its own resource so the practice manager can run the business
  * without breaking glass into a clinical record to change a number.
  */
+/**
+ * "95.5" → 9550, by string, never through a float: `Math.round(Number(raw) * 100)`
+ * is right for most inputs and silently rounds the rest ("12.345"). More than
+ * two decimals, a sign, an exponent or a stray character is refused, not rounded.
+ */
+export function centsFromDollars(raw: string): number {
+  const m = /^(\d{1,6})(?:\.(\d{1,2}))?$/.exec(raw);
+  if (!m) throw new TypeError('A fee is dollars with at most two decimals');
+  return Number(m[1]) * 100 + Number((m[2] ?? '').padEnd(2, '0'));
+}
+
 export async function setFee(actor: Actor, clientId: string, feeCents: number | null) {
   if (feeCents !== null && (!Number.isInteger(feeCents) || feeCents < 0)) {
     throw new TypeError('Fees are integer cents, and not negative');

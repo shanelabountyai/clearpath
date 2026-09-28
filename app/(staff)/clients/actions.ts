@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { requireSession } from '../../../src/session';
-import { setFee, updateClient } from '../../../src/clients/repository';
+import { centsFromDollars, setFee, updateClient } from '../../../src/clients/repository';
 import { issueForm } from '../../../src/forms/service';
 import { createProcessNote } from '../../../src/notes/service';
 import { issuePortalLink } from '../../../src/portal/service';
@@ -13,7 +13,7 @@ export async function saveFee(formData: FormData) {
   const raw = String(formData.get('feeDollars') ?? '').trim();
   // Money is integer cents everywhere inside the app; the form is the only
   // place dollars exist, and it converts once, here.
-  await setFee(actor, id, raw === '' ? null : Math.round(Number(raw) * 100));
+  await setFee(actor, id, raw === '' ? null : centsFromDollars(raw));
   revalidatePath(`/clients/${id}`);
 }
 

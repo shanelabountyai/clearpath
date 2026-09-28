@@ -1,6 +1,6 @@
 # Next
 
-**Nothing queued. D-43 closed on 2026-09-28:** `updateClient` can no longer change `treatingClinicianId`. The field is gone from `ClientEdit`, and a runtime check refuses it. Departure is the only path that moves a caseload, and it moves the alerts too (hard rule 9). The remaining gaps are in WRITEUP §58 "Not done": float cents parse (hard rule 6), recurrence includes today, DST-Sunday arithmetic, no-show before start, CI `retries: 1`, and the missing structural tests. The next session starts only when Shane picks one.
+**Nothing queued. D-44 closed on 2026-09-28:** the fee form's dollars are parsed to cents by string (`centsFromDollars` in `src/clients/repository.ts`). Input that a float would have rounded, such as `12.345`, `1e3` or `-5`, is now refused. The fee input carries the same `pattern`. The remaining gaps are in WRITEUP §58 "Not done": recurrence includes today, DST-Sunday arithmetic, no-show before start, CI `retries: 1`, and the missing structural tests. The next session starts only when Shane picks one.
 
 Cost baseline 2026-09-26: Neon 29.9 active-h/23d; Vercel $1.86 effective/$0.80 billed.
 

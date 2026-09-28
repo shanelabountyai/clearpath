@@ -4557,8 +4557,12 @@ two reason-coded rows and no grant.
 - Recurrence expansion includes today (`recurrence.ts:119`).
 - Minute arithmetic on a DST Sunday (`booking.ts:121`, `calendar.ts:61`).
 - A no-show can be recorded before the session starts.
-- `clients/actions.ts:16` parses cents as `Math.round(Number(raw) * 100)`,
-  which goes through a float.
+- ~~`clients/actions.ts:16` parses cents as `Math.round(Number(raw) * 100)`,
+  which goes through a float.~~ Closed 2026-09-28 (D-44). `centsFromDollars`
+  splits the string at the point and builds cents from two integers. Input
+  with more than two decimals, a sign, an exponent or a `$` is refused rather
+  than rounded. The fee input carries the same `pattern`, so the browser
+  catches it first.
 - ~~`updateClient` changing `treatingClinicianId` does not reroute open
   alerts.~~ Closed 2026-09-28 (D-43). No caller ever changed it that way, so
   the field is removed from `ClientEdit` and `updateClient` refuses it at
@@ -4847,6 +4851,7 @@ two reason-coded rows and no grant.
 | The guard tests are tested (D-41, 2026-09-28) | Review #9: the structural guards only caught the shapes their author thought of. The role grep missed `==`/`!=`, a literal on the left against a destructured `role`, `switch`/`case`, `.includes(role)` and the `client` role (its list is now built from `ROLES`). The process-note grep passed any call whose argument text contained `authorId` anywhere, including a `select` or a comment, and could not see an alias, a nested `include: { processNotes }`, or raw SQL on `"ProcessNote"`. Now `authorId` must be in the `where` literal (or in `data` for a create). The one exemption is the pre-guard `findUnique` with a `select` that names no `content` and no `include`, which exists so `guarded` can decide on the author and log a refusal against the right client. Both guards are now functions, and each has a table of planted offenders that must go red (11 role shapes, 13 query shapes); rewriting the real `listProcessNotes` to carry `authorId` only in a comment turns it red. `denials.spec.ts` also treated anything under 500 as fine. A page that throws after streaming starts answers 200 and renders the staff error boundary. This was proven with a planted throw under a temporary `loading.tsx`: without `loading.tsx` the same throw answers 500 and was already caught. `accessibility.spec.ts` now fails, not skips, when the seed issues no intake or portal token. The permission matrix's `covers every cell` compared a product with itself; it now checks that the spec names only real cells. Access reads assert which row came back (`toMatchObject({ id })`), not just that something did |
 | P2 review findings: fix the two that break a hard rule, log the rest (D-42, 2026-09-28) | Shane's choice after #1-9 closed. Fixed: process-note `note_closed`/`still_open` refusals thrown before `guarded` (unaudited, rule 4) and the JS author check in `amendProcessNote`; `client.language` in a `forms/service.ts` error message (rule 3). Logged as known gaps, not fixed: recurrence includes today, DST-Sunday minute arithmetic, no-show before start, float cents parse in `clients/actions.ts`, `updateClient` not rerouting alerts, CI `retries: 1`, missing tests for PHI-in-logs / bare `new Date()` / scattered `status =` / alert routing |
 | `updateClient` cannot change the treating clinician (D-43, 2026-09-28) | Shane picked it from §58, because it breaks hard rule 9. Moving a client has to move their open alerts, and departure already does both. No caller ever passed `treatingClinicianId`, so removing the field closes the gap without a second rerouting path to keep in sync. The type refuses it and so does a runtime check (for a cast or a spread form). The test was mutation-checked: removing the guard turns it red |
+| Fee input parsed by string, refused when it would round (D-44, 2026-09-28) | Shane picked it from §58, because it breaks hard rule 6. `Math.round(Number(raw) * 100)` gave the right answer for ordinary input and silently rounded `12.345`. It also accepted `1e3` as $1,000. Rounding a fee someone typed is a guess about which cents they meant, so the parser refuses it instead. The test was mutation-checked: putting the float parse back turns it red |
 
 ## What this project deliberately is not
 

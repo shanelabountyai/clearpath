@@ -173,7 +173,8 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
                     Sliding-scale fee (blank for standard)
                   </label>
                   <input
-                    id="feeDollars" name="feeDollars" inputMode="decimal"
+                    id="feeDollars" name="feeDollars" inputMode="decimal" pattern="\d{1,6}(\.\d{1,2})?"
+                    title="Dollars, with at most two decimals"
                     defaultValue={client.feeCents === null ? '' : (client.feeCents / 100).toFixed(2)}
                     className="mt-1 w-32 rounded-[var(--radius)] border px-2 py-1 text-body"
                     style={{ borderColor: 'var(--border)', background: 'var(--surface-raised)' }}

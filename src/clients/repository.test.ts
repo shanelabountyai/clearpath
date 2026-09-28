@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../db';
 import { Forbidden } from '../errors';
 import { actor, makeClient, makeUser, resetDb, settings } from '../test/harness';
-import { clientAffordances, consentStatus, createClient, effectiveFeeCents, getClient, listClients, possibleDuplicates, setFee, updateClient } from './repository';
+import { centsFromDollars, clientAffordances, consentStatus, createClient, effectiveFeeCents, getClient, listClients, possibleDuplicates, setFee, updateClient } from './repository';
 
 let desk: Awaited<ReturnType<typeof makeUser>>;
 let therapist: Awaited<ReturnType<typeof makeUser>>;
@@ -177,6 +177,16 @@ describe('fees', () => {
   it('refuse anything that is not integer cents', async () => {
     await expect(setFee(actor(admin), client.id, 65.5)).rejects.toBeInstanceOf(TypeError);
     await expect(setFee(actor(admin), client.id, -100)).rejects.toBeInstanceOf(TypeError);
+  });
+
+  it('parse dollars to cents by string, refusing what a float would round', () => {
+    expect(centsFromDollars('0')).toBe(0);
+    expect(centsFromDollars('95')).toBe(9500);
+    expect(centsFromDollars('95.5')).toBe(9550);
+    expect(centsFromDollars('0.29')).toBe(29); // 0.29 * 100 = 28.999999999999996
+    for (const bad of ['12.345', '-5', '1e3', '$90', '9 0', '.5', '5.', 'abc', '1234567']) {
+      expect(() => centsFromDollars(bad), bad).toThrow(TypeError);
+    }
   });
 
   it('are not front desk business to change', async () => {
