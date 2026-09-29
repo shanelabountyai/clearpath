@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { guarded } from '../auth/guard';
+import { fixedClock } from '../clock';
 import { prisma } from '../db';
 import { Conflict } from '../errors';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
@@ -233,6 +234,24 @@ describe('recurring series', () => {
     expect(live.map((a) => localDateOf(a.startAt)))
       .toEqual(['2026-09-01', '2026-09-08', '2026-09-17', '2026-09-24']);
     expect(run.withdrawn).toHaveLength(2);
+  });
+
+  it('leaves this afternoon\'s session alone when the pattern moves after it began', async () => {
+    for (let i = 1; i <= 4; i++) await makeRoom(`Room ${i}`);
+    const { series } = await makeSeries();
+    await materialiseSeries(actor(desk), series.id, { from: TUESDAY, horizonDays: 21 });
+
+    // 4pm on Tuesday the 15th: the 3pm is under way, nobody has marked it arrived.
+    await prisma.appointmentSeries.update({ where: { id: series.id }, data: { weekday: 4 } });
+    const clock = fixedClock(zonedToUtc('2026-09-15', 16 * 60));
+    const run = await materialiseSeries(actor(desk), series.id, { horizonDays: 14, clock });
+
+    const live = await prisma.appointment.findMany({
+      where: { status: { not: 'cancelled' } }, orderBy: { startAt: 'asc' },
+    });
+    expect(live.map((a) => localDateOf(a.startAt)))
+      .toEqual(['2026-09-01', '2026-09-08', '2026-09-15', '2026-09-17', '2026-09-24']);
+    expect(run.withdrawn).toHaveLength(1);
   });
 
   it('withdraws nothing that moved on since the plan read it, and says so', async () => {

@@ -111,6 +111,28 @@ describe('planning a horizon run', () => {
     expect(plan.obsolete.map((e) => e.date)).toEqual(['2026-09-22']);
   });
 
+  it('treats a session earlier today as history, and a later one as future', () => {
+    // 3pm Tuesdays, edited to Thursdays at 4pm on the Tuesday. This afternoon's
+    // session has already begun its hour — nobody has marked it arrived yet.
+    const moved: Pattern = { ...tuesdays, weekday: 4 };
+    const existing = [instance('2026-09-08'), instance('2026-09-15')];
+    const window = { from: '2026-09-08', fromMinute: 960, to: '2026-09-18' };
+    const plan = planOccurrences(moved, existing, window, { startMinute: 900 });
+    expect(plan.obsolete.map((e) => e.date)).toEqual(['2026-09-15']);
+
+    // The same edit at 2pm still reaches today's 3pm.
+    const early = planOccurrences(moved, existing, { ...window, fromMinute: 840 }, { startMinute: 900 });
+    expect(early.obsolete.map((e) => e.date)).toEqual(['2026-09-08', '2026-09-15']);
+  });
+
+  it('does not create a session whose start has already passed today', () => {
+    const window = { from: '2026-09-01', to: '2026-09-08' };
+    expect(planOccurrences(tuesdays, [], { ...window, fromMinute: 900 }, { startMinute: 900 }).create)
+      .toEqual(['2026-09-08']);
+    expect(planOccurrences(tuesdays, [], { ...window, fromMinute: 899 }, { startMinute: 900 }).create)
+      .toEqual(['2026-09-01', '2026-09-08']);
+  });
+
   it('withdraws the whole future when the series is deactivated', () => {
     const existing = ['2026-09-08', '2026-09-15'].map((d) => instance(d));
     const plan = planOccurrences(tuesdays, existing, { from: '2026-09-08', to: '2026-09-29' }, { active: false });

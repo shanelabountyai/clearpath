@@ -285,7 +285,11 @@ export async function materialiseSeries(
   const horizon = opts.horizonDays ?? settings?.recurrenceHorizonDays ?? 90;
   const clock = opts.clock ?? systemClock;
   const from = opts.from ?? localDateOf(clock.now());
-  const window = { from: from < dbDateOf(series.startDate) ? dbDateOf(series.startDate) : from, to: addDays(from, horizon) };
+  const start = from < dbDateOf(series.startDate) ? dbDateOf(series.startDate) : from;
+  // Today's boundary is the current minute: a session already past its start is history.
+  const now = clock.now();
+  const today = localDateOf(now);
+  const window = { from: start, fromMinute: start === today ? minuteOn(today, now) : undefined, to: addDays(from, horizon) };
 
   const existing = await prisma.appointment.findMany({
     where: { seriesId },

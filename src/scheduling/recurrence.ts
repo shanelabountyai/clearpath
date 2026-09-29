@@ -24,6 +24,8 @@ export interface Pattern {
 
 interface Window {
   from: LocalDate;
+  /** On `from` itself, the minute already reached: a start at or before it is history. */
+  fromMinute?: number;
   to: LocalDate;
 }
 
@@ -96,9 +98,11 @@ export interface Plan {
 /**
  * What a horizon run — or an edit to the pattern — should do.
  *
- * `from` is the boundary between history and future. Nothing at or before it is
- * ever created or withdrawn, which is what keeps an edit today from rewriting
- * last month's sessions.
+ * `from` is the boundary between history and future. Nothing before it is ever
+ * created or withdrawn, which is what keeps an edit today from rewriting last
+ * month's sessions. With `fromMinute`, the boundary is that minute on `from`, so
+ * this morning's session — past its start, not yet marked arrived — is history
+ * too, and a series edited at noon neither withdraws it nor books one at 9am.
  */
 export function planOccurrences(
   pattern: Pattern,
@@ -107,6 +111,9 @@ export function planOccurrences(
   opts: { startMinute?: number; active?: boolean } = {},
 ): Plan {
   const active = opts.active ?? true;
+  const ahead = (date: LocalDate, minute: number | undefined) =>
+    date > window.from ||
+    (date === window.from && (window.fromMinute === undefined || minute === undefined || minute > window.fromMinute));
   const wanted = active ? occurrenceDates(pattern, window) : [];
   const wantedSet = new Set(wanted);
   const taken = new Set(existing.map((e) => e.occurrenceDate));
@@ -115,9 +122,9 @@ export function planOccurrences(
     wantedSet.has(e.date) && (opts.startMinute === undefined || e.startMinute === opts.startMinute);
 
   return {
-    create: wanted.filter((d) => !taken.has(d)),
+    create: wanted.filter((d) => !taken.has(d) && ahead(d, opts.startMinute)),
     obsolete: existing.filter(
-      (e) => e.date >= window.from && !e.detached && UNSTARTED.has(e.status) && !stillMatches(e),
+      (e) => ahead(e.date, e.startMinute) && !e.detached && UNSTARTED.has(e.status) && !stillMatches(e),
     ),
   };
 }

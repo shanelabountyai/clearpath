@@ -1,6 +1,8 @@
 # Next
 
-**Nothing queued. D-47 closed on 2026-09-29:** the slot finder and the day schedule now read a session's minute off the wall clock (`minuteOn` in `time.ts`) instead of counting from local midnight, which was an hour off on both DST Sundays. Two gaps from WRITEUP §58 are left: recurrence includes today (`recurrence.ts`), and CI `retries: 1`. The next session starts only when Shane picks one.
+**Nothing queued. D-48 closed on 2026-09-29.** The recurrence planner's history boundary on today is the current minute, set by `fromMinute` in `recurrence.ts` from the clock in `materialiseSeries`. A series edit no longer withdraws a session that has started but was never marked arrived, and no longer books a slot that has already passed. One gap from WRITEUP §58 is left: CI `retries: 1`. The next session starts only when Shane picks it.
+
+D-47 (2026-09-29): a session's minute is read off the wall clock (`minuteOn`), which fixes the DST-Sunday slot finder and day schedule.
 
 D-46 (2026-09-29): structural guards for hard rules 3, 7, 8, 9 in `src/hard-rules.test.ts` and `src/clock.test.ts`.
 
