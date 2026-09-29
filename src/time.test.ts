@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addDays, daysBetween, dbDate, dbDateOf, localDateOf, utcToZoned, weekdayOf, zonedToUtc } from './time';
+import { addDays, daysBetween, dbDate, dbDateOf, localDateOf, minuteOn, utcToZoned, weekdayOf, zonedToUtc } from './time';
 
 describe('local wall time to instant', () => {
   it('converts a winter afternoon (EST, UTC-5)', () => {
@@ -40,6 +40,19 @@ describe('local wall time to instant', () => {
       if (m >= 60 && m < 120) continue;
       expect(back).toEqual({ date: '2026-11-01', minutes: m, weekday: 0 });
     }
+  });
+});
+
+describe('an instant as a minute of a local day', () => {
+  it('reads the wall clock on both DST Sundays, not elapsed time since midnight', () => {
+    // Spring: 23 hours in the day, so 10:00 is 9 elapsed hours after midnight.
+    expect(minuteOn('2026-03-08', zonedToUtc('2026-03-08', 600))).toBe(600);
+    // Autumn: 25 hours, so 10:00 is 11 elapsed hours after midnight.
+    expect(minuteOn('2026-11-01', zonedToUtc('2026-11-01', 600))).toBe(600);
+  });
+
+  it('counts past 1440 for an instant on the next local day', () => {
+    expect(minuteOn('2026-03-08', zonedToUtc('2026-03-09', 30))).toBe(1470);
   });
 });
 

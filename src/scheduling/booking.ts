@@ -3,7 +3,7 @@ import { guarded } from '../auth/guard';
 import { prisma, type Tx } from '../db';
 import { systemClock, type Clock } from '../clock';
 import { Conflict, NotFound } from '../errors';
-import { addDays, dbDateOf, localDateOf, zonedToUtc, type LocalDate } from '../time';
+import { addDays, dbDateOf, localDateOf, minuteOn, zonedToUtc, type LocalDate } from '../time';
 import { clientTarget } from '../clients/repository';
 import { appointmentTarget } from './calendar';
 import { UNSTARTED } from './states';
@@ -119,13 +119,10 @@ export async function claimRoom<T>(
   return { conflict: lastConflict };
 }
 
-const spanOf = (a: { startAt: Date; endAt: Date }, date: LocalDate): Span => {
-  const midnight = zonedToUtc(date, 0).getTime();
-  return {
-    startMinute: Math.round((a.startAt.getTime() - midnight) / 60_000),
-    endMinute: Math.round((a.endAt.getTime() - midnight) / 60_000),
-  };
-};
+const spanOf = (a: { startAt: Date; endAt: Date }, date: LocalDate): Span => ({
+  startMinute: minuteOn(date, a.startAt),
+  endMinute: minuteOn(date, a.endAt),
+});
 
 /** Everything booked on one local date, for slot arithmetic. */
 async function dayLoad(db: Tx | typeof prisma, date: LocalDate) {

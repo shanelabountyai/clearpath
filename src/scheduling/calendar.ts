@@ -3,7 +3,7 @@ import { ownCaseloadOnly, type Actor, type Target } from '../auth/permissions';
 import { clientTarget } from '../clients/repository';
 import { prisma } from '../db';
 import { NotFound } from '../errors';
-import { addDays, dbDate, dbDateOf, zonedToUtc, type LocalDate } from '../time';
+import { addDays, dbDate, dbDateOf, minuteOn, zonedToUtc, type LocalDate } from '../time';
 import { isAway } from './availability';
 
 /**
@@ -58,7 +58,6 @@ export async function daySchedule(actor: Actor, date: LocalDate) {
         }),
       ]);
 
-      const minutesOf = (d: Date) => Math.round((d.getTime() - zonedToUtc(date, 0).getTime()) / 60_000);
 
       // Away means the whole day off. Extra hours or an afternoon off still
       // leave the clinician on the schedule.
@@ -79,8 +78,8 @@ export async function daySchedule(actor: Actor, date: LocalDate) {
         awayReasons: Object.fromEntries(overrides.map((o) => [o.userId, o.reason ?? 'Unavailable'])),
         sessions: appointments.map((a) => ({
           ...a,
-          startMinute: minutesOf(a.startAt),
-          endMinute: minutesOf(a.endAt),
+          startMinute: minuteOn(date, a.startAt),
+          endMinute: minuteOn(date, a.endAt),
         })),
       };
     },

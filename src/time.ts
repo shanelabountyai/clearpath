@@ -64,6 +64,17 @@ export function utcToZoned(instant: Date): { date: LocalDate; minutes: number; w
   return { date: p.date, minutes: p.hour * 60 + p.minute, weekday: weekdayOf(p.date) };
 }
 
+/**
+ * An instant's wall-clock minute on `date`'s timeline — what the availability
+ * windows and slot starts are written in. Not milliseconds since midnight /
+ * 60_000: on a DST Sunday that is an hour off from the clock on the wall. An
+ * instant on a later local date counts on past 1440, so a span never wraps.
+ */
+export function minuteOn(date: LocalDate, instant: Date): number {
+  const z = utcToZoned(instant);
+  return z.minutes + daysBetween(date, z.date) * 1440;
+}
+
 /** 0 = Sunday. Computed from the date string, so it never depends on the host. */
 export function weekdayOf(date: LocalDate): number {
   const [y, m, d] = date.split('-').map(Number) as [number, number, number];

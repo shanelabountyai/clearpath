@@ -322,6 +322,29 @@ it('every booking is audit-logged against the client', async () => {
   expect(rows[0]).toMatchObject({ action: 'create', resource: 'appointment', allowed: true });
 });
 
+describe('a DST Sunday', () => {
+  // 2026-03-08 has 23 hours. A 10:00 session is 9 elapsed hours after
+  // midnight; read that way it sits at 9:00, and 10:00 looks free.
+  const SPRING = '2026-03-08';
+
+  it('keeps a booked 10:00 at 10:00 in the slot finder and on the calendar', async () => {
+    const t = await makeUser('therapist');
+    await prisma.availability.create({ data: { userId: t.id, weekday: 0, startMinute: 540, endMinute: 1020 } });
+    const c = await makeClient(t.id);
+    await bookAppointment(actor(desk), {
+      clientId: c.id, clinicianId: t.id, date: SPRING, startMinute: 600,
+      type: 'standard', modality: 'telehealth', joinLink: 'https://video.example/dst',
+    });
+
+    const slots = await availableSlots({ clinicianId: t.id, date: SPRING, type: 'standard', modality: 'telehealth' });
+    expect(slots).not.toContain(600);
+    expect(slots).toContain(540);
+
+    const [session] = (await daySchedule(actor(desk), SPRING)).sessions;
+    expect(session).toMatchObject({ startMinute: 600, endMinute: 650 });
+  });
+});
+
 describe('date-only columns read as the date they store', () => {
   // A `@db.Date` comes back as UTC midnight, which is the evening before in
   // New York. Read through `localDateOf` it lands a day early.

@@ -1,6 +1,8 @@
 # Next
 
-**Nothing queued. D-46 closed on 2026-09-29:** there are now structural guards for hard rules 3 (PHI in logs and error messages), 7 (`Date.now` and a parenless `new Date`), 8 (appointment status written outside `lifecycle.ts`) and 9 (alert recipient not taken from coverage). They are in `src/hard-rules.test.ts` and `src/clock.test.ts`. The remaining gaps are in WRITEUP §58 "Not done": recurrence includes today, DST-Sunday arithmetic, and CI `retries: 1`. The next session starts only when Shane picks one.
+**Nothing queued. D-47 closed on 2026-09-29:** the slot finder and the day schedule now read a session's minute off the wall clock (`minuteOn` in `time.ts`) instead of counting from local midnight, which was an hour off on both DST Sundays. Two gaps from WRITEUP §58 are left: recurrence includes today (`recurrence.ts`), and CI `retries: 1`. The next session starts only when Shane picks one.
+
+D-46 (2026-09-29): structural guards for hard rules 3, 7, 8, 9 in `src/hard-rules.test.ts` and `src/clock.test.ts`.
 
 Cost baseline 2026-09-26: Neon 29.9 active-h/23d; Vercel $1.86 effective/$0.80 billed.
 
