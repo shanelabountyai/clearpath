@@ -1,6 +1,6 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { fixedClock, systemClock, DAY } from './clock';
+import { readSource, sourceFiles } from './test/source';
 
 describe('fixedClock', () => {
   it('does not move on its own, and moves exactly when told', () => {
@@ -24,18 +24,32 @@ describe('fixedClock', () => {
  * one source. A bare `new Date()` anywhere else is a window that cannot be
  * tested without waiting for it.
  */
+const WALL_TIME = /\bnew\s+Date\b(?!\s*\(\s*[^)\s])|\bDate\.now\b/;
+
+const readsWallTime = (files: [string, string][]) =>
+  // src/test/ is fixtures (a unique-name suffix), not a clock anything decides on.
+  files.filter(([path, src]) => path !== 'src/clock.ts' && !path.startsWith('src/test/') && WALL_TIME.test(src)).map(([path]) => path);
+
 it('nothing outside clock.ts reads wall time directly', () => {
-  const offenders: string[] = [];
-  for (const dir of ['src', 'app']) {
-    for (const f of readdirSync(dir, { recursive: true, encoding: 'utf8' })) {
-      const path = `${dir}/${f}`;
-      if (!/\.tsx?$/.test(f) || f.endsWith('.test.ts')) continue;
-      if (path === 'src/clock.ts' || path.startsWith('src/generated/')) continue;
-      if (!statSync(path).isFile()) continue;
-      if (/new Date\(\s*\)/.test(readFileSync(path, 'utf8'))) offenders.push(path);
-    }
-  }
-  expect(offenders).toEqual([]);
+  expect(readsWallTime(sourceFiles().map((p) => [p, readSource(p)]))).toEqual([]);
+});
+
+it.each([
+  'const now = new Date();',
+  'const now = new Date( );',
+  'const now = new Date;',
+  'const ms = Date.now();',
+  'const read = Date.now; read();',
+])('the wall-time guard catches %s', (src) => {
+  expect(readsWallTime([['planted.ts', src]])).not.toEqual([]);
+});
+
+it.each([
+  "new Date('2026-03-01T09:00:00Z')",
+  'new Date(clock.now().getTime() + DAY)',
+  'new Date(row.startAt)',
+])('and lets a constructed date through: %s', (src) => {
+  expect(readsWallTime([['planted.ts', src]])).toEqual([]);
 });
 
 it('systemClock is the seam, and it reads the real clock', () => {

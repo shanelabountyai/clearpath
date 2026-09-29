@@ -20,6 +20,8 @@ export function sourceFiles(): string[] {
       out.push(path);
     }
   }
+  // The two root modules Next loads on every request.
+  out.push('proxy.ts', 'instrumentation.ts');
   return out;
 }
 
@@ -33,6 +35,18 @@ export function callArgs(src: string, from: number): string {
     else if (src[i] === ')' && --depth === 0) return src.slice(open, i + 1);
   }
   return src.slice(open);
+}
+
+/** The `{...}` value of `key:` in `args`, braces balanced; '' if absent or not a literal. */
+export function objectAt(args: string, key: string): string {
+  const m = new RegExp(`\\b${key}\\s*:\\s*\\{`).exec(args);
+  if (!m) return '';
+  let depth = 0;
+  for (let i = m.index + m[0].length - 1; i < args.length; i++) {
+    if (args[i] === '{') depth++;
+    else if (args[i] === '}' && --depth === 0) return args.slice(m.index, i + 1);
+  }
+  return '';
 }
 
 export const readSource = (path: string) => readFileSync(path, 'utf8');

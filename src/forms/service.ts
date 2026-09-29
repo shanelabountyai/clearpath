@@ -93,10 +93,10 @@ export async function issueForm(
    * list of field keys to translate. Named `Conflict`, not `NotFound`,
    * because the template exists and the practice can fix it.
    */
-  const untranslated = missingLanguages(asSchema(template.schema))[client.language];
-  if (untranslated.length) {
+  const untranslatedKeys = missingLanguages(asSchema(template.schema))[client.language];
+  if (untranslatedKeys.length) {
     throw new Conflict(
-      `Template ${template.key} v${template.version} is missing this client's language for: ${untranslated.join(', ')}`,
+      `Template ${template.key} v${template.version} is missing this client's language for: ${untranslatedKeys.join(', ')}`,
       'template_not_translated',
     );
   }
@@ -251,11 +251,8 @@ export async function submitForm(
   const schema = asSchema(request.template.schema);
   const errors = validateSubmission(schema, answers);
   if (errors.length) {
-    throw new Conflict(
-      `This form has ${errors.length} unanswered or invalid question(s)`,
-      'invalid',
-      errors.map((e) => e.field),
-    );
+    const fieldKeys = errors.map((e) => e.field);
+    throw new Conflict(`This form has ${errors.length} unanswered or invalid question(s)`, 'invalid', fieldKeys);
   }
 
   const score = scoreSubmission(schema, asRules(request.template.scoring), answers);

@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../db';
-import { callArgs, readSource, sourceFiles } from '../test/source';
+import { callArgs, objectAt, readSource, sourceFiles } from '../test/source';
 import { Conflict, Forbidden } from '../errors';
 import { fixedClock, DAY } from '../clock';
 import { actor, makeClient, makeRoom, makeUser, resetDb, settings } from '../test/harness';
@@ -335,18 +335,6 @@ describe('progress note reads', () => {
  * on the shape of the call — `authorId` must appear inside the query itself,
  * which is the difference between filtering in SQL and filtering in JS.
  */
-/** The `{...}` value of `key:` in `args`, braces balanced; '' if absent or not a literal. */
-function objectAt(args: string, key: string): string {
-  const m = new RegExp(`\\b${key}\\s*:\\s*\\{`).exec(args);
-  if (!m) return '';
-  let depth = 0;
-  for (let i = m.index + m[0].length - 1; i < args.length; i++) {
-    if (args[i] === '{') depth++;
-    else if (args[i] === '}' && --depth === 0) return args.slice(m.index, i + 1);
-  }
-  return '';
-}
-
 function unauthoredProcessNoteQueries(files: [string, string][]): string[] {
   const offenders: string[] = [];
   for (const [path, src] of files) {

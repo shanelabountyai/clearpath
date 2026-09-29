@@ -1,6 +1,6 @@
 # Next
 
-**Nothing queued. D-45 closed on 2026-09-28:** `transition` refuses `no_show` before `startAt` (Conflict `not_started`), so no fee lands on a session that has not begun. The appointment page hides "Mark no show" until the start. The remaining gaps are in WRITEUP §58 "Not done": recurrence includes today, DST-Sunday arithmetic, CI `retries: 1`, and the missing structural tests. The next session starts only when Shane picks one.
+**Nothing queued. D-46 closed on 2026-09-29:** there are now structural guards for hard rules 3 (PHI in logs and error messages), 7 (`Date.now` and a parenless `new Date`), 8 (appointment status written outside `lifecycle.ts`) and 9 (alert recipient not taken from coverage). They are in `src/hard-rules.test.ts` and `src/clock.test.ts`. The remaining gaps are in WRITEUP §58 "Not done": recurrence includes today, DST-Sunday arithmetic, and CI `retries: 1`. The next session starts only when Shane picks one.
 
 Cost baseline 2026-09-26: Neon 29.9 active-h/23d; Vercel $1.86 effective/$0.80 billed.
 

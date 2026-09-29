@@ -7,7 +7,7 @@ import { zonedToUtc, type LocalDate } from '../time';
 import { clientTarget } from '../clients/repository';
 import { claimRoom, slotLock } from './booking';
 import { appointmentTarget } from './calendar';
-import { TRANSITIONS, canTransition, type Status } from './states';
+import { UNSTARTED } from './states';
 import { DURATION_MINUTES, type AppointmentType } from './recurrence';
 
 type Modality = 'in_person' | 'telehealth';
@@ -169,9 +169,8 @@ export async function cancelGroupSession(
   opts: { reason?: string; clock?: Clock } = {},
 ) {
   const now = (opts.clock ?? systemClock).now();
-  const open = (Object.keys(TRANSITIONS) as Status[]).filter((s) => canTransition(s, 'cancelled'));
   const members = await prisma.appointment.findMany({
-    where: { groupSessionId, status: { in: open } },
+    where: { groupSessionId, status: { in: UNSTARTED } },
     select: { id: true, clientId: true, clinicianId: true },
   });
   if (!members.length) return { cancelled: [] as string[] };
@@ -186,7 +185,7 @@ export async function cancelGroupSession(
     })),
     async (tx) => {
       const { count } = await tx.appointment.updateMany({
-        where: { id: { in: ids }, status: { in: open } },
+        where: { id: { in: ids }, status: { in: UNSTARTED } },
         data: { status: 'cancelled', cancelledAt: now, cancelledById: actor.id, cancelReason: opts.reason ?? null },
       });
       if (count !== ids.length) throw new Conflict('An attendee changed while cancelling', 'stale_status');
