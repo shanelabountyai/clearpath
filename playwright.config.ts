@@ -14,6 +14,9 @@ export default defineConfig({
   workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
+  // The retry is kept for its evidence (flake vs real break), not to pass: a
+  // spec that needed it still fails CI.
+  failOnFlakyTests: !!process.env.CI,
   reporter: process.env.CI ? 'list' : [['list']],
   use: {
     baseURL: `http://localhost:${PORT}`,
