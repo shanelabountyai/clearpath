@@ -1,5 +1,7 @@
 # Next
 
+**Status: CLOSED 2026-09-29.** All five deliverables are done: the shipped code, DEMO.md, the exec brief, the Ledger posts and the cost review.
+
 **Nothing queued. The backlog is empty.** D-49 (2026-09-29) closed the last gap from WRITEUP §58. CI now runs Playwright with `failOnFlakyTests`, so a spec that only passes on retry fails the run. Every review finding and P2 gap is closed or recorded as a decision in WRITEUP. The next session starts only when Shane picks something new.
 
 D-44 to D-48 (2026-09-28/29) fixed the float cents parse, no-show before start, the hard-rule guards, the DST minute and today's recurrence boundary.
