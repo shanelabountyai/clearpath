@@ -128,9 +128,9 @@ const onAppointment = (resourceId: string): Door => ({ action: 'update', resourc
  */
 async function liveLink(token: string, clock: Clock, door: Door) {
   const link = await prisma.portalLink.findUnique({ where: { token } });
-  // ponytail: one audit row per unknown-token hit, unthrottled. Behind the demo
-  // gate that is fine; a public deployment wants the enquiry form's per-address
-  // throttle in front of this before a scanner fills the table.
+  // One audit row per unknown-token hit. The per-address ceiling in front of
+  // this (`src/token-door.ts`, claimed by the /p page and actions) is what keeps
+  // a scanner from filling the table.
   if (!link) {
     await auditEvent(PUBLIC_ACTOR, door.action, door.resource, {
       resourceId: 'resourceId' in door ? door.resourceId : undefined,

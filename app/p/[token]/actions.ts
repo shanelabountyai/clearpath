@@ -6,6 +6,10 @@ import {
   confirmAppointment, declineAppointment, isRescheduleReason, requestReschedule,
   type RescheduleReason,
 } from '../../../src/portal/service';
+import { passTokenDoor } from '../../../src/request-address';
+
+/** Past the per-address ceiling an answer is dropped like one on a bad token: back to the door. */
+const APPOINTMENT_WRITE = { action: 'update', resource: 'appointment' } as const;
 
 /**
  * The one thing a client can write.
@@ -16,6 +20,7 @@ import {
  */
 export async function askToReschedule(formData: FormData) {
   const token = String(formData.get('token'));
+  if (!(await passTokenDoor(APPOINTMENT_WRITE))) redirect(`/p/${token}`);
   const appointmentId = String(formData.get('appointmentId'));
   const reason = String(formData.get('reason')) as RescheduleReason;
 
@@ -38,6 +43,7 @@ export async function askToReschedule(formData: FormData) {
  */
 export async function sayYes(formData: FormData) {
   const token = String(formData.get('token'));
+  if (!(await passTokenDoor(APPOINTMENT_WRITE))) redirect(`/p/${token}`);
   const appointmentId = String(formData.get('appointmentId'));
 
   try {
@@ -58,6 +64,7 @@ export async function sayYes(formData: FormData) {
  */
 export async function sayNo(formData: FormData) {
   const token = String(formData.get('token'));
+  if (!(await passTokenDoor(APPOINTMENT_WRITE))) redirect(`/p/${token}`);
   const appointmentId = String(formData.get('appointmentId'));
   const acknowledgeFee = formData.get('acknowledgeFee') === '1';
   // Optional, and anything that is not one of the four is treated as no answer

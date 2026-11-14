@@ -2,6 +2,7 @@ import { openPortal, RESCHEDULE_REASONS } from '../../../src/portal/service';
 import { prisma } from '../../../src/db';
 import { NotFound } from '../../../src/errors';
 import { LANGUAGES, moneyIn, UI, whenLong, type Language } from '../../../src/strings';
+import { passTokenDoor } from '../../../src/request-address';
 import { askToReschedule, sayNo, sayYes } from './actions';
 
 export const dynamic = 'force-dynamic';
@@ -63,6 +64,11 @@ export default async function ClientPortalPage({
   const practice = settings?.messagingName ?? 'Stillwater';
   const windowHours = settings?.lateCancelWindowHours ?? 24;
   const feeCents = settings?.lateCancelFeeCents ?? 9000;
+
+  // Past the per-address ceiling it reads as a dead link, and the token is never looked up.
+  if (!(await passTokenDoor({ action: 'read', resource: 'portal_link' }))) {
+    return <BrokenLink practice={practice} kind="invalid" />;
+  }
 
   let view;
   try {

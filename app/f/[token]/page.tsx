@@ -3,6 +3,7 @@ import { inLanguage } from '../../../src/forms/schema';
 import { prisma } from '../../../src/db';
 import { Conflict, NotFound } from '../../../src/errors';
 import { LANGUAGES, UI, type Language } from '../../../src/strings';
+import { passTokenDoor } from '../../../src/request-address';
 import { FormRunner } from './FormRunner';
 
 export const dynamic = 'force-dynamic';
@@ -15,6 +16,11 @@ export default async function ClientFormPage({ params }: { params: Promise<{ tok
   const { token } = await params;
   const practice = await prisma.practiceSettings.findUnique({ where: { id: 1 }, select: { messagingName: true } });
   const practiceName = practice?.messagingName ?? 'Stillwater';
+
+  // Past the per-address ceiling it reads as a dead link, and the token is never looked up.
+  if (!(await passTokenDoor({ action: 'read', resource: 'form_request' }))) {
+    return <BrokenLink practice={practiceName} kind="invalid" />;
+  }
 
   let form;
   try {

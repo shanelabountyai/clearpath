@@ -1,5 +1,6 @@
 import { prisma } from '../../../../src/db';
 import { UI, type Language } from '../../../../src/strings';
+import { passTokenDoor } from '../../../../src/request-address';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: UI.en.doneTitle };
@@ -14,10 +15,14 @@ export default async function DonePage({ params }: { params: Promise<{ token: st
    * is the fallback for a token that has since been deleted, which is a page
    * saying "thank you" to nobody in particular.
    */
-  const request = await prisma.formRequest.findUnique({
-    where: { token },
-    select: { client: { select: { language: true } } },
-  });
+  // Past the per-address ceiling the token is not looked up: the same English
+  // "thank you" a deleted token gets.
+  const request = (await passTokenDoor({ action: 'read', resource: 'form_request' }))
+    ? await prisma.formRequest.findUnique({
+      where: { token },
+      select: { client: { select: { language: true } } },
+    })
+    : null;
   const language: Language = request?.client.language ?? 'en';
   const ui = UI[language];
 

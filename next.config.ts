@@ -1,5 +1,14 @@
 import type { NextConfig } from 'next';
 
+/**
+ * The capability-token doors (K6). The token is in the path, so the page must
+ * not be cached or indexed.
+ */
+const TOKEN_DOOR_HEADERS = [
+  { key: 'Cache-Control', value: 'no-store' },
+  { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
+];
+
 const config: NextConfig = {
   // The generated Prisma client and the pg driver stay on the server.
   serverExternalPackages: ['@prisma/client', 'pg'],
@@ -19,10 +28,21 @@ const config: NextConfig = {
           // `Origin: null` on a same-origin form POST, and Next then refuses the
           // Server Action, which breaks the no-JavaScript enquiry form.
           { key: 'Referrer-Policy', value: 'same-origin' },
+          // Vercel adds HSTS on its own domains; set here so the app does not
+          // depend on the host for it. Inert over http (localhost).
+          { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains' },
         ],
       },
-      { source: '/f/:path*', headers: [{ key: 'Cache-Control', value: 'no-store' }] },
-      { source: '/p/:path*', headers: [{ key: 'Cache-Control', value: 'no-store' }] },
+      // Listed after the global entry, so these win where a key repeats.
+      // The form door submits from the browser (FormRunner), never as a native
+      // form POST, so it can drop the Referer entirely.
+      { source: '/f/:path*', headers: [...TOKEN_DOOR_HEADERS, { key: 'Referrer-Policy', value: 'no-referrer' }] },
+      // The appointments door keeps same-origin: its Yes/No/reschedule buttons
+      // are native form POSTs that must work without JavaScript, and under
+      // no-referrer the browser sends `Origin: null`, which Next refuses as a
+      // cross-site Server Action (checked 2026-11-13 on a production build).
+      // same-origin already sends nothing to any other site.
+      { source: '/p/:path*', headers: TOKEN_DOOR_HEADERS },
     ];
   },
 };
