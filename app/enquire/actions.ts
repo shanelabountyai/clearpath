@@ -1,10 +1,10 @@
 'use server';
 
 import { randomUUID } from 'node:crypto';
-import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { Conflict } from '../../src/errors';
 import { submitPublicInquiry, type PublicInquiryRefusal } from '../../src/clients/public-inquiry';
+import { requestAddress } from '../../src/request-address';
 
 /**
  * The public door. No session, no actor from a cookie, no token — this is the
@@ -14,21 +14,6 @@ import { submitPublicInquiry, type PublicInquiryRefusal } from '../../src/client
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 const orNull = (f: FormData, k: string) => str(f, k) || null;
-
-/**
- * Whoever the proxy says is asking.
- *
- * Spoofable — `x-forwarded-for` is a header, and a determined attacker rotates
- * it — which is why it is a hash key for a spam ceiling and never an identity.
- * Falling back to one shared bucket is the safe direction: an unattributable
- * request is throttled alongside every other unattributable request rather than
- * escaping the limit entirely.
- */
-async function submitterAddress(): Promise<string> {
-  const h = await headers();
-  const forwarded = h.get('x-forwarded-for')?.split(',')[0]?.trim();
-  return forwarded || h.get('x-real-ip') || 'unknown';
-}
 
 const REFUSALS: readonly string[] = ['closed', 'too_many', 'invalid'];
 
@@ -63,7 +48,7 @@ export async function enquire(_prev: EnquireState, formData: FormData): Promise<
         referralSource: str(formData, 'referralSource'),
         website: orNull(formData, 'website'),
       },
-      { address: await submitterAddress() },
+      { address: await requestAddress() },
     );
   } catch (e) {
     if (!(e instanceof Conflict)) throw e;

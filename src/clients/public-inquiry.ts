@@ -102,7 +102,7 @@ export const submitterKey = (address: string, env: NodeJS.ProcessEnv = process.e
  * burst queues on it and each request sees the count the one before it left. A
  * refusal is the `WHERE` failing, which writes nothing and affects no row.
  */
-async function claimSlot(key: string, limit: number, clock: Clock): Promise<boolean> {
+export async function claimSlot(key: string, limit: number, clock: Clock): Promise<boolean> {
   const now = clock.now();
   const spent = Prisma.sql`t."windowStartedAt" <= ${new Date(now.getTime() - HOUR)}`;
 
