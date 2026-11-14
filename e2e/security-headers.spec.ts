@@ -9,6 +9,7 @@ test.describe('security headers', () => {
       expect(h['content-security-policy']).toContain("frame-ancestors 'none'");
       expect(h['x-content-type-options']).toBe('nosniff');
       expect(h['x-powered-by']).toBeUndefined();
+      expect(h['strict-transport-security']).toBe('max-age=63072000; includeSubDomains');
     });
   }
 

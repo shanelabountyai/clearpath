@@ -28,6 +28,9 @@ const config: NextConfig = {
           // `Origin: null` on a same-origin form POST, and Next then refuses the
           // Server Action, which breaks the no-JavaScript enquiry form.
           { key: 'Referrer-Policy', value: 'same-origin' },
+          // Vercel adds HSTS on its own domains; set here so the app does not
+          // depend on the host for it. Inert over http (localhost).
+          { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains' },
         ],
       },
       // Listed after the global entry, so these win where a key repeats.
